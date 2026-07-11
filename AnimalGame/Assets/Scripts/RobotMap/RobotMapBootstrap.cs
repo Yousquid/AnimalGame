@@ -8,7 +8,7 @@ namespace AnimalGame.RobotMap
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void CreateDemo()
         {
-            if (SceneManager.GetActiveScene().name == "MapTestScene")
+            if (SceneManager.GetActiveScene().name != "SampleScene")
                 return;
 
             if (Object.FindObjectOfType<RobotMapDemo>() != null)
