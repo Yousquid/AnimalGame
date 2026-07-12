@@ -45,8 +45,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   heightMap: {fileID: 2800000, guid: 8b67fa9e7636ced418527687e79fd9a3, type: 3}
-  mapWidthMeters: 100
-  mapHeightMeters: 100
+  mapWidthMeters: 1000
+  mapHeightMeters: 1000
   minimumHeightMeters: 0
   maximumHeightMeters: 70
   previewResolution: 2160

@@ -69,6 +69,7 @@ namespace AnimalGame.MapTest
 
         public float VisibleMinimumContourHeight { get; private set; }
         public float VisibleMaximumContourHeight { get; private set; }
+        public Vector2 MapSizeMeters => new Vector2(mapWidthMeters, mapHeightMeters);
 
         public bool HasGeneratedMap => mapRenderer != null;
 
@@ -148,6 +149,39 @@ namespace AnimalGame.MapTest
                 uv.y * mapHeightMeters);
             heightMeters = SampleHeight(uv);
             return true;
+        }
+
+        public Vector3 MapPositionToWorld(Vector2 mapPositionMeters)
+        {
+            if (!HasGeneratedMap)
+                return transform.position;
+
+            Vector2 clampedMapPosition = new Vector2(
+                Mathf.Clamp(mapPositionMeters.x, 0f, mapWidthMeters),
+                Mathf.Clamp(mapPositionMeters.y, 0f, mapHeightMeters));
+            Vector2 uv = new Vector2(
+                clampedMapPosition.x / Mathf.Max(0.0001f, mapWidthMeters),
+                clampedMapPosition.y / Mathf.Max(0.0001f, mapHeightMeters));
+            Bounds bounds = WorldBounds;
+            return new Vector3(
+                Mathf.Lerp(bounds.min.x, bounds.max.x, uv.x),
+                Mathf.Lerp(bounds.min.y, bounds.max.y, uv.y),
+                bounds.center.z);
+        }
+
+        public float MapMetersToWorldDistance(Vector2 worldDirection, float distanceMeters)
+        {
+            if (!HasGeneratedMap || worldDirection.sqrMagnitude < 0.000001f)
+                return 0f;
+
+            Bounds bounds = WorldBounds;
+            Vector2 direction = worldDirection.normalized;
+            float mapMetersPerWorldUnit = Mathf.Sqrt(
+                Mathf.Pow(direction.x * mapWidthMeters / Mathf.Max(0.0001f, bounds.size.x), 2f)
+                + Mathf.Pow(direction.y * mapHeightMeters / Mathf.Max(0.0001f, bounds.size.y), 2f));
+            return mapMetersPerWorldUnit > 0.0001f
+                ? distanceMeters / mapMetersPerWorldUnit
+                : 0f;
         }
 
         public void UseCamera(Camera cameraToUse)

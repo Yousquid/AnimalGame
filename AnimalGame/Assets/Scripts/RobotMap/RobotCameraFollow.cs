@@ -18,6 +18,22 @@ namespace AnimalGame.RobotMap
         private Vector3 velocity;
         private float angularVelocity;
 
+        public void SnapToTarget()
+        {
+            if (Target == null)
+                return;
+
+            transform.position = new Vector3(
+                Target.position.x,
+                Target.position.y,
+                transform.position.z);
+            if (followTargetRotation)
+                transform.rotation = Quaternion.Euler(0f, 0f, Target.eulerAngles.z);
+
+            velocity = Vector3.zero;
+            angularVelocity = 0f;
+        }
+
         private void LateUpdate()
         {
             if (Target == null)

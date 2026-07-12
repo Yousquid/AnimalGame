@@ -1,4 +1,5 @@
 using UnityEngine;
+using AnimalGame.MapTest;
 
 namespace AnimalGame.RobotMap
 {
@@ -36,6 +37,17 @@ namespace AnimalGame.RobotMap
         public float CurrentTurnSpeed { get; private set; }
         public Vector2 MapPosition => transform.position;
         public Vector2 Forward => transform.up;
+        public bool IsSlopeBlocked { get; private set; }
+        public SlopeTraversalResult CurrentTraversalResult { get; private set; }
+
+        private HeightMapTraversalEvaluator traversalEvaluator;
+
+        public void SetTraversalEvaluator(HeightMapTraversalEvaluator evaluator)
+        {
+            traversalEvaluator = evaluator;
+            IsSlopeBlocked = false;
+            CurrentTraversalResult = SlopeTraversalResult.NoData;
+        }
 
         private void Update()
         {
@@ -68,6 +80,41 @@ namespace AnimalGame.RobotMap
 
             float reverseDirection = CurrentSpeed < -0.05f ? -1f : 1f;
             transform.Rotate(0f, 0f, -CurrentTurnSpeed * reverseDirection * Time.deltaTime);
+
+            if (Mathf.Abs(CurrentSpeed) > 0.001f && traversalEvaluator != null)
+            {
+                Vector2 movementDirection = (Vector2)transform.up * Mathf.Sign(CurrentSpeed);
+                CurrentTraversalResult = traversalEvaluator.EvaluateMovement(
+                    transform.position,
+                    movementDirection);
+                IsSlopeBlocked = traversalEvaluator.ShouldBlock(
+                    CurrentTraversalResult,
+                    IsSlopeBlocked);
+
+                if (IsSlopeBlocked)
+                {
+                    CurrentSpeed = Mathf.MoveTowards(
+                        CurrentSpeed,
+                        0f,
+                        traversalEvaluator.BlockedBraking * Time.deltaTime);
+                    return;
+                }
+            }
+            else if (traversalEvaluator != null)
+            {
+                // Keep the forward terrain readout current while the robot is
+                // stationary, including while the player rotates in place.
+                CurrentTraversalResult = traversalEvaluator.EvaluateMovement(
+                    transform.position,
+                    transform.up);
+                IsSlopeBlocked = false;
+            }
+            else if (traversalEvaluator == null)
+            {
+                IsSlopeBlocked = false;
+                CurrentTraversalResult = SlopeTraversalResult.NoData;
+            }
+
             transform.position += transform.up * (CurrentSpeed * Time.deltaTime);
         }
 
