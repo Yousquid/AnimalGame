@@ -63,8 +63,6 @@ namespace AnimalGame.MapTest
                 robot.transform.position,
                 out playerMapPosition,
                 out playerHeight);
-            if (playerInsideMap)
-                map.SetPlayerHeight(playerHeight);
         }
 
         private static GameObject InstantiateResource(string path, string instanceName)

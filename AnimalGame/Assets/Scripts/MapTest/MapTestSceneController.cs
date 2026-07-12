@@ -1,9 +1,13 @@
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace AnimalGame.MapTest
 {
     public sealed class MapTestSceneController : MonoBehaviour
     {
+        private const float LowestVisibleContourOpacity = 0.15f;
+        private const float HighestVisibleContourOpacity = 1f;
+
         [Header("Height Source")]
         [SerializeField] private Texture2D heightMap;
         [SerializeField, Min(1f)] private float mapWidthMeters = 1000f;
@@ -16,11 +20,11 @@ namespace AnimalGame.MapTest
         [SerializeField, Min(1f)] private float contourIntervalMeters = 10f;
         [SerializeField, Min(1f)] private float pixelsPerUnit = 16f;
 
-        [Header("Dynamic Contours")]
-        [Tooltip("Minimum contour width, used for lines far below the current reference height.")]
+        [Header("Viewport Contours")]
+        [Tooltip("Width of the lowest contour currently visible in the camera.")]
         [SerializeField, Range(0.1f, 10f)] private float minimumContourWidth = 0.75f;
 
-        [Tooltip("Maximum contour width, used for lines far above the current reference height.")]
+        [Tooltip("Width of the highest contour currently visible in the camera.")]
         [SerializeField, Range(0.1f, 10f)] private float maximumContourWidth = 3f;
 
         [Tooltip("Smooths small 8-bit height steps before drawing contours. Higher values remove more echo lines.")]
@@ -29,27 +33,11 @@ namespace AnimalGame.MapTest
         [Tooltip("Maximum fraction of the gap between neighboring contours that one line may occupy.")]
         [SerializeField, Range(0.1f, 0.7f)] private float maximumContourCoverage = 0.45f;
 
-        [Header("Contour Opacity")]
-        [Tooltip("Opacity of the lowest contour on the map.")]
-        [SerializeField, Range(0f, 1f)] private float minimumContourOpacity = 0.03f;
-
-        [Tooltip("Opacity of the contour at the player's current height.")]
-        [SerializeField, Range(0f, 1f)] private float currentHeightContourOpacity = 0.28f;
-
-        [Tooltip("Opacity of the highest contour on the map.")]
-        [SerializeField, Range(0f, 1f)] private float maximumContourOpacity = 1f;
-
-        [Tooltip("Distribution of opacity below the player. 1 gives clear, even separation between lower levels.")]
-        [SerializeField, Range(0.25f, 8f)] private float belowPlayerOpacityCurve = 1f;
-
-        [Tooltip("How late contours above the player become solid. Higher values emphasize only significantly higher contours.")]
-        [SerializeField, Range(0.25f, 8f)] private float contourOpacityCurve = 2.5f;
-
         [Tooltip("Softness of contour edges in screen pixels. Lower values produce crisper lines.")]
         [SerializeField, Range(0.1f, 1.5f)] private float contourEdgeSoftness = 0.4f;
 
-        [Tooltip("Blends in absolute elevation so neighboring contour levels remain visibly distinct. 0 is fully player-relative; 1 matches the reference-style global height hierarchy.")]
-        [SerializeField, Range(0f, 1f)] private float contourLevelSeparation = 0.6f;
+        [Tooltip("Number of samples used on each camera axis to find the visible height range.")]
+        [SerializeField, Range(16, 128)] private int viewportHeightSamples = 64;
 
         [Header("Color Palette")]
         [Tooltip("Color outside the generated map.")]
@@ -77,7 +65,10 @@ namespace AnimalGame.MapTest
         private float cursorRawGray;
         private float cursorHeight;
         private Material contourMaterial;
-        private bool usesExternalReferenceHeight;
+        private int lastViewportUpdateFrame = -1;
+
+        public float VisibleMinimumContourHeight { get; private set; }
+        public float VisibleMaximumContourHeight { get; private set; }
 
         public bool HasGeneratedMap => mapRenderer != null;
 
@@ -104,7 +95,19 @@ namespace AnimalGame.MapTest
             CreateCamera();
             CreateHeightVisualization();
             CreateCrosshair();
-            SetContourReferenceHeight(minimumHeightMeters, false);
+            UpdateVisibleContourRange(mapCamera);
+        }
+
+        private void OnEnable()
+        {
+            Camera.onPreCull += HandleCameraPreCull;
+            RenderPipelineManager.beginCameraRendering += HandleBeginCameraRendering;
+        }
+
+        private void OnDisable()
+        {
+            Camera.onPreCull -= HandleCameraPreCull;
+            RenderPipelineManager.beginCameraRendering -= HandleBeginCameraRendering;
         }
 
         private void Update()
@@ -157,12 +160,7 @@ namespace AnimalGame.MapTest
 
             mapCamera = cameraToUse;
             mapCamera.backgroundColor = backgroundColor;
-        }
-
-        public void SetPlayerHeight(float playerHeightMeters)
-        {
-            usesExternalReferenceHeight = true;
-            SetContourReferenceHeight(playerHeightMeters, true);
+            UpdateVisibleContourRange(mapCamera);
         }
 
         private void FindSourceRange()
@@ -249,41 +247,171 @@ namespace AnimalGame.MapTest
             contourMaterial.SetFloat("_MinimumHeight", minimumHeightMeters);
             contourMaterial.SetFloat("_MaximumHeight", maximumHeightMeters);
             contourMaterial.SetFloat("_ContourInterval", contourIntervalMeters);
-            contourMaterial.SetFloat("_MinimumLineWidth", minimumContourWidth);
-            contourMaterial.SetFloat("_MaximumLineWidth", maximumContourWidth);
-            contourMaterial.SetFloat("_MinimumOpacity", minimumContourOpacity);
-            contourMaterial.SetFloat("_CurrentHeightOpacity", currentHeightContourOpacity);
-            contourMaterial.SetFloat("_MaximumOpacity", maximumContourOpacity);
-            contourMaterial.SetFloat("_HeightSmoothing", contourHeightSmoothing);
-            contourMaterial.SetFloat("_MaximumCoverage", maximumContourCoverage);
-            contourMaterial.SetFloat("_BelowOpacityCurve", belowPlayerOpacityCurve);
-            contourMaterial.SetFloat("_OpacityCurve", contourOpacityCurve);
-            contourMaterial.SetFloat("_EdgeSoftness", contourEdgeSoftness);
-            contourMaterial.SetFloat("_LevelSeparation", contourLevelSeparation);
             contourMaterial.SetColor("_ContourColor", contourColor);
+            RefreshContourMaterialSettings();
             mapRenderer.material = contourMaterial;
         }
 
-        private void SetContourReferenceHeight(float referenceHeightMeters, bool clampToMap)
+        private void HandleCameraPreCull(Camera cameraToRender)
+        {
+            UpdateVisibleRangeOncePerFrame(cameraToRender);
+        }
+
+        private void HandleBeginCameraRendering(
+            ScriptableRenderContext context,
+            Camera cameraToRender)
+        {
+            UpdateVisibleRangeOncePerFrame(cameraToRender);
+        }
+
+        private void UpdateVisibleRangeOncePerFrame(Camera cameraToRender)
+        {
+            if (cameraToRender != mapCamera || lastViewportUpdateFrame == Time.frameCount)
+                return;
+
+            lastViewportUpdateFrame = Time.frameCount;
+            UpdateVisibleContourRange(cameraToRender);
+        }
+
+        private void UpdateVisibleContourRange(Camera cameraToSample)
+        {
+            if (cameraToSample == null || contourMaterial == null || !HasGeneratedMap)
+                return;
+
+            int heightMipLevel = CalculateHeightMipLevel(cameraToSample);
+            if (!TryFindVisibleTerrainRange(
+                    cameraToSample,
+                    heightMipLevel,
+                    out float minimumTerrain,
+                    out float maximumTerrain))
+                return;
+
+            float interval = Mathf.Max(0.0001f, contourIntervalMeters);
+            int lowestIndex = Mathf.CeilToInt(
+                (minimumTerrain - minimumHeightMeters) / interval - 0.0001f);
+            int highestIndex = Mathf.FloorToInt(
+                (maximumTerrain - minimumHeightMeters) / interval + 0.0001f);
+            int maximumMapIndex = Mathf.FloorToInt(
+                (maximumHeightMeters - minimumHeightMeters) / interval + 0.0001f);
+
+            lowestIndex = Mathf.Clamp(lowestIndex, 0, maximumMapIndex);
+            highestIndex = Mathf.Clamp(highestIndex, 0, maximumMapIndex);
+            if (lowestIndex > highestIndex)
+            {
+                int nearestIndex = Mathf.Clamp(
+                    Mathf.RoundToInt(
+                        ((minimumTerrain + maximumTerrain) * 0.5f - minimumHeightMeters) / interval),
+                    0,
+                    maximumMapIndex);
+                lowestIndex = nearestIndex;
+                highestIndex = nearestIndex;
+            }
+
+            VisibleMinimumContourHeight = minimumHeightMeters + lowestIndex * interval;
+            VisibleMaximumContourHeight = minimumHeightMeters + highestIndex * interval;
+
+            RefreshContourMaterialSettings();
+            contourMaterial.SetFloat("_HeightMipLevel", heightMipLevel);
+            contourMaterial.SetFloat("_VisibleMinimumHeight", VisibleMinimumContourHeight);
+            contourMaterial.SetFloat("_VisibleMaximumHeight", VisibleMaximumContourHeight);
+        }
+
+        private bool TryFindVisibleTerrainRange(
+            Camera cameraToSample,
+            int heightMipLevel,
+            out float minimumTerrain,
+            out float maximumTerrain)
+        {
+            minimumTerrain = float.PositiveInfinity;
+            maximumTerrain = float.NegativeInfinity;
+            Bounds bounds = WorldBounds;
+            int verticalSamples = Mathf.Max(2, viewportHeightSamples);
+            int horizontalSamples = Mathf.Max(
+                2,
+                Mathf.CeilToInt(verticalSamples * Mathf.Max(0.1f, cameraToSample.aspect)));
+            float mapPlaneDistance = Mathf.Abs(
+                mapRenderer.transform.position.z - cameraToSample.transform.position.z);
+            int validSamples = 0;
+
+            for (int y = 0; y < verticalSamples; y++)
+            {
+                float viewportY = y / (float)(verticalSamples - 1);
+                for (int x = 0; x < horizontalSamples; x++)
+                {
+                    float viewportX = x / (float)(horizontalSamples - 1);
+                    Vector3 world = cameraToSample.ViewportToWorldPoint(
+                        new Vector3(viewportX, viewportY, mapPlaneDistance));
+
+                    if (world.x < bounds.min.x || world.x > bounds.max.x
+                        || world.y < bounds.min.y || world.y > bounds.max.y)
+                    {
+                        continue;
+                    }
+
+                    Vector2 uv = new Vector2(
+                        Mathf.InverseLerp(bounds.min.x, bounds.max.x, world.x),
+                        Mathf.InverseLerp(bounds.min.y, bounds.max.y, world.y));
+                    float height = SampleContourHeight(uv, heightMipLevel);
+                    minimumTerrain = Mathf.Min(minimumTerrain, height);
+                    maximumTerrain = Mathf.Max(maximumTerrain, height);
+                    validSamples++;
+                }
+            }
+
+            return validSamples > 0;
+        }
+
+        private int CalculateHeightMipLevel(Camera cameraToSample)
+        {
+            if (!cameraToSample.orthographic || heightMap.mipmapCount <= 1 || !HasGeneratedMap)
+                return 0;
+
+            Bounds bounds = WorldBounds;
+            float worldUnitsPerScreenPixel =
+                cameraToSample.orthographicSize * 2f / Mathf.Max(1, cameraToSample.pixelHeight);
+            float texelsPerWorldUnit = Mathf.Max(
+                heightMap.width / Mathf.Max(0.0001f, bounds.size.x),
+                heightMap.height / Mathf.Max(0.0001f, bounds.size.y));
+            float texelsPerScreenPixel = Mathf.Max(
+                1f,
+                worldUnitsPerScreenPixel * texelsPerWorldUnit);
+
+            return Mathf.Clamp(
+                Mathf.FloorToInt(Mathf.Log(texelsPerScreenPixel, 2f)),
+                0,
+                heightMap.mipmapCount - 1);
+        }
+
+        private float SampleContourHeight(Vector2 uv, int mipLevel)
+        {
+            float mipScale = Mathf.Pow(2f, mipLevel);
+            Vector2 texel = new Vector2(
+                mipScale / heightMap.width,
+                mipScale / heightMap.height);
+            float center = heightMap.GetPixelBilinear(uv.x, uv.y, mipLevel).grayscale;
+            float crossAverage = (
+                heightMap.GetPixelBilinear(uv.x + texel.x, uv.y, mipLevel).grayscale
+                + heightMap.GetPixelBilinear(uv.x - texel.x, uv.y, mipLevel).grayscale
+                + heightMap.GetPixelBilinear(uv.x, uv.y + texel.y, mipLevel).grayscale
+                + heightMap.GetPixelBilinear(uv.x, uv.y - texel.y, mipLevel).grayscale) * 0.25f;
+            float blurred = Mathf.Lerp(center, crossAverage, 0.5f);
+            float gray = Mathf.Lerp(center, blurred, contourHeightSmoothing);
+            float normalized = Mathf.InverseLerp(sourceMinimum, sourceMaximum, gray);
+            return Mathf.Lerp(minimumHeightMeters, maximumHeightMeters, normalized);
+        }
+
+        private void RefreshContourMaterialSettings()
         {
             if (contourMaterial == null)
                 return;
 
-            float height = clampToMap
-                ? Mathf.Clamp(referenceHeightMeters, minimumHeightMeters, maximumHeightMeters)
-                : referenceHeightMeters;
-            contourMaterial.SetFloat("_ReferenceHeight", height);
             contourMaterial.SetFloat("_MinimumLineWidth", minimumContourWidth);
             contourMaterial.SetFloat("_MaximumLineWidth", maximumContourWidth);
             contourMaterial.SetFloat("_HeightSmoothing", contourHeightSmoothing);
             contourMaterial.SetFloat("_MaximumCoverage", maximumContourCoverage);
-            contourMaterial.SetFloat("_MinimumOpacity", minimumContourOpacity);
-            contourMaterial.SetFloat("_CurrentHeightOpacity", currentHeightContourOpacity);
-            contourMaterial.SetFloat("_MaximumOpacity", maximumContourOpacity);
-            contourMaterial.SetFloat("_BelowOpacityCurve", belowPlayerOpacityCurve);
-            contourMaterial.SetFloat("_OpacityCurve", contourOpacityCurve);
             contourMaterial.SetFloat("_EdgeSoftness", contourEdgeSoftness);
-            contourMaterial.SetFloat("_LevelSeparation", contourLevelSeparation);
+            contourMaterial.SetFloat("_MinimumOpacity", LowestVisibleContourOpacity);
+            contourMaterial.SetFloat("_MaximumOpacity", HighestVisibleContourOpacity);
         }
 
         private void CreateCrosshair()
@@ -316,8 +444,6 @@ namespace AnimalGame.MapTest
                 Mathf.InverseLerp(bounds.min.y, bounds.max.y, world.y));
             cursorRawGray = heightMap.GetPixelBilinear(cursorUv.x, cursorUv.y).grayscale;
             cursorHeight = SampleHeight(cursorUv);
-            if (!usesExternalReferenceHeight)
-                SetContourReferenceHeight(cursorHeight, true);
 
             const float arm = 0.16f;
             const float gap = 0.04f;

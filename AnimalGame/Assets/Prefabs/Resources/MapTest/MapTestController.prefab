@@ -45,24 +45,19 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   heightMap: {fileID: 2800000, guid: 8b67fa9e7636ced418527687e79fd9a3, type: 3}
-  mapWidthMeters: 1000
-  mapHeightMeters: 1000
+  mapWidthMeters: 100
+  mapHeightMeters: 100
   minimumHeightMeters: 0
-  maximumHeightMeters: 200
+  maximumHeightMeters: 70
   previewResolution: 2160
-  contourIntervalMeters: 25
-  pixelsPerUnit: 12
+  contourIntervalMeters: 10
+  pixelsPerUnit: 32
   minimumContourWidth: 0.7
   maximumContourWidth: 3.68
   contourHeightSmoothing: 0.8
   maximumContourCoverage: 0.3
-  minimumContourOpacity: 0.1
-  currentHeightContourOpacity: 0.28
-  maximumContourOpacity: 1
-  belowPlayerOpacityCurve: 1
-  contourOpacityCurve: 3
   contourEdgeSoftness: 0.4
-  contourLevelSeparation: 0.6
+  viewportHeightSamples: 64
   backgroundColor: {r: 0.008, g: 0.012, b: 0.017, a: 1}
   lowHeightColor: {r: 0, g: 0, b: 0, a: 1}
   middleHeightColor: {r: 0, g: 0, b: 0, a: 1}
