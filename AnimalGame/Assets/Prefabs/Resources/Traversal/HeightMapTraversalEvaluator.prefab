@@ -45,7 +45,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   blockSlopeAngle: 30
-  unblockSlopeAngle: 26
   movementProbeDistanceMeters: 2
   movementPathSamples: 8
   blockedBraking: 12

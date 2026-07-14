@@ -151,6 +151,26 @@ namespace AnimalGame.MapTest
             return true;
         }
 
+        public bool TrySampleMapPosition(Vector2 mapPositionMeters, out float heightMeters)
+        {
+            heightMeters = 0f;
+
+            if (!HasGeneratedMap
+                || mapPositionMeters.x < 0f
+                || mapPositionMeters.x > mapWidthMeters
+                || mapPositionMeters.y < 0f
+                || mapPositionMeters.y > mapHeightMeters)
+            {
+                return false;
+            }
+
+            Vector2 uv = new Vector2(
+                mapPositionMeters.x / Mathf.Max(0.0001f, mapWidthMeters),
+                mapPositionMeters.y / Mathf.Max(0.0001f, mapHeightMeters));
+            heightMeters = SampleHeight(uv);
+            return true;
+        }
+
         public Vector3 MapPositionToWorld(Vector2 mapPositionMeters)
         {
             if (!HasGeneratedMap)
@@ -182,6 +202,18 @@ namespace AnimalGame.MapTest
             return mapMetersPerWorldUnit > 0.0001f
                 ? distanceMeters / mapMetersPerWorldUnit
                 : 0f;
+        }
+
+        public Vector2 WorldDirectionToMapDirection(Vector2 worldDirection)
+        {
+            if (!HasGeneratedMap || worldDirection.sqrMagnitude < 0.000001f)
+                return Vector2.zero;
+
+            Bounds bounds = WorldBounds;
+            Vector2 mapDirection = new Vector2(
+                worldDirection.x * mapWidthMeters / Mathf.Max(0.0001f, bounds.size.x),
+                worldDirection.y * mapHeightMeters / Mathf.Max(0.0001f, bounds.size.y));
+            return mapDirection.normalized;
         }
 
         public void UseCamera(Camera cameraToUse)

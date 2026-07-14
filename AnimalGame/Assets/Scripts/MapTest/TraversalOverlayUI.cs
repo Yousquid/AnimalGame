@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using AnimalGame.RobotMap;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -11,58 +12,61 @@ namespace AnimalGame.MapTest
         [SerializeField] private Sprite passableSign;
         [SerializeField] private Sprite unpassableSign;
 
-        [Header("Viewport Grid")]
-        [Tooltip("Approximate screen-pixel distance between neighboring signs. Lower values produce a denser grid.")]
-        [SerializeField, Range(2f, 160f)] private float iconSpacingPixels = 42f;
+        [Header("Robot Reachability Scan")]
+        [Tooltip("Number of directions tested around the robot.")]
+        [SerializeField, Range(8, 128)] private int angularSamples = 64;
 
-        [Tooltip("Safety limit used when the game runs at a very high resolution.")]
+        [Tooltip("Number of signs tested along every direction.")]
+        [SerializeField, Range(2, 32)] private int radialSamples = 16;
+
+        [Tooltip("The first sign is placed this many logical map meters away from the robot.")]
+        [SerializeField, Min(0f)] private float innerRadiusMeters = 20f;
+
+        [Tooltip("Maximum logical map distance covered by the reachability scan.")]
+        [SerializeField, Min(0.1f)] private float displayRadiusMeters = 120f;
+
+        [Tooltip("Safety limit for the number of pooled UI signs.")]
         [SerializeField, Range(64, 4096)] private int maximumVisibleSigns = 1600;
 
-        [SerializeField, Range(0f, 0.45f)] private float viewportMargin = 0.05f;
-        [SerializeField, Min(1f)] private float iconSize = 12f;
-        [SerializeField, Min(0.1f)] private float refreshRate = 10f;
+        [SerializeField, Range(0f, 0.45f)] private float viewportMargin = 0.02f;
 
-        [Header("Display Range")]
-        [Tooltip("Maximum logical map distance from the player where signs are shown. Set to 0 for no distance limit.")]
-        [SerializeField, Min(0f)] private float displayRadiusMeters = 12f;
+        [Header("Presentation")]
+        [SerializeField, Min(1f)] private float iconSize = 7.6f;
+        [SerializeField, Min(0.1f)] private float refreshRate = 5f;
 
-        [Tooltip("Radius around the player marker where signs are hidden, normalized to the viewport height.")]
-        [SerializeField, Range(0f, 0.5f)] private float centerExclusionRadius = 0.05f;
+        [Tooltip("Opacity used beyond the first blocking point to show that the rest of that direct route is unreachable.")]
+        [SerializeField, Range(0.05f, 1f)] private float blockedContinuationOpacity = 0.45f;
 
         private readonly List<Image> pooledImages = new List<Image>();
 
         private MapTestSceneController map;
         private HeightMapTraversalEvaluator evaluator;
         private Camera mapCamera;
-        private Transform exclusionTarget;
+        private RobotMover playerRobot;
         private GameObject overlayRoot;
-        private RectTransform overlayRect;
         private float nextRefreshTime;
-        private int activeColumns = 1;
-        private int activeRows = 1;
 
         public void Initialize(
             MapTestSceneController mapController,
             HeightMapTraversalEvaluator traversalEvaluator,
             Camera cameraToSample,
-            Transform playerTarget)
+            RobotMover robot)
         {
             map = mapController;
             evaluator = traversalEvaluator;
             mapCamera = cameraToSample;
-            exclusionTarget = playerTarget;
+            playerRobot = robot;
 
-            if (map == null || evaluator == null || mapCamera == null)
+            if (map == null || evaluator == null || mapCamera == null || playerRobot == null)
             {
                 Debug.LogError(
-                    "TraversalOverlayUI requires a map, traversal evaluator, and camera.",
+                    "TraversalOverlayUI requires a map, traversal evaluator, camera, and robot.",
                     this);
                 HideAllImages();
                 return;
             }
 
             CreateOverlayIfNeeded();
-            UpdateGridDimensions();
             EnsureImagePool();
             overlayRoot.SetActive(isActiveAndEnabled);
             nextRefreshTime = 0f;
@@ -83,104 +87,112 @@ namespace AnimalGame.MapTest
                 overlayRoot.SetActive(false);
         }
 
+        private void OnDestroy()
+        {
+            if (overlayRoot != null)
+                Destroy(overlayRoot);
+        }
+
         private void Update()
         {
-            if (map == null || evaluator == null || mapCamera == null)
+            if (map == null || evaluator == null || mapCamera == null || playerRobot == null)
                 return;
 
             if (Time.unscaledTime < nextRefreshTime)
                 return;
 
-            float interval = 1f / Mathf.Max(0.1f, refreshRate);
-            nextRefreshTime = Time.unscaledTime + interval;
+            nextRefreshTime = Time.unscaledTime + 1f / Mathf.Max(0.1f, refreshRate);
             RefreshOverlay();
         }
 
         private void RefreshOverlay()
         {
-            if (map == null
-                || evaluator == null
-                || mapCamera == null
-                || !map.HasGeneratedMap)
+            if (!map.HasGeneratedMap
+                || !map.TrySampleWorldPosition(
+                    playerRobot.transform.position,
+                    out Vector2 robotMapPosition,
+                    out _))
             {
                 HideAllImages();
                 return;
             }
 
             CreateOverlayIfNeeded();
-            UpdateGridDimensions();
             EnsureImagePool();
 
-            Bounds bounds = map.WorldBounds;
-            float mapPlaneDistance = Mathf.Abs(
-                bounds.center.z - mapCamera.transform.position.z);
-            float availableViewport = Mathf.Max(0f, 1f - viewportMargin * 2f);
-            Vector2 exclusionCenter = GetExclusionCenter();
-            Vector2 playerMapPosition = Vector2.zero;
-            bool hasPlayerMapPosition = exclusionTarget != null
-                                        && map.TrySampleWorldPosition(
-                                            exclusionTarget.position,
-                                            out playerMapPosition,
-                                            out _);
+            Vector2 mapForward = map.WorldDirectionToMapDirection(playerRobot.Forward);
+            if (mapForward.sqrMagnitude < 0.000001f)
+                mapForward = Vector2.up;
+
+            float minimumRadius = Mathf.Min(innerRadiusMeters, displayRadiusMeters);
             int imageIndex = 0;
+            int directions = Mathf.Max(8, angularSamples);
+            int rings = Mathf.Max(2, radialSamples);
 
-            for (int row = 0; row < activeRows; row++)
+            for (int directionIndex = 0; directionIndex < directions; directionIndex++)
             {
-                float rowProgress = (row + 0.5f) / activeRows;
-                float viewportY = viewportMargin + availableViewport * rowProgress;
+                float angle = directionIndex * (360f / directions);
+                Vector2 mapDirection = Rotate(mapForward, angle);
+                Vector2 previousMapPosition = robotMapPosition;
+                bool routeBlocked = false;
 
-                for (int column = 0; column < activeColumns; column++)
+                for (int ringIndex = 0; ringIndex < rings; ringIndex++)
                 {
+                    float ringProgress = rings > 1
+                        ? ringIndex / (float)(rings - 1)
+                        : 1f;
+                    float radius = Mathf.Lerp(minimumRadius, displayRadiusMeters, ringProgress);
+                    Vector2 targetMapPosition = robotMapPosition + mapDirection * radius;
+
+                    if (!map.TrySampleMapPosition(targetMapPosition, out _))
+                        break;
+
+                    bool wasAlreadyBlocked = routeBlocked;
+                    if (!routeBlocked)
+                    {
+                        SlopeTraversalResult result = evaluator.EvaluateMapPath(
+                            previousMapPosition,
+                            targetMapPosition);
+
+                        if (!result.HasData)
+                        {
+                            previousMapPosition = targetMapPosition;
+                            continue;
+                        }
+
+                        routeBlocked = !result.IsPassable;
+                    }
+
+                    Vector3 worldPosition = map.MapPositionToWorld(targetMapPosition);
+                    Vector3 viewportPosition = mapCamera.WorldToViewportPoint(worldPosition);
+                    previousMapPosition = targetMapPosition;
+
+                    if (viewportPosition.z <= 0f
+                        || viewportPosition.x < viewportMargin
+                        || viewportPosition.x > 1f - viewportMargin
+                        || viewportPosition.y < viewportMargin
+                        || viewportPosition.y > 1f - viewportMargin)
+                    {
+                        continue;
+                    }
+
+                    if (imageIndex >= pooledImages.Count)
+                        goto Finish;
+
                     Image image = pooledImages[imageIndex++];
-                    float columnProgress = (column + 0.5f) / activeColumns;
-                    float viewportX = viewportMargin + availableViewport * columnProgress;
-                    Vector2 viewportPosition = new Vector2(viewportX, viewportY);
+                    PositionImage(image, new Vector2(viewportPosition.x, viewportPosition.y));
 
-                    PositionImage(image, viewportPosition);
-
-                    Vector2 exclusionOffset = viewportPosition - exclusionCenter;
-                    exclusionOffset.x *= mapCamera.aspect;
-                    if (exclusionOffset.sqrMagnitude
-                        < centerExclusionRadius * centerExclusionRadius)
-                    {
-                        SetImageEnabled(image, false);
-                        continue;
-                    }
-
-                    Vector3 worldPosition = mapCamera.ViewportToWorldPoint(
-                        new Vector3(viewportX, viewportY, mapPlaneDistance));
-                    if (!map.TrySampleWorldPosition(
-                            worldPosition,
-                            out Vector2 sampleMapPosition,
-                            out _))
-                    {
-                        SetImageEnabled(image, false);
-                        continue;
-                    }
-
-                    if (hasPlayerMapPosition
-                        && displayRadiusMeters > 0f
-                        && Vector2.Distance(sampleMapPosition, playerMapPosition)
-                        > displayRadiusMeters)
-                    {
-                        SetImageEnabled(image, false);
-                        continue;
-                    }
-
-                    SlopeTraversalResult result = evaluator.EvaluateLocalSurface(worldPosition);
-                    if (!result.HasData)
-                    {
-                        SetImageEnabled(image, false);
-                        continue;
-                    }
-
-                    Sprite desiredSprite = result.IsPassable ? passableSign : unpassableSign;
-                    if (image.sprite != desiredSprite)
-                        image.sprite = desiredSprite;
+                    Sprite desiredSprite = routeBlocked ? unpassableSign : passableSign;
+                    image.sprite = desiredSprite;
+                    float opacity = routeBlocked && wasAlreadyBlocked
+                        ? blockedContinuationOpacity
+                        : 1f;
+                    image.color = new Color(1f, 1f, 1f, opacity);
                     SetImageEnabled(image, desiredSprite != null);
                 }
             }
 
+        Finish:
             for (; imageIndex < pooledImages.Count; imageIndex++)
                 SetImageEnabled(pooledImages[imageIndex], false);
         }
@@ -190,54 +202,48 @@ namespace AnimalGame.MapTest
             if (overlayRoot != null)
                 return;
 
-            // Unity objects can be destroyed independently while their managed
-            // references remain in the pool. A rebuilt canvas needs a clean pool.
             pooledImages.Clear();
-
             overlayRoot = new GameObject(
-                "Traversal Overlay Canvas",
+                "Traversal Reachability Overlay",
                 typeof(RectTransform),
                 typeof(Canvas),
-                typeof(CanvasScaler));
-
-            int uiLayer = LayerMask.NameToLayer("UI");
-            if (uiLayer >= 0)
-                overlayRoot.layer = uiLayer;
+                typeof(CanvasScaler),
+                typeof(GraphicRaycaster));
+            overlayRoot.layer = LayerMask.NameToLayer("UI");
 
             Canvas canvas = overlayRoot.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 100;
+            canvas.sortingOrder = 20;
 
             CanvasScaler scaler = overlayRoot.GetComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
             scaler.scaleFactor = 1f;
             scaler.referencePixelsPerUnit = 100f;
 
-            overlayRect = overlayRoot.GetComponent<RectTransform>();
+            GraphicRaycaster raycaster = overlayRoot.GetComponent<GraphicRaycaster>();
+            raycaster.enabled = false;
         }
 
         private void EnsureImagePool()
         {
-            int requiredCount = Mathf.Max(1, activeColumns) * Mathf.Max(1, activeRows);
+            int requiredCount = Mathf.Min(
+                Mathf.Max(64, maximumVisibleSigns),
+                Mathf.Max(8, angularSamples) * Mathf.Max(2, radialSamples));
             int uiLayer = LayerMask.NameToLayer("UI");
 
             while (pooledImages.Count < requiredCount)
             {
                 var imageObject = new GameObject(
-                    $"Traversal Sign {pooledImages.Count + 1:00}",
+                    $"Traversal Sign {pooledImages.Count + 1:0000}",
                     typeof(RectTransform),
                     typeof(CanvasRenderer),
                     typeof(Image));
-                if (uiLayer >= 0)
-                    imageObject.layer = uiLayer;
-
-                RectTransform rect = imageObject.GetComponent<RectTransform>();
-                rect.SetParent(overlayRect, false);
-                rect.sizeDelta = Vector2.one * iconSize;
+                imageObject.layer = uiLayer;
+                imageObject.transform.SetParent(overlayRoot.transform, false);
 
                 Image image = imageObject.GetComponent<Image>();
-                image.preserveAspect = true;
                 image.raycastTarget = false;
+                image.preserveAspect = true;
                 image.enabled = false;
                 pooledImages.Add(image);
             }
@@ -246,54 +252,28 @@ namespace AnimalGame.MapTest
                 SetImageEnabled(pooledImages[i], false);
         }
 
-        private void UpdateGridDimensions()
-        {
-            float availableFraction = Mathf.Max(0.01f, 1f - viewportMargin * 2f);
-            float spacing = Mathf.Max(2f, iconSpacingPixels);
-            activeColumns = Mathf.Max(
-                1,
-                Mathf.FloorToInt(Screen.width * availableFraction / spacing));
-            activeRows = Mathf.Max(
-                1,
-                Mathf.FloorToInt(Screen.height * availableFraction / spacing));
-
-            int requestedCount = activeColumns * activeRows;
-            int limit = Mathf.Max(64, maximumVisibleSigns);
-            if (requestedCount <= limit)
-                return;
-
-            float scale = Mathf.Sqrt(limit / (float)requestedCount);
-            activeColumns = Mathf.Max(1, Mathf.FloorToInt(activeColumns * scale));
-            activeRows = Mathf.Max(1, Mathf.FloorToInt(activeRows * scale));
-        }
-
-        private Vector2 GetExclusionCenter()
-        {
-            if (exclusionTarget == null || mapCamera == null)
-                return Vector2.one * 0.5f;
-
-            Vector3 viewportPosition = mapCamera.WorldToViewportPoint(exclusionTarget.position);
-            return new Vector2(viewportPosition.x, viewportPosition.y);
-        }
-
         private void PositionImage(Image image, Vector2 viewportPosition)
         {
             RectTransform rect = image.rectTransform;
-            if (rect.anchorMin != viewportPosition || rect.anchorMax != viewportPosition)
-            {
-                rect.anchorMin = viewportPosition;
-                rect.anchorMax = viewportPosition;
-                rect.anchoredPosition = Vector2.zero;
-            }
+            rect.anchorMin = viewportPosition;
+            rect.anchorMax = viewportPosition;
+            rect.anchoredPosition = Vector2.zero;
+            rect.sizeDelta = Vector2.one * iconSize;
+        }
 
-            Vector2 desiredSize = Vector2.one * iconSize;
-            if (rect.sizeDelta != desiredSize)
-                rect.sizeDelta = desiredSize;
+        private static Vector2 Rotate(Vector2 vector, float degrees)
+        {
+            float radians = degrees * Mathf.Deg2Rad;
+            float sine = Mathf.Sin(radians);
+            float cosine = Mathf.Cos(radians);
+            return new Vector2(
+                vector.x * cosine - vector.y * sine,
+                vector.x * sine + vector.y * cosine);
         }
 
         private static void SetImageEnabled(Image image, bool isEnabled)
         {
-            if (image.enabled != isEnabled)
+            if (image != null)
                 image.enabled = isEnabled;
         }
 
@@ -303,27 +283,15 @@ namespace AnimalGame.MapTest
                 SetImageEnabled(pooledImages[i], false);
         }
 
-        private void OnDestroy()
-        {
-            pooledImages.Clear();
-            if (overlayRoot == null)
-                return;
-
-            if (Application.isPlaying)
-                Destroy(overlayRoot);
-            else
-                DestroyImmediate(overlayRoot);
-        }
-
         private void OnValidate()
         {
-            iconSpacingPixels = Mathf.Clamp(iconSpacingPixels, 2f, 160f);
-            maximumVisibleSigns = Mathf.Clamp(maximumVisibleSigns, 64, 4096);
-            viewportMargin = Mathf.Clamp(viewportMargin, 0f, 0.45f);
+            angularSamples = Mathf.Max(8, angularSamples);
+            radialSamples = Mathf.Max(2, radialSamples);
+            innerRadiusMeters = Mathf.Max(0f, innerRadiusMeters);
+            displayRadiusMeters = Mathf.Max(0.1f, displayRadiusMeters);
+            maximumVisibleSigns = Mathf.Max(64, maximumVisibleSigns);
             iconSize = Mathf.Max(1f, iconSize);
             refreshRate = Mathf.Max(0.1f, refreshRate);
-            displayRadiusMeters = Mathf.Max(0f, displayRadiusMeters);
-            centerExclusionRadius = Mathf.Clamp(centerExclusionRadius, 0f, 0.5f);
         }
     }
 }

@@ -63,7 +63,7 @@ namespace AnimalGame.MapTest
             cameraFollow.SnapToTarget();
             traversalEvaluator.Initialize(map);
             robot.SetTraversalEvaluator(traversalEvaluator);
-            traversalOverlay.Initialize(map, traversalEvaluator, camera, robot.transform);
+            traversalOverlay.Initialize(map, traversalEvaluator, camera, robot);
             UpdatePlayerHeight();
         }
 

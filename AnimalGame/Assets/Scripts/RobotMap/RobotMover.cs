@@ -87,9 +87,8 @@ namespace AnimalGame.RobotMap
                 CurrentTraversalResult = traversalEvaluator.EvaluateMovement(
                     transform.position,
                     movementDirection);
-                IsSlopeBlocked = traversalEvaluator.ShouldBlock(
-                    CurrentTraversalResult,
-                    IsSlopeBlocked);
+                IsSlopeBlocked = CurrentTraversalResult.HasData
+                                 && !CurrentTraversalResult.IsPassable;
 
                 if (IsSlopeBlocked)
                 {

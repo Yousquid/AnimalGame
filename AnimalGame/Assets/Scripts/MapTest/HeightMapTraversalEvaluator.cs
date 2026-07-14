@@ -34,23 +34,22 @@ namespace AnimalGame.MapTest
         [Tooltip("The robot becomes blocked when the path exceeds this slope.")]
         [SerializeField, Range(0f, 89f)] private float blockSlopeAngle = 30f;
 
-        [Tooltip("A blocked robot becomes unblocked only after the slope falls below this value.")]
-        [SerializeField, Range(0f, 89f)] private float unblockSlopeAngle = 26f;
-
         [Header("Movement Probe")]
         [SerializeField, Min(0.1f)] private float movementProbeDistanceMeters = 2f;
         [SerializeField, Range(2, 32)] private int movementPathSamples = 8;
         [SerializeField, Min(0f)] private float blockedBraking = 12f;
 
         [Header("Surface Probe")]
-        [Tooltip("Radius in logical map meters used by UI point-slope checks.")]
+        [Tooltip("Radius in logical map meters used by optional local-surface diagnostics.")]
         [SerializeField, Min(0.05f)] private float localSlopeSampleRadiusMeters = 0.75f;
 
         private MapTestSceneController map;
 
         public float BlockSlopeAngle => blockSlopeAngle;
-        public float UnblockSlopeAngle => Mathf.Min(unblockSlopeAngle, blockSlopeAngle);
         public float BlockedBraking => blockedBraking;
+        public float MovementProbeDistanceMeters => movementProbeDistanceMeters;
+        public float PathSampleSpacingMeters =>
+            movementProbeDistanceMeters / Mathf.Max(2, movementPathSamples);
         public bool IsInitialized => map != null && map.HasGeneratedMap;
 
         public void Initialize(MapTestSceneController mapController)
@@ -58,13 +57,9 @@ namespace AnimalGame.MapTest
             map = mapController;
         }
 
-        public bool ShouldBlock(SlopeTraversalResult result, bool currentlyBlocked)
+        public void SetMaximumPassableSlopeAngle(float maximumSlopeAngle)
         {
-            if (!result.HasData)
-                return false;
-
-            float threshold = currentlyBlocked ? UnblockSlopeAngle : BlockSlopeAngle;
-            return result.SlopeAngle > threshold;
+            blockSlopeAngle = Mathf.Clamp(maximumSlopeAngle, 0f, 89f);
         }
 
         public SlopeTraversalResult EvaluateMovement(Vector2 startWorld, Vector2 worldDirection)
@@ -73,59 +68,124 @@ namespace AnimalGame.MapTest
                 return SlopeTraversalResult.NoData;
 
             Vector2 direction = worldDirection.normalized;
+            if (!map.TrySampleWorldPosition(startWorld, out Vector2 startMapPosition, out _))
+                return SlopeTraversalResult.NoData;
+
             float worldProbeDistance = map.MapMetersToWorldDistance(
                 direction,
                 movementProbeDistanceMeters);
             if (worldProbeDistance <= 0.0001f)
                 return SlopeTraversalResult.NoData;
 
-            int samples = Mathf.Max(2, movementPathSamples);
-            bool hasPrevious = false;
-            bool hasValidSegment = false;
-            Vector2 previousMapPosition = Vector2.zero;
-            float previousHeight = 0f;
+            Vector2 endWorld = startWorld + direction * worldProbeDistance;
+            if (!map.TrySampleWorldPosition(endWorld, out Vector2 endMapPosition, out _))
+                return SlopeTraversalResult.BlockedBoundary;
+
+            return EvaluateMapPath(startMapPosition, endMapPosition);
+        }
+
+        public SlopeTraversalResult EvaluateMapPath(
+            Vector2 startMapPosition,
+            Vector2 endMapPosition)
+        {
+            if (!IsInitialized
+                || !map.TrySampleMapPosition(startMapPosition, out _))
+            {
+                return SlopeTraversalResult.NoData;
+            }
+
+            if (!map.TrySampleMapPosition(endMapPosition, out _))
+                return SlopeTraversalResult.BlockedBoundary;
+
+            float pathLength = Vector2.Distance(startMapPosition, endMapPosition);
+            if (pathLength <= 0.0001f)
+                return new SlopeTraversalResult(true, true, 0f, 0f);
+
+            int probeCount = Mathf.Max(
+                1,
+                Mathf.CeilToInt(pathLength / Mathf.Max(0.1f, movementProbeDistanceMeters)));
             float maximumSlope = 0f;
             float signedSlopeAtMaximum = 0f;
+            Vector2 previous = startMapPosition;
 
-            for (int i = 0; i <= samples; i++)
+            for (int probeIndex = 1; probeIndex <= probeCount; probeIndex++)
             {
-                float t = i / (float)samples;
-                Vector2 worldPosition = startWorld + direction * (worldProbeDistance * t);
-                if (!map.TrySampleWorldPosition(
-                        worldPosition,
-                        out Vector2 mapPosition,
-                        out float height))
+                float t = probeIndex / (float)probeCount;
+                Vector2 current = Vector2.Lerp(startMapPosition, endMapPosition, t);
+                SlopeTraversalResult probeResult = EvaluateMapProbe(previous, current);
+                if (!probeResult.HasData)
+                    return probeResult;
+
+                if (probeResult.SlopeAngle > maximumSlope)
                 {
-                    return i == 0
-                        ? SlopeTraversalResult.NoData
-                        : SlopeTraversalResult.BlockedBoundary;
+                    maximumSlope = probeResult.SlopeAngle;
+                    signedSlopeAtMaximum = probeResult.SignedSlopeAngle;
                 }
 
-                if (hasPrevious)
+                if (!probeResult.IsPassable)
                 {
-                    float horizontalDistance = Vector2.Distance(previousMapPosition, mapPosition);
-                    if (horizontalDistance > 0.0001f)
+                    return new SlopeTraversalResult(
+                        true,
+                        false,
+                        maximumSlope,
+                        signedSlopeAtMaximum);
+                }
+
+                previous = current;
+            }
+
+            return new SlopeTraversalResult(
+                true,
+                true,
+                maximumSlope,
+                signedSlopeAtMaximum);
+        }
+
+        private SlopeTraversalResult EvaluateMapProbe(
+            Vector2 startMapPosition,
+            Vector2 endMapPosition)
+        {
+            float probeLength = Vector2.Distance(startMapPosition, endMapPosition);
+            if (probeLength <= 0.0001f)
+                return new SlopeTraversalResult(true, true, 0f, 0f);
+
+            int samples = Mathf.Max(
+                2,
+                Mathf.CeilToInt(probeLength / Mathf.Max(0.01f, PathSampleSpacingMeters)));
+            float maximumSlope = 0f;
+            float signedSlopeAtMaximum = 0f;
+            Vector2 previousPosition = startMapPosition;
+
+            if (!map.TrySampleMapPosition(previousPosition, out float previousHeight))
+                return SlopeTraversalResult.NoData;
+
+            for (int sampleIndex = 1; sampleIndex <= samples; sampleIndex++)
+            {
+                float t = sampleIndex / (float)samples;
+                Vector2 currentPosition = Vector2.Lerp(
+                    startMapPosition,
+                    endMapPosition,
+                    t);
+                if (!map.TrySampleMapPosition(currentPosition, out float currentHeight))
+                    return SlopeTraversalResult.BlockedBoundary;
+
+                float horizontalDistance = Vector2.Distance(previousPosition, currentPosition);
+                if (horizontalDistance > 0.0001f)
+                {
+                    float signedSlope = Mathf.Atan2(
+                        currentHeight - previousHeight,
+                        horizontalDistance) * Mathf.Rad2Deg;
+                    float absoluteSlope = Mathf.Abs(signedSlope);
+                    if (absoluteSlope > maximumSlope)
                     {
-                        hasValidSegment = true;
-                        float signedSlope = Mathf.Atan2(
-                            height - previousHeight,
-                            horizontalDistance) * Mathf.Rad2Deg;
-                        float absoluteSlope = Mathf.Abs(signedSlope);
-                        if (absoluteSlope > maximumSlope)
-                        {
-                            maximumSlope = absoluteSlope;
-                            signedSlopeAtMaximum = signedSlope;
-                        }
+                        maximumSlope = absoluteSlope;
+                        signedSlopeAtMaximum = signedSlope;
                     }
                 }
 
-                hasPrevious = true;
-                previousMapPosition = mapPosition;
-                previousHeight = height;
+                previousPosition = currentPosition;
+                previousHeight = currentHeight;
             }
-
-            if (!hasPrevious || !hasValidSegment)
-                return SlopeTraversalResult.NoData;
 
             return new SlopeTraversalResult(
                 true,
@@ -173,9 +233,5 @@ namespace AnimalGame.MapTest
             return map.TrySampleWorldPosition(worldPosition, out mapPosition, out height);
         }
 
-        private void OnValidate()
-        {
-            unblockSlopeAngle = Mathf.Min(unblockSlopeAngle, blockSlopeAngle);
-        }
     }
 }
