@@ -15,12 +15,19 @@ namespace AnimalGame.MapTest
         [Tooltip("Initial player position in logical map meters. Values outside the map are clamped to its edges.")]
         [SerializeField] private Vector2 playerSpawnMapPositionMeters = new Vector2(50f, 50f);
 
+        [Header("Performance Display")]
+        [SerializeField] private bool showFrameRate = true;
+        [SerializeField, Min(0.05f)] private float frameRateRefreshInterval = 0.25f;
+
         private MapTestSceneController map;
         private RobotMover robot;
         private HeightMapTraversalEvaluator traversalEvaluator;
         private Vector2 playerMapPosition;
         private float playerHeight;
         private bool playerInsideMap;
+        private float smoothedUnscaledDeltaTime;
+        private float displayedFramesPerSecond;
+        private float nextFrameRateRefreshTime;
 
         private void Awake()
         {
@@ -69,6 +76,7 @@ namespace AnimalGame.MapTest
 
         private void Update()
         {
+            UpdateFrameRate();
             UpdatePlayerHeight();
         }
 
@@ -95,6 +103,35 @@ namespace AnimalGame.MapTest
                 out playerHeight);
         }
 
+        private void UpdateFrameRate()
+        {
+            float deltaTime = Time.unscaledDeltaTime;
+            if (deltaTime <= 0.000001f)
+                return;
+
+            if (smoothedUnscaledDeltaTime <= 0f)
+            {
+                smoothedUnscaledDeltaTime = deltaTime;
+            }
+            else
+            {
+                // Smooth quickly enough to show real performance changes without making
+                // the number unreadable by changing to a completely new value every frame.
+                float smoothing = 1f - Mathf.Exp(-8f * deltaTime);
+                smoothedUnscaledDeltaTime = Mathf.Lerp(
+                    smoothedUnscaledDeltaTime,
+                    deltaTime,
+                    smoothing);
+            }
+
+            if (Time.unscaledTime < nextFrameRateRefreshTime)
+                return;
+
+            displayedFramesPerSecond = 1f / Mathf.Max(0.000001f, smoothedUnscaledDeltaTime);
+            nextFrameRateRefreshTime = Time.unscaledTime
+                                       + Mathf.Max(0.05f, frameRateRefreshInterval);
+        }
+
         private static GameObject InstantiateResource(string path, string instanceName)
         {
             GameObject prefab = Resources.Load<GameObject>(path);
@@ -111,6 +148,8 @@ namespace AnimalGame.MapTest
 
         private void OnGUI()
         {
+            DrawFrameRate();
+
             GUIStyle title = new GUIStyle(GUI.skin.label) { fontSize = 18, fontStyle = FontStyle.Bold };
             title.normal.textColor = new Color(0.9f, 0.97f, 1f);
             GUIStyle data = new GUIStyle(GUI.skin.label) { fontSize = 15 };
@@ -140,6 +179,40 @@ namespace AnimalGame.MapTest
                 new Rect(left + 16f, 142f, 280f, 26f),
                 robot != null && robot.IsSlopeBlocked ? "TRAVERSAL   BLOCKED" : "TRAVERSAL   PASSABLE",
                 state);
+        }
+
+        private void DrawFrameRate()
+        {
+            if (!showFrameRate)
+                return;
+
+            float width = 144f;
+            float left = Screen.width - width - 18f;
+            var panelRect = new Rect(left, 202f, width, 46f);
+            GUI.Box(panelRect, GUIContent.none);
+
+            GUIStyle frameRateStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 18,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter
+            };
+
+            frameRateStyle.normal.textColor = displayedFramesPerSecond >= 55f
+                ? new Color(0.35f, 1f, 0.66f)
+                : displayedFramesPerSecond >= 30f
+                    ? new Color(1f, 0.83f, 0.27f)
+                    : new Color(1f, 0.35f, 0.28f);
+
+            GUI.Label(
+                new Rect(left + 6f, 207f, width - 12f, 34f),
+                $"FPS  {displayedFramesPerSecond:F1}",
+                frameRateStyle);
+        }
+
+        private void OnValidate()
+        {
+            frameRateRefreshInterval = Mathf.Max(0.05f, frameRateRefreshInterval);
         }
     }
 }

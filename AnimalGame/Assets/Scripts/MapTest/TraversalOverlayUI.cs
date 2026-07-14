@@ -5,6 +5,7 @@ using UnityEngine.UI;
 
 namespace AnimalGame.MapTest
 {
+    [DefaultExecutionOrder(100)]
     [DisallowMultipleComponent]
     public sealed class TraversalOverlayUI : MonoBehaviour
     {
@@ -18,13 +19,13 @@ namespace AnimalGame.MapTest
         [Tooltip("Screen-pixel spacing between neighboring rows and columns.")]
         [SerializeField, Min(4f)] private float gridSpacingPixels = 56f;
 
-        [Tooltip("Screen-pixel radius around the robot marker where signs are hidden.")]
+        [Tooltip("Screen-pixel radius around the robot marker where signs are neither calculated nor rendered. The sign's own size is excluded as well.")]
         [SerializeField, Min(0f)] private float centerExclusionRadiusPixels = 36f;
 
         [Tooltip("Maximum logical map distance from the robot where signs are shown. Set to 0 for no distance limit.")]
         [SerializeField, Min(0f)] private float displayRadiusMeters = 120f;
 
-        [Tooltip("Safety limit for the number of pooled UI signs.")]
+        [Tooltip("Target maximum number of signs inside the display range. Grid spacing is increased automatically when needed to stay within this limit.")]
         [SerializeField, Range(64, 4096)] private int maximumVisibleSigns = 1600;
 
         [SerializeField, Range(0f, 0.45f)] private float viewportMargin = 0.02f;
@@ -34,6 +35,8 @@ namespace AnimalGame.MapTest
         [SerializeField, Min(0.1f)] private float refreshRate = 3f;
 
         private readonly List<Image> pooledImages = new List<Image>();
+        private readonly List<Vector2> stableGridScreenPositions = new List<Vector2>();
+        private readonly List<Vector2> visibleCandidateScreenPositions = new List<Vector2>();
 
         private MapTestSceneController map;
         private HeightMapTraversalEvaluator evaluator;
@@ -41,9 +44,14 @@ namespace AnimalGame.MapTest
         private RobotMover playerRobot;
         private GameObject overlayRoot;
         private float nextRefreshTime;
-        private int activeColumns = 1;
-        private int activeRows = 1;
         private bool isOverlayVisible = true;
+        private int cachedScreenWidth = -1;
+        private int cachedScreenHeight = -1;
+        private float cachedGridSpacingPixels = float.NaN;
+        private float cachedDisplayRadiusMeters = float.NaN;
+        private float cachedViewportMargin = float.NaN;
+        private float cachedCameraSize = float.NaN;
+        private int cachedMaximumVisibleSigns = -1;
 
         public bool IsOverlayVisible => isOverlayVisible;
 
@@ -68,12 +76,9 @@ namespace AnimalGame.MapTest
             }
 
             CreateOverlayIfNeeded();
-            UpdateGridDimensions();
-            EnsureImagePool();
             overlayRoot.SetActive(isActiveAndEnabled && isOverlayVisible);
+            InvalidateGridLayout();
             nextRefreshTime = 0f;
-            if (isOverlayVisible)
-                RefreshOverlay();
         }
 
         private void OnEnable()
@@ -100,7 +105,10 @@ namespace AnimalGame.MapTest
         {
             if (Input.GetKeyDown(ToggleKey))
                 SetOverlayVisible(!isOverlayVisible);
+        }
 
+        private void LateUpdate()
+        {
             if (!isOverlayVisible)
                 return;
 
@@ -128,8 +136,6 @@ namespace AnimalGame.MapTest
             }
 
             nextRefreshTime = 0f;
-            if (map != null && evaluator != null && mapCamera != null && playerRobot != null)
-                RefreshOverlay();
         }
 
         private void RefreshOverlay()
@@ -145,76 +151,73 @@ namespace AnimalGame.MapTest
             }
 
             CreateOverlayIfNeeded();
-            UpdateGridDimensions();
-            EnsureImagePool();
 
             Bounds bounds = map.WorldBounds;
             float mapPlaneDistance = Mathf.Abs(
                 bounds.center.z - mapCamera.transform.position.z);
-            float availableViewport = Mathf.Max(0f, 1f - viewportMargin * 2f);
             Vector3 robotViewport = mapCamera.WorldToViewportPoint(playerRobot.transform.position);
             Vector2 robotScreenPosition = new Vector2(
                 robotViewport.x * Screen.width,
                 robotViewport.y * Screen.height);
-            float exclusionRadiusSquared =
-                centerExclusionRadiusPixels * centerExclusionRadiusPixels;
+            Vector2 displayRadiusPixels = CalculateDisplayRadiusPixels(
+                playerRobot.transform.position,
+                robotScreenPosition);
+            EnsureStableGridLayout(robotScreenPosition, displayRadiusPixels);
+            BuildVisibleCandidateScreenPositions(robotScreenPosition, displayRadiusPixels);
+            EnsureImagePool(visibleCandidateScreenPositions.Count);
+
+            float displayRadiusSquared = displayRadiusMeters * displayRadiusMeters;
             int imageIndex = 0;
 
-            for (int row = 0; row < activeRows; row++)
+            for (int candidateIndex = 0;
+                 candidateIndex < visibleCandidateScreenPositions.Count;
+                 candidateIndex++)
             {
-                float rowProgress = (row + 0.5f) / activeRows;
-                float viewportY = viewportMargin + availableViewport * rowProgress;
+                Vector2 screenPosition = visibleCandidateScreenPositions[candidateIndex];
+                // Keep this second guard next to the expensive map/path work. Candidate
+                // generation already filters the exclusion area, but this guarantees that
+                // future grid-generation changes cannot calculate or render signs there.
+                if (IsInsideCenterExclusion(screenPosition, robotScreenPosition))
+                    continue;
 
-                for (int column = 0; column < activeColumns; column++)
+                Vector2 viewportPosition = new Vector2(
+                    screenPosition.x / Mathf.Max(1f, Screen.width),
+                    screenPosition.y / Mathf.Max(1f, Screen.height));
+                Vector3 worldPosition = mapCamera.ViewportToWorldPoint(
+                    new Vector3(viewportPosition.x, viewportPosition.y, mapPlaneDistance));
+                if (!map.TrySampleWorldPosition(
+                        worldPosition,
+                        out Vector2 targetMapPosition,
+                        out _))
                 {
-                    float columnProgress = (column + 0.5f) / activeColumns;
-                    float viewportX = viewportMargin + availableViewport * columnProgress;
-                    Vector2 screenPosition = new Vector2(
-                        viewportX * Screen.width,
-                        viewportY * Screen.height);
-                    if ((screenPosition - robotScreenPosition).sqrMagnitude
-                        < exclusionRadiusSquared)
-                    {
-                        continue;
-                    }
-
-                    Vector3 worldPosition = mapCamera.ViewportToWorldPoint(
-                        new Vector3(viewportX, viewportY, mapPlaneDistance));
-                    if (!map.TrySampleWorldPosition(
-                            worldPosition,
-                            out Vector2 targetMapPosition,
-                            out _))
-                    {
-                        continue;
-                    }
-
-                    if (displayRadiusMeters > 0f
-                        && Vector2.Distance(robotMapPosition, targetMapPosition)
-                        > displayRadiusMeters)
-                    {
-                        continue;
-                    }
-
-                    SlopeTraversalResult result = evaluator.EvaluateMapPath(
-                        robotMapPosition,
-                        targetMapPosition);
-                    if (!result.HasData)
-                        continue;
-
-                    if (imageIndex >= pooledImages.Count)
-                        goto Finish;
-
-                    Image image = pooledImages[imageIndex++];
-                    PositionImage(image, new Vector2(viewportX, viewportY));
-
-                    Sprite desiredSprite = result.IsPassable ? passableSign : unpassableSign;
-                    image.sprite = desiredSprite;
-                    image.color = Color.white;
-                    SetImageEnabled(image, desiredSprite != null);
+                    continue;
                 }
+
+                if (displayRadiusMeters > 0f
+                    && (targetMapPosition - robotMapPosition).sqrMagnitude
+                    > displayRadiusSquared)
+                {
+                    continue;
+                }
+
+                SlopeTraversalResult result = evaluator.EvaluateMapPath(
+                    robotMapPosition,
+                    targetMapPosition);
+                if (!result.HasData)
+                    continue;
+
+                if (imageIndex >= pooledImages.Count)
+                    break;
+
+                Image image = pooledImages[imageIndex++];
+                PositionImage(image, viewportPosition);
+
+                Sprite desiredSprite = result.IsPassable ? passableSign : unpassableSign;
+                image.sprite = desiredSprite;
+                image.color = Color.white;
+                SetImageEnabled(image, desiredSprite != null);
             }
 
-        Finish:
             for (; imageIndex < pooledImages.Count; imageIndex++)
                 SetImageEnabled(pooledImages[imageIndex], false);
         }
@@ -248,11 +251,11 @@ namespace AnimalGame.MapTest
             raycaster.enabled = false;
         }
 
-        private void EnsureImagePool()
+        private void EnsureImagePool(int requestedCount)
         {
             int requiredCount = Mathf.Min(
                 Mathf.Max(64, maximumVisibleSigns),
-                Mathf.Max(1, activeColumns * activeRows));
+                Mathf.Max(1, requestedCount));
             int uiLayer = LayerMask.NameToLayer("UI");
 
             while (pooledImages.Count < requiredCount)
@@ -276,25 +279,218 @@ namespace AnimalGame.MapTest
                 SetImageEnabled(pooledImages[i], false);
         }
 
-        private void UpdateGridDimensions()
+        private Vector2 CalculateDisplayRadiusPixels(
+            Vector3 robotWorldPosition,
+            Vector2 robotScreenPosition)
         {
-            float availableFraction = Mathf.Max(0.01f, 1f - viewportMargin * 2f);
-            float spacing = Mathf.Max(4f, gridSpacingPixels);
-            activeColumns = Mathf.Max(
-                1,
-                Mathf.FloorToInt(Screen.width * availableFraction / spacing));
-            activeRows = Mathf.Max(
-                1,
-                Mathf.FloorToInt(Screen.height * availableFraction / spacing));
+            if (displayRadiusMeters <= 0f)
+                return new Vector2(Screen.width, Screen.height);
 
-            int requestedCount = activeColumns * activeRows;
-            int limit = Mathf.Max(64, maximumVisibleSigns);
-            if (requestedCount <= limit)
+            Vector2 worldRight = ((Vector2)mapCamera.transform.right).normalized;
+            Vector2 worldUp = ((Vector2)mapCamera.transform.up).normalized;
+            float horizontalWorldDistance = map.MapMetersToWorldDistance(
+                worldRight,
+                displayRadiusMeters);
+            float verticalWorldDistance = map.MapMetersToWorldDistance(
+                worldUp,
+                displayRadiusMeters);
+
+            Vector3 horizontalScreenPoint = mapCamera.WorldToScreenPoint(
+                robotWorldPosition + (Vector3)(worldRight * horizontalWorldDistance));
+            Vector3 verticalScreenPoint = mapCamera.WorldToScreenPoint(
+                robotWorldPosition + (Vector3)(worldUp * verticalWorldDistance));
+
+            return new Vector2(
+                Mathf.Max(1f, Mathf.Abs(horizontalScreenPoint.x - robotScreenPosition.x)),
+                Mathf.Max(1f, Mathf.Abs(verticalScreenPoint.y - robotScreenPosition.y)));
+        }
+
+        private void EnsureStableGridLayout(
+            Vector2 robotScreenPosition,
+            Vector2 displayRadiusPixels)
+        {
+            if (!GridLayoutNeedsRebuild())
                 return;
 
-            float scale = Mathf.Sqrt(limit / (float)requestedCount);
-            activeColumns = Mathf.Max(1, Mathf.FloorToInt(activeColumns * scale));
-            activeRows = Mathf.Max(1, Mathf.FloorToInt(activeRows * scale));
+            int limit = Mathf.Max(64, maximumVisibleSigns);
+            float requestedSpacing = Mathf.Max(4f, gridSpacingPixels);
+            float marginX = Screen.width * viewportMargin;
+            float marginY = Screen.height * viewportMargin;
+            bool hasDistanceLimit = displayRadiusMeters > 0f;
+
+            float estimatedArea = hasDistanceLimit
+                ? Mathf.PI * displayRadiusPixels.x * displayRadiusPixels.y
+                : Mathf.Max(1f, Screen.width - marginX * 2f)
+                  * Mathf.Max(1f, Screen.height - marginY * 2f);
+            float spacing = Mathf.Max(
+                requestedSpacing,
+                Mathf.Sqrt(estimatedArea / limit));
+
+            // The density is solved only while rebuilding the layout. During normal
+            // refreshes this spacing stays fixed, so the entire grid cannot jump.
+            for (int attempt = 0; attempt < 8; attempt++)
+            {
+                BuildStableScreenGrid(spacing, marginX, marginY);
+                int count = CountVisibleGridPositions(
+                    robotScreenPosition,
+                    displayRadiusPixels,
+                    limit + 1);
+                if (count > limit)
+                {
+                    spacing *= Mathf.Sqrt(count / (float)limit) * 1.005f;
+                    continue;
+                }
+
+                break;
+            }
+
+            // Pool order is centre-out. If a changed camera projection ever places more
+            // points inside the range than the cap, only the outer edge is clipped.
+            Vector2 screenCenter = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+            stableGridScreenPositions.Sort((left, right) =>
+            {
+                float leftDistance = (left - screenCenter).sqrMagnitude;
+                float rightDistance = (right - screenCenter).sqrMagnitude;
+                return leftDistance.CompareTo(rightDistance);
+            });
+
+            cachedScreenWidth = Screen.width;
+            cachedScreenHeight = Screen.height;
+            cachedGridSpacingPixels = gridSpacingPixels;
+            cachedDisplayRadiusMeters = displayRadiusMeters;
+            cachedViewportMargin = viewportMargin;
+            cachedMaximumVisibleSigns = maximumVisibleSigns;
+            cachedCameraSize = GetCameraSize();
+        }
+
+        private void BuildStableScreenGrid(float spacing, float marginX, float marginY)
+        {
+            stableGridScreenPositions.Clear();
+
+            float maximumX = Screen.width - marginX;
+            float maximumY = Screen.height - marginY;
+            float firstX = Mathf.Ceil(marginX / spacing) * spacing;
+            float firstY = Mathf.Ceil(marginY / spacing) * spacing;
+
+            for (float screenY = firstY;
+                 screenY <= maximumY + 0.01f;
+                 screenY += spacing)
+            {
+                for (float screenX = firstX;
+                     screenX <= maximumX + 0.01f;
+                     screenX += spacing)
+                {
+                    stableGridScreenPositions.Add(new Vector2(screenX, screenY));
+                }
+            }
+        }
+
+        private void BuildVisibleCandidateScreenPositions(
+            Vector2 robotScreenPosition,
+            Vector2 displayRadiusPixels)
+        {
+            visibleCandidateScreenPositions.Clear();
+            int limit = Mathf.Max(64, maximumVisibleSigns);
+
+            for (int index = 0; index < stableGridScreenPositions.Count; index++)
+            {
+                Vector2 screenPosition = stableGridScreenPositions[index];
+                if (IsInsideCenterExclusion(screenPosition, robotScreenPosition)
+                    || !IsInsideDisplayRange(
+                        screenPosition,
+                        robotScreenPosition,
+                        displayRadiusPixels))
+                {
+                    continue;
+                }
+
+                visibleCandidateScreenPositions.Add(screenPosition);
+                if (visibleCandidateScreenPositions.Count >= limit)
+                    break;
+            }
+        }
+
+        private int CountVisibleGridPositions(
+            Vector2 robotScreenPosition,
+            Vector2 displayRadiusPixels,
+            int stopAfter)
+        {
+            int count = 0;
+            for (int index = 0; index < stableGridScreenPositions.Count; index++)
+            {
+                Vector2 screenPosition = stableGridScreenPositions[index];
+                if (IsInsideCenterExclusion(screenPosition, robotScreenPosition)
+                    || !IsInsideDisplayRange(
+                        screenPosition,
+                        robotScreenPosition,
+                        displayRadiusPixels))
+                {
+                    continue;
+                }
+
+                count++;
+                if (count >= stopAfter)
+                    break;
+            }
+
+            return count;
+        }
+
+        private bool IsInsideDisplayRange(
+            Vector2 screenPosition,
+            Vector2 robotScreenPosition,
+            Vector2 displayRadiusPixels)
+        {
+            if (displayRadiusMeters <= 0f)
+                return true;
+
+            Vector2 offset = screenPosition - robotScreenPosition;
+            float normalizedX = offset.x / Mathf.Max(1f, displayRadiusPixels.x);
+            float normalizedY = offset.y / Mathf.Max(1f, displayRadiusPixels.y);
+            return normalizedX * normalizedX + normalizedY * normalizedY <= 1f;
+        }
+
+        private bool GridLayoutNeedsRebuild()
+        {
+            return stableGridScreenPositions.Count == 0
+                   || cachedScreenWidth != Screen.width
+                   || cachedScreenHeight != Screen.height
+                   || !Mathf.Approximately(cachedGridSpacingPixels, gridSpacingPixels)
+                   || !Mathf.Approximately(cachedDisplayRadiusMeters, displayRadiusMeters)
+                   || !Mathf.Approximately(cachedViewportMargin, viewportMargin)
+                   || cachedMaximumVisibleSigns != maximumVisibleSigns
+                   || !Mathf.Approximately(cachedCameraSize, GetCameraSize());
+        }
+
+        private float GetCameraSize()
+        {
+            if (mapCamera == null)
+                return 0f;
+
+            return mapCamera.orthographic
+                ? mapCamera.orthographicSize
+                : mapCamera.fieldOfView;
+        }
+
+        private void InvalidateGridLayout()
+        {
+            stableGridScreenPositions.Clear();
+            visibleCandidateScreenPositions.Clear();
+            cachedScreenWidth = -1;
+            cachedScreenHeight = -1;
+        }
+
+        private bool IsInsideCenterExclusion(
+            Vector2 screenPosition,
+            Vector2 robotScreenPosition)
+        {
+            // Images are square. Adding half their diagonal keeps the entire icon outside
+            // the circular exclusion area instead of checking only the icon's centre.
+            const float HalfSquareDiagonal = 0.70710678f;
+            float effectiveRadius = centerExclusionRadiusPixels
+                                    + iconSize * HalfSquareDiagonal;
+            return (screenPosition - robotScreenPosition).sqrMagnitude
+                   < effectiveRadius * effectiveRadius;
         }
 
         private void PositionImage(Image image, Vector2 viewportPosition)
@@ -328,6 +524,7 @@ namespace AnimalGame.MapTest
             maximumVisibleSigns = Mathf.Max(64, maximumVisibleSigns);
             iconSize = Mathf.Max(1f, iconSize);
             refreshRate = Mathf.Max(0.1f, refreshRate);
+            InvalidateGridLayout();
         }
     }
 }

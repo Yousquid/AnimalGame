@@ -46,10 +46,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   passableSign: {fileID: 21300000, guid: 09afb4a9ddcfe754a9842e74d23fabc1, type: 3}
   unpassableSign: {fileID: 21300000, guid: 5b377b0df7e4966488a1c33711fe4ed8, type: 3}
-  gridSpacingPixels: 4
-  centerExclusionRadiusPixels: 48
-  displayRadiusMeters: 90
-  maximumVisibleSigns: 4096
+  gridSpacingPixels: 8
+  centerExclusionRadiusPixels: 100
+  displayRadiusMeters: 100
+  maximumVisibleSigns: 120
   viewportMargin: 0.02
-  iconSize: 10
-  refreshRate: 1
+  iconSize: 20
+  refreshRate: 10
