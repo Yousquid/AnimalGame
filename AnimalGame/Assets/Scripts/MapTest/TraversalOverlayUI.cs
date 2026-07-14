@@ -8,6 +8,8 @@ namespace AnimalGame.MapTest
     [DisallowMultipleComponent]
     public sealed class TraversalOverlayUI : MonoBehaviour
     {
+        private const KeyCode ToggleKey = KeyCode.Q;
+
         [Header("Signs")]
         [SerializeField] private Sprite passableSign;
         [SerializeField] private Sprite unpassableSign;
@@ -41,6 +43,9 @@ namespace AnimalGame.MapTest
         private float nextRefreshTime;
         private int activeColumns = 1;
         private int activeRows = 1;
+        private bool isOverlayVisible = true;
+
+        public bool IsOverlayVisible => isOverlayVisible;
 
         public void Initialize(
             MapTestSceneController mapController,
@@ -65,15 +70,16 @@ namespace AnimalGame.MapTest
             CreateOverlayIfNeeded();
             UpdateGridDimensions();
             EnsureImagePool();
-            overlayRoot.SetActive(isActiveAndEnabled);
+            overlayRoot.SetActive(isActiveAndEnabled && isOverlayVisible);
             nextRefreshTime = 0f;
-            RefreshOverlay();
+            if (isOverlayVisible)
+                RefreshOverlay();
         }
 
         private void OnEnable()
         {
             if (overlayRoot != null)
-                overlayRoot.SetActive(true);
+                overlayRoot.SetActive(isOverlayVisible);
 
             nextRefreshTime = 0f;
         }
@@ -92,6 +98,12 @@ namespace AnimalGame.MapTest
 
         private void Update()
         {
+            if (Input.GetKeyDown(ToggleKey))
+                SetOverlayVisible(!isOverlayVisible);
+
+            if (!isOverlayVisible)
+                return;
+
             if (map == null || evaluator == null || mapCamera == null || playerRobot == null)
                 return;
 
@@ -100,6 +112,24 @@ namespace AnimalGame.MapTest
 
             nextRefreshTime = Time.unscaledTime + 1f / Mathf.Max(0.1f, refreshRate);
             RefreshOverlay();
+        }
+
+        public void SetOverlayVisible(bool shouldBeVisible)
+        {
+            isOverlayVisible = shouldBeVisible;
+
+            if (overlayRoot != null)
+                overlayRoot.SetActive(isActiveAndEnabled && isOverlayVisible);
+
+            if (!isOverlayVisible)
+            {
+                HideAllImages();
+                return;
+            }
+
+            nextRefreshTime = 0f;
+            if (map != null && evaluator != null && mapCamera != null && playerRobot != null)
+                RefreshOverlay();
         }
 
         private void RefreshOverlay()
