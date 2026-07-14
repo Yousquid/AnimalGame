@@ -50,6 +50,6 @@ MonoBehaviour:
   maximumVisibleSigns: 4096
   viewportMargin: 0
   iconSize: 7.6
-  refreshRate: 2
+  refreshRate: 1
   displayRadiusMeters: 120
-  centerExclusionRadius: 0
+  centerExclusionRadius: 0.1

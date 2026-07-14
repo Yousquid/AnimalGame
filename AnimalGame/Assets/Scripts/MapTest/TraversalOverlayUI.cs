@@ -26,7 +26,7 @@ namespace AnimalGame.MapTest
         [Tooltip("Maximum logical map distance from the player where signs are shown. Set to 0 for no distance limit.")]
         [SerializeField, Min(0f)] private float displayRadiusMeters = 12f;
 
-        [Tooltip("Normalized viewport radius around the player marker where signs are hidden.")]
+        [Tooltip("Radius around the player marker where signs are hidden, normalized to the viewport height.")]
         [SerializeField, Range(0f, 0.5f)] private float centerExclusionRadius = 0.05f;
 
         private readonly List<Image> pooledImages = new List<Image>();
@@ -138,8 +138,10 @@ namespace AnimalGame.MapTest
 
                     PositionImage(image, viewportPosition);
 
-                    if (Vector2.Distance(viewportPosition, exclusionCenter)
-                        < centerExclusionRadius)
+                    Vector2 exclusionOffset = viewportPosition - exclusionCenter;
+                    exclusionOffset.x *= mapCamera.aspect;
+                    if (exclusionOffset.sqrMagnitude
+                        < centerExclusionRadius * centerExclusionRadius)
                     {
                         SetImageEnabled(image, false);
                         continue;
