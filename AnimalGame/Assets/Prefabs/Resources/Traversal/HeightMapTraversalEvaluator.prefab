@@ -45,7 +45,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   blockSlopeAngle: 30
+  maximumDownhillSlopeAngle: 55
   movementProbeDistanceMeters: 2
   movementPathSamples: 8
-  blockedBraking: 12
   localSlopeSampleRadiusMeters: 0.75

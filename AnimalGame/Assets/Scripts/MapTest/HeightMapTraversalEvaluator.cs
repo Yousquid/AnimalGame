@@ -34,10 +34,12 @@ namespace AnimalGame.MapTest
         [Tooltip("The robot becomes blocked when the path exceeds this slope.")]
         [SerializeField, Range(0f, 89f)] private float blockSlopeAngle = 30f;
 
+        [Tooltip("Maximum safe downhill angle. This is intentionally higher than the uphill limit so the robot can retreat from a steep ascent.")]
+        [SerializeField, Range(0f, 89f)] private float maximumDownhillSlopeAngle = 55f;
+
         [Header("Movement Probe")]
         [SerializeField, Min(0.1f)] private float movementProbeDistanceMeters = 2f;
         [SerializeField, Range(2, 32)] private int movementPathSamples = 8;
-        [SerializeField, Min(0f)] private float blockedBraking = 12f;
 
         [Header("Surface Probe")]
         [Tooltip("Radius in logical map meters used by optional local-surface diagnostics.")]
@@ -46,7 +48,7 @@ namespace AnimalGame.MapTest
         private MapTestSceneController map;
 
         public float BlockSlopeAngle => blockSlopeAngle;
-        public float BlockedBraking => blockedBraking;
+        public float MaximumDownhillSlopeAngle => maximumDownhillSlopeAngle;
         public float MovementProbeDistanceMeters => movementProbeDistanceMeters;
         public float PathSampleSpacingMeters =>
             movementProbeDistanceMeters / Mathf.Max(2, movementPathSamples);
@@ -60,6 +62,11 @@ namespace AnimalGame.MapTest
         public void SetMaximumPassableSlopeAngle(float maximumSlopeAngle)
         {
             blockSlopeAngle = Mathf.Clamp(maximumSlopeAngle, 0f, 89f);
+        }
+
+        public void SetMaximumDownhillSlopeAngle(float maximumSlopeAngle)
+        {
+            maximumDownhillSlopeAngle = Mathf.Clamp(maximumSlopeAngle, 0f, 89f);
         }
 
         public SlopeTraversalResult EvaluateMovement(Vector2 startWorld, Vector2 worldDirection)
@@ -123,13 +130,7 @@ namespace AnimalGame.MapTest
                 }
 
                 if (!probeResult.IsPassable)
-                {
-                    return new SlopeTraversalResult(
-                        true,
-                        false,
-                        maximumSlope,
-                        signedSlopeAtMaximum);
-                }
+                    return probeResult;
 
                 previous = current;
             }
@@ -176,6 +177,19 @@ namespace AnimalGame.MapTest
                         currentHeight - previousHeight,
                         horizontalDistance) * Mathf.Rad2Deg;
                     float absoluteSlope = Mathf.Abs(signedSlope);
+
+                    bool segmentIsPassable = signedSlope >= 0f
+                        ? signedSlope <= blockSlopeAngle
+                        : absoluteSlope <= maximumDownhillSlopeAngle;
+                    if (!segmentIsPassable)
+                    {
+                        return new SlopeTraversalResult(
+                            true,
+                            false,
+                            absoluteSlope,
+                            signedSlope);
+                    }
+
                     if (absoluteSlope > maximumSlope)
                     {
                         maximumSlope = absoluteSlope;
@@ -189,7 +203,7 @@ namespace AnimalGame.MapTest
 
             return new SlopeTraversalResult(
                 true,
-                maximumSlope <= blockSlopeAngle,
+                true,
                 maximumSlope,
                 signedSlopeAtMaximum);
         }

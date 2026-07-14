@@ -12,18 +12,15 @@ namespace AnimalGame.MapTest
         [SerializeField] private Sprite passableSign;
         [SerializeField] private Sprite unpassableSign;
 
-        [Header("Robot Reachability Scan")]
-        [Tooltip("Number of directions tested around the robot.")]
-        [SerializeField, Range(8, 128)] private int angularSamples = 64;
+        [Header("Screen-space Grid")]
+        [Tooltip("Screen-pixel spacing between neighboring rows and columns.")]
+        [SerializeField, Min(4f)] private float gridSpacingPixels = 56f;
 
-        [Tooltip("Number of signs tested along every direction.")]
-        [SerializeField, Range(2, 32)] private int radialSamples = 16;
+        [Tooltip("Screen-pixel radius around the robot marker where signs are hidden.")]
+        [SerializeField, Min(0f)] private float centerExclusionRadiusPixels = 36f;
 
-        [Tooltip("The first sign is placed this many logical map meters away from the robot.")]
-        [SerializeField, Min(0f)] private float innerRadiusMeters = 20f;
-
-        [Tooltip("Maximum logical map distance covered by the reachability scan.")]
-        [SerializeField, Min(0.1f)] private float displayRadiusMeters = 120f;
+        [Tooltip("Maximum logical map distance from the robot where signs are shown. Set to 0 for no distance limit.")]
+        [SerializeField, Min(0f)] private float displayRadiusMeters = 120f;
 
         [Tooltip("Safety limit for the number of pooled UI signs.")]
         [SerializeField, Range(64, 4096)] private int maximumVisibleSigns = 1600;
@@ -32,10 +29,7 @@ namespace AnimalGame.MapTest
 
         [Header("Presentation")]
         [SerializeField, Min(1f)] private float iconSize = 7.6f;
-        [SerializeField, Min(0.1f)] private float refreshRate = 5f;
-
-        [Tooltip("Opacity used beyond the first blocking point to show that the rest of that direct route is unreachable.")]
-        [SerializeField, Range(0.05f, 1f)] private float blockedContinuationOpacity = 0.45f;
+        [SerializeField, Min(0.1f)] private float refreshRate = 3f;
 
         private readonly List<Image> pooledImages = new List<Image>();
 
@@ -45,6 +39,8 @@ namespace AnimalGame.MapTest
         private RobotMover playerRobot;
         private GameObject overlayRoot;
         private float nextRefreshTime;
+        private int activeColumns = 1;
+        private int activeRows = 1;
 
         public void Initialize(
             MapTestSceneController mapController,
@@ -67,6 +63,7 @@ namespace AnimalGame.MapTest
             }
 
             CreateOverlayIfNeeded();
+            UpdateGridDimensions();
             EnsureImagePool();
             overlayRoot.SetActive(isActiveAndEnabled);
             nextRefreshTime = 0f;
@@ -118,76 +115,71 @@ namespace AnimalGame.MapTest
             }
 
             CreateOverlayIfNeeded();
+            UpdateGridDimensions();
             EnsureImagePool();
 
-            Vector2 mapForward = map.WorldDirectionToMapDirection(playerRobot.Forward);
-            if (mapForward.sqrMagnitude < 0.000001f)
-                mapForward = Vector2.up;
-
-            float minimumRadius = Mathf.Min(innerRadiusMeters, displayRadiusMeters);
+            Bounds bounds = map.WorldBounds;
+            float mapPlaneDistance = Mathf.Abs(
+                bounds.center.z - mapCamera.transform.position.z);
+            float availableViewport = Mathf.Max(0f, 1f - viewportMargin * 2f);
+            Vector3 robotViewport = mapCamera.WorldToViewportPoint(playerRobot.transform.position);
+            Vector2 robotScreenPosition = new Vector2(
+                robotViewport.x * Screen.width,
+                robotViewport.y * Screen.height);
+            float exclusionRadiusSquared =
+                centerExclusionRadiusPixels * centerExclusionRadiusPixels;
             int imageIndex = 0;
-            int directions = Mathf.Max(8, angularSamples);
-            int rings = Mathf.Max(2, radialSamples);
 
-            for (int directionIndex = 0; directionIndex < directions; directionIndex++)
+            for (int row = 0; row < activeRows; row++)
             {
-                float angle = directionIndex * (360f / directions);
-                Vector2 mapDirection = Rotate(mapForward, angle);
-                Vector2 previousMapPosition = robotMapPosition;
-                bool routeBlocked = false;
+                float rowProgress = (row + 0.5f) / activeRows;
+                float viewportY = viewportMargin + availableViewport * rowProgress;
 
-                for (int ringIndex = 0; ringIndex < rings; ringIndex++)
+                for (int column = 0; column < activeColumns; column++)
                 {
-                    float ringProgress = rings > 1
-                        ? ringIndex / (float)(rings - 1)
-                        : 1f;
-                    float radius = Mathf.Lerp(minimumRadius, displayRadiusMeters, ringProgress);
-                    Vector2 targetMapPosition = robotMapPosition + mapDirection * radius;
-
-                    if (!map.TrySampleMapPosition(targetMapPosition, out _))
-                        break;
-
-                    bool wasAlreadyBlocked = routeBlocked;
-                    if (!routeBlocked)
-                    {
-                        SlopeTraversalResult result = evaluator.EvaluateMapPath(
-                            previousMapPosition,
-                            targetMapPosition);
-
-                        if (!result.HasData)
-                        {
-                            previousMapPosition = targetMapPosition;
-                            continue;
-                        }
-
-                        routeBlocked = !result.IsPassable;
-                    }
-
-                    Vector3 worldPosition = map.MapPositionToWorld(targetMapPosition);
-                    Vector3 viewportPosition = mapCamera.WorldToViewportPoint(worldPosition);
-                    previousMapPosition = targetMapPosition;
-
-                    if (viewportPosition.z <= 0f
-                        || viewportPosition.x < viewportMargin
-                        || viewportPosition.x > 1f - viewportMargin
-                        || viewportPosition.y < viewportMargin
-                        || viewportPosition.y > 1f - viewportMargin)
+                    float columnProgress = (column + 0.5f) / activeColumns;
+                    float viewportX = viewportMargin + availableViewport * columnProgress;
+                    Vector2 screenPosition = new Vector2(
+                        viewportX * Screen.width,
+                        viewportY * Screen.height);
+                    if ((screenPosition - robotScreenPosition).sqrMagnitude
+                        < exclusionRadiusSquared)
                     {
                         continue;
                     }
+
+                    Vector3 worldPosition = mapCamera.ViewportToWorldPoint(
+                        new Vector3(viewportX, viewportY, mapPlaneDistance));
+                    if (!map.TrySampleWorldPosition(
+                            worldPosition,
+                            out Vector2 targetMapPosition,
+                            out _))
+                    {
+                        continue;
+                    }
+
+                    if (displayRadiusMeters > 0f
+                        && Vector2.Distance(robotMapPosition, targetMapPosition)
+                        > displayRadiusMeters)
+                    {
+                        continue;
+                    }
+
+                    SlopeTraversalResult result = evaluator.EvaluateMapPath(
+                        robotMapPosition,
+                        targetMapPosition);
+                    if (!result.HasData)
+                        continue;
 
                     if (imageIndex >= pooledImages.Count)
                         goto Finish;
 
                     Image image = pooledImages[imageIndex++];
-                    PositionImage(image, new Vector2(viewportPosition.x, viewportPosition.y));
+                    PositionImage(image, new Vector2(viewportX, viewportY));
 
-                    Sprite desiredSprite = routeBlocked ? unpassableSign : passableSign;
+                    Sprite desiredSprite = result.IsPassable ? passableSign : unpassableSign;
                     image.sprite = desiredSprite;
-                    float opacity = routeBlocked && wasAlreadyBlocked
-                        ? blockedContinuationOpacity
-                        : 1f;
-                    image.color = new Color(1f, 1f, 1f, opacity);
+                    image.color = Color.white;
                     SetImageEnabled(image, desiredSprite != null);
                 }
             }
@@ -213,7 +205,9 @@ namespace AnimalGame.MapTest
 
             Canvas canvas = overlayRoot.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.overrideSorting = true;
             canvas.sortingOrder = 20;
+            overlayRoot.transform.rotation = Quaternion.identity;
 
             CanvasScaler scaler = overlayRoot.GetComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
@@ -228,7 +222,7 @@ namespace AnimalGame.MapTest
         {
             int requiredCount = Mathf.Min(
                 Mathf.Max(64, maximumVisibleSigns),
-                Mathf.Max(8, angularSamples) * Mathf.Max(2, radialSamples));
+                Mathf.Max(1, activeColumns * activeRows));
             int uiLayer = LayerMask.NameToLayer("UI");
 
             while (pooledImages.Count < requiredCount)
@@ -252,6 +246,27 @@ namespace AnimalGame.MapTest
                 SetImageEnabled(pooledImages[i], false);
         }
 
+        private void UpdateGridDimensions()
+        {
+            float availableFraction = Mathf.Max(0.01f, 1f - viewportMargin * 2f);
+            float spacing = Mathf.Max(4f, gridSpacingPixels);
+            activeColumns = Mathf.Max(
+                1,
+                Mathf.FloorToInt(Screen.width * availableFraction / spacing));
+            activeRows = Mathf.Max(
+                1,
+                Mathf.FloorToInt(Screen.height * availableFraction / spacing));
+
+            int requestedCount = activeColumns * activeRows;
+            int limit = Mathf.Max(64, maximumVisibleSigns);
+            if (requestedCount <= limit)
+                return;
+
+            float scale = Mathf.Sqrt(limit / (float)requestedCount);
+            activeColumns = Mathf.Max(1, Mathf.FloorToInt(activeColumns * scale));
+            activeRows = Mathf.Max(1, Mathf.FloorToInt(activeRows * scale));
+        }
+
         private void PositionImage(Image image, Vector2 viewportPosition)
         {
             RectTransform rect = image.rectTransform;
@@ -259,16 +274,8 @@ namespace AnimalGame.MapTest
             rect.anchorMax = viewportPosition;
             rect.anchoredPosition = Vector2.zero;
             rect.sizeDelta = Vector2.one * iconSize;
-        }
-
-        private static Vector2 Rotate(Vector2 vector, float degrees)
-        {
-            float radians = degrees * Mathf.Deg2Rad;
-            float sine = Mathf.Sin(radians);
-            float cosine = Mathf.Cos(radians);
-            return new Vector2(
-                vector.x * cosine - vector.y * sine,
-                vector.x * sine + vector.y * cosine);
+            rect.localRotation = Quaternion.identity;
+            rect.localScale = Vector3.one;
         }
 
         private static void SetImageEnabled(Image image, bool isEnabled)
@@ -285,10 +292,9 @@ namespace AnimalGame.MapTest
 
         private void OnValidate()
         {
-            angularSamples = Mathf.Max(8, angularSamples);
-            radialSamples = Mathf.Max(2, radialSamples);
-            innerRadiusMeters = Mathf.Max(0f, innerRadiusMeters);
-            displayRadiusMeters = Mathf.Max(0.1f, displayRadiusMeters);
+            gridSpacingPixels = Mathf.Max(4f, gridSpacingPixels);
+            centerExclusionRadiusPixels = Mathf.Max(0f, centerExclusionRadiusPixels);
+            displayRadiusMeters = Mathf.Max(0f, displayRadiusMeters);
             maximumVisibleSigns = Mathf.Max(64, maximumVisibleSigns);
             iconSize = Mathf.Max(1f, iconSize);
             refreshRate = Mathf.Max(0.1f, refreshRate);

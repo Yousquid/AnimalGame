@@ -92,10 +92,11 @@ namespace AnimalGame.RobotMap
 
                 if (IsSlopeBlocked)
                 {
-                    CurrentSpeed = Mathf.MoveTowards(
-                        CurrentSpeed,
-                        0f,
-                        traversalEvaluator.BlockedBraking * Time.deltaTime);
+                    // Treat an impassable slope like a directional collision.
+                    // Clearing forward momentum immediately lets the next input
+                    // be evaluated in reverse instead of repeatedly probing the
+                    // same blocked direction while the robot slowly brakes.
+                    CurrentSpeed = 0f;
                     return;
                 }
             }
