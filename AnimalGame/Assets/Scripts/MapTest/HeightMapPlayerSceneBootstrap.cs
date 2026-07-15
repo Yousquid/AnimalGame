@@ -10,6 +10,7 @@ namespace AnimalGame.MapTest
         private const string CameraResourcePath = "Camera/RobotCamera";
         private const string TraversalResourcePath = "Traversal/HeightMapTraversalEvaluator";
         private const string OverlayResourcePath = "Traversal/TraversalOverlay";
+        private const string MainUiResourcePath = "UI/MainUI";
 
         [Header("Player Spawn")]
         [Tooltip("Initial player position in logical map meters. Values outside the map are clamped to its edges.")]
@@ -40,8 +41,11 @@ namespace AnimalGame.MapTest
             GameObject overlayObject = InstantiateResource(
                 OverlayResourcePath,
                 "Traversal Overlay");
+            GameObject mainUiObject = InstantiateResource(
+                MainUiResourcePath,
+                "Main UI");
             if (mapObject == null || robotObject == null || cameraObject == null
-                || traversalObject == null || overlayObject == null)
+                || traversalObject == null || overlayObject == null || mainUiObject == null)
             {
                 enabled = false;
                 return;
