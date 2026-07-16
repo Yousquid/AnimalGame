@@ -106,7 +106,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e8035d5bea34f264a9970a9c4925c8f4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  positionDamping: 0.33
+  positionDamping: 0.18
   rotationDamping: 0.28
   followTargetRotation: 1
 --- !u!114 &9082400791978122201
