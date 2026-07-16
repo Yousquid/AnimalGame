@@ -67,3 +67,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9872b6121e68dda46b20083085d5b46d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  robotBodySprite: {fileID: 21300000, guid: 9f95effeee85ff141a7551056e6263b0, type: 3}
+  bodyDiameter: 0.72
+  bodyArtworkVisibleDiameterPixels: 85.4
+  bodyFillDiameterRatio: 0.92
+  bodyFillColor: {r: 0.008, g: 0.011, b: 0.014, a: 0.94}
+  bodyOutlineColor: {r: 0.89622635, g: 0.97395486, b: 1, a: 1}
+  indicatorSprite: {fileID: 21300000, guid: 7ebc16e768ef2ec49bf9b1a1bd364849, type: 3}
+  indicatorScale: 1.35
+  indicatorRotationOffsetDegrees: 0
+  indicatorColor: {r: 0.92, g: 0.98, b: 1, a: 1}
+  showMotionTail: 0
