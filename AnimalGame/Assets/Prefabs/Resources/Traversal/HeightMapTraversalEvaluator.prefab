@@ -44,7 +44,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8df474af5b4344a1ba7a754f09c65da8, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  blockSlopeAngle: 30
+  blockSlopeAngle: 45
   maximumDownhillSlopeAngle: 55
   movementProbeDistanceMeters: 2
   movementPathSamples: 8
