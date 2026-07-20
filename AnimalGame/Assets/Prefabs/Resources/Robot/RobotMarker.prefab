@@ -58,8 +58,12 @@ MonoBehaviour:
   levelTwoMinimumTopSpeedMultiplier: 0.55
   levelTwoMaximumSlideSpeedFraction: 0.18
   levelTwoSlideAcceleration: 2.2
+  levelTwoPhysicalDownhillWeight: 0.3
+  levelTwoLateralSlipRetention: 0.2
+  levelTwoLateralGripAcceleration: 12
   levelThreeForwardSpeedMultiplier: 0.5
   levelThreeSlideSpeedFraction: 0.55
+  levelThreePhysicalDownhillWeight: 0.85
   levelThreeSlideAcceleration: 10
   levelThreeLateralDriftSpeedFraction: 0.65
   levelThreeInitialLateralDriftStrength: 0.3

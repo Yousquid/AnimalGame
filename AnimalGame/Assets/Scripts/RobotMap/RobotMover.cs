@@ -49,12 +49,24 @@ namespace AnimalGame.RobotMap
         [Tooltip("How quickly the terrain velocity builds toward the Level Two slide speed, in Unity world units per second squared.")]
         [SerializeField, Min(0f)] private float levelTwoSlideAcceleration = 2.2f;
 
+        [Tooltip("How much Level Two sliding follows the terrain's physical steepest-downhill direction. The remaining weight follows the robot's fore/aft traction axis.")]
+        [SerializeField, Range(0f, 1f)] private float levelTwoPhysicalDownhillWeight = 0.3f;
+
+        [Tooltip("Fraction of Level Two slide perpendicular to the robot's fore/aft axis that remains after lateral traction. Lower values reduce sideways drifting.")]
+        [SerializeField, Range(0f, 1f)] private float levelTwoLateralSlipRetention = 0.2f;
+
+        [Tooltip("How quickly old Level Two lateral velocity is pulled toward the traction-limited target, in Unity world units per second squared.")]
+        [SerializeField, Min(0f)] private float levelTwoLateralGripAcceleration = 12f;
+
         [Header("Slope Level III")]
         [Tooltip("Commanded uphill top-speed multiplier on Level Three. A moderate value lets the robot struggle forward near the Level Three entrance, while increasingly strong slide can still overpower it on steeper terrain.")]
         [SerializeField, Range(0f, 1f)] private float levelThreeForwardSpeedMultiplier = 0.5f;
 
         [Tooltip("Natural downhill slide speed on an almost vertical Level Three surface, expressed as a fraction of base forward speed.")]
         [SerializeField, Range(0f, 2f)] private float levelThreeSlideSpeedFraction = 0.55f;
+
+        [Tooltip("How much Level Three sliding follows the terrain's physical steepest-downhill direction. The remaining weight follows the robot's fore/aft axis; high values represent a major loss of grip.")]
+        [SerializeField, Range(0f, 1f)] private float levelThreePhysicalDownhillWeight = 0.85f;
 
         [Tooltip("How quickly the terrain velocity builds toward the Level Three downhill and lateral target, in Unity world units per second squared.")]
         [SerializeField, Min(0f)] private float levelThreeSlideAcceleration = 6f;
@@ -208,13 +220,20 @@ namespace AnimalGame.RobotMap
                 ref accelerationBonus,
                 ref terrainVelocityAcceleration,
                 out targetTerrainTurnSpeed);
+            UpdateDownhillHeadingRecoveryState(
+                wasLevelThreeUnstable,
+                groundResult);
+            if (IsAutoAligningDownhill
+                && downhillHeadingRecoveryDirection.sqrMagnitude > 0.000001f)
+            {
+                targetTerrainVelocity = downhillHeadingRecoveryDirection.normalized
+                                        * targetTerrainVelocity.magnitude;
+            }
             CurrentTerrainVelocity = Vector2.MoveTowards(
                 CurrentTerrainVelocity,
                 targetTerrainVelocity,
                 terrainVelocityAcceleration * Time.deltaTime);
-            UpdateDownhillHeadingRecoveryState(
-                wasLevelThreeUnstable,
-                groundResult);
+            ApplyLevelTwoLateralGrip(groundResult, targetTerrainVelocity);
             ApplyDownhillSlideDirectionRecovery();
             float terrainTurnAcceleration = IsLevelThreeUnstable
                 ? levelThreeAngularDriftAcceleration
@@ -315,6 +334,7 @@ namespace AnimalGame.RobotMap
             float levelOneAngle = traversalEvaluator.LevelOneMaximumUphillAngle;
             float levelThreeAngle = traversalEvaluator.LevelThreeUphillAngle;
             float surfaceAngle = groundResult.MaximumSurfaceSlopeAngle;
+            float directionalAngle = Mathf.Abs(groundResult.SignedSlopeAngle);
             UphillSlopeLevel surfaceLevel =
                 traversalEvaluator.ClassifyUphillSlope(surfaceAngle);
 
@@ -324,25 +344,35 @@ namespace AnimalGame.RobotMap
                 float levelTwoProgress = Mathf.InverseLerp(
                     levelOneAngle,
                     levelThreeAngle,
-                    surfaceAngle);
+                    directionalAngle);
                 float slideSpeed = forwardSpeed
                                    * levelTwoMaximumSlideSpeedFraction
                                    * levelTwoProgress;
-                terrainVelocity += groundResult.DownhillWorldDirection * slideSpeed;
+                Vector2 slideVector = CalculateTractionAdjustedSlideVector(
+                    groundResult.DownhillWorldDirection,
+                    levelTwoPhysicalDownhillWeight,
+                    levelTwoLateralSlipRetention);
+                terrainVelocity += slideVector * slideSpeed;
             }
             else if (surfaceLevel == UphillSlopeLevel.LevelThree)
             {
                 terrainVelocityAcceleration = levelThreeSlideAcceleration;
+                float effectiveLevelThreeAngle = Mathf.Max(
+                    levelThreeAngle,
+                    directionalAngle);
                 float levelThreeProgress = Mathf.InverseLerp(
                     levelThreeAngle,
                     89f,
-                    surfaceAngle);
+                    effectiveLevelThreeAngle);
                 float slideFraction = Mathf.Lerp(
                     levelTwoMaximumSlideSpeedFraction,
                     levelThreeSlideSpeedFraction,
                     levelThreeProgress);
-                terrainVelocity += groundResult.DownhillWorldDirection
-                                   * (forwardSpeed * slideFraction);
+                Vector2 slideVector = CalculateTractionAdjustedSlideVector(
+                    groundResult.DownhillWorldDirection,
+                    levelThreePhysicalDownhillWeight,
+                    1f);
+                terrainVelocity += slideVector * forwardSpeed * slideFraction;
             }
 
             if (groundResult.SignedSlopeAngle > levelOneAngle)
@@ -403,6 +433,62 @@ namespace AnimalGame.RobotMap
             }
 
             return terrainVelocity;
+        }
+
+        private Vector2 CalculateTractionAdjustedSlideVector(
+            Vector2 physicalDownhillDirection,
+            float physicalDownhillWeight,
+            float lateralSlipRetention)
+        {
+            if (physicalDownhillDirection.sqrMagnitude < 0.000001f)
+                return Vector2.zero;
+
+            Vector2 downhill = physicalDownhillDirection.normalized;
+            Vector2 bodyForward = ((Vector2)transform.up).normalized;
+            Vector2 bodyAxisDownhill = bodyForward
+                                       * Vector2.Dot(downhill, bodyForward);
+            float physicalWeight = Mathf.Clamp01(physicalDownhillWeight);
+            Vector2 blendedSlide = bodyAxisDownhill * (1f - physicalWeight)
+                                   + downhill * physicalWeight;
+
+            Vector2 longitudinal = bodyForward
+                                   * Vector2.Dot(blendedSlide, bodyForward);
+            Vector2 lateral = blendedSlide - longitudinal;
+            return longitudinal + lateral * Mathf.Clamp01(lateralSlipRetention);
+        }
+
+        private void ApplyLevelTwoLateralGrip(
+            SlopeTraversalResult groundResult,
+            Vector2 targetTerrainVelocity)
+        {
+            if (IsAutoAligningDownhill
+                || !groundResult.HasData
+                || traversalEvaluator == null
+                || traversalEvaluator.ClassifyUphillSlope(
+                    groundResult.MaximumSurfaceSlopeAngle)
+                != UphillSlopeLevel.LevelTwo)
+            {
+                return;
+            }
+
+            Vector2 bodyForward = ((Vector2)transform.up).normalized;
+            Vector2 currentLongitudinal = bodyForward
+                                          * Vector2.Dot(
+                                              CurrentTerrainVelocity,
+                                              bodyForward);
+            Vector2 currentLateral = CurrentTerrainVelocity
+                                     - currentLongitudinal;
+            Vector2 targetLongitudinal = bodyForward
+                                         * Vector2.Dot(
+                                             targetTerrainVelocity,
+                                             bodyForward);
+            Vector2 targetLateral = targetTerrainVelocity
+                                    - targetLongitudinal;
+            Vector2 correctedLateral = Vector2.MoveTowards(
+                currentLateral,
+                targetLateral,
+                levelTwoLateralGripAcceleration * Time.deltaTime);
+            CurrentTerrainVelocity = currentLongitudinal + correctedLateral;
         }
 
         private static bool IsTryingToClimbLevelThree(
@@ -638,9 +724,18 @@ namespace AnimalGame.RobotMap
             levelTwoMaximumSlideSpeedFraction = Mathf.Clamp01(
                 levelTwoMaximumSlideSpeedFraction);
             levelTwoSlideAcceleration = Mathf.Max(0f, levelTwoSlideAcceleration);
+            levelTwoPhysicalDownhillWeight = Mathf.Clamp01(
+                levelTwoPhysicalDownhillWeight);
+            levelTwoLateralSlipRetention = Mathf.Clamp01(
+                levelTwoLateralSlipRetention);
+            levelTwoLateralGripAcceleration = Mathf.Max(
+                0f,
+                levelTwoLateralGripAcceleration);
             levelThreeSlideSpeedFraction = Mathf.Max(
                 levelTwoMaximumSlideSpeedFraction,
                 levelThreeSlideSpeedFraction);
+            levelThreePhysicalDownhillWeight = Mathf.Clamp01(
+                levelThreePhysicalDownhillWeight);
             levelThreeSlideAcceleration = Mathf.Max(0f, levelThreeSlideAcceleration);
             levelThreeLateralDriftSpeedFraction = Mathf.Max(
                 0f,
