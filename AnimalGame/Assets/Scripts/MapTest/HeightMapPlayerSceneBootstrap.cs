@@ -160,7 +160,7 @@ namespace AnimalGame.MapTest
             data.normal.textColor = new Color(0.75f, 0.9f, 0.93f);
 
             float left = Screen.width - 330f;
-            GUI.Box(new Rect(left, 18f, 312f, 174f), GUIContent.none);
+            GUI.Box(new Rect(left, 18f, 312f, 250f), GUIContent.none);
             GUI.Label(new Rect(left + 16f, 28f, 280f, 26f), "ROBOT TERRAIN DATA", title);
             if (!playerInsideMap)
             {
@@ -172,16 +172,26 @@ namespace AnimalGame.MapTest
                 $"POSITION   X {playerMapPosition.x:F1}m   Y {playerMapPosition.y:F1}m", data);
             GUI.Label(new Rect(left + 16f, 88f, 280f, 26f), $"CURRENT HEIGHT   {playerHeight:F1}m", data);
             string slopeText = robot != null && robot.CurrentTraversalResult.HasData
-                ? $"FORWARD SLOPE   {robot.CurrentTraversalResult.SlopeAngle:F1} deg"
+                ? $"FORWARD SLOPE   {robot.CurrentTraversalResult.SignedSlopeAngle:+0.0;-0.0;0.0} deg"
                 : "FORWARD SLOPE   NO DATA";
             GUI.Label(new Rect(left + 16f, 115f, 280f, 26f), slopeText, data);
+            string surfaceText = robot != null && robot.CurrentTraversalResult.HasData
+                ? $"SURFACE MAX     {robot.CurrentTraversalResult.MaximumSurfaceSlopeAngle:F1} deg"
+                : "SURFACE MAX     NO DATA";
+            GUI.Label(new Rect(left + 16f, 142f, 280f, 26f), surfaceText, data);
+            string stepText = robot != null && robot.CurrentTraversalResult.HasData
+                ? $"STEP RESIDUAL   {robot.CurrentTraversalResult.MaximumStepHeight:F2}m"
+                : "STEP RESIDUAL   NO DATA";
+            GUI.Label(new Rect(left + 16f, 169f, 280f, 26f), stepText, data);
             GUIStyle state = new GUIStyle(data);
             state.normal.textColor = robot != null && robot.IsSlopeBlocked
                 ? new Color(1f, 0.35f, 0.28f)
                 : new Color(0.35f, 1f, 0.66f);
             GUI.Label(
-                new Rect(left + 16f, 142f, 280f, 26f),
-                robot != null && robot.IsSlopeBlocked ? "TRAVERSAL   BLOCKED" : "TRAVERSAL   PASSABLE",
+                new Rect(left + 16f, 196f, 280f, 26f),
+                robot != null && robot.IsSlopeBlocked
+                    ? $"TRAVERSAL   BLOCKED ({robot.CurrentTraversalResult.BlockReason})"
+                    : "TRAVERSAL   PASSABLE",
                 state);
         }
 
@@ -192,7 +202,7 @@ namespace AnimalGame.MapTest
 
             float width = 144f;
             float left = Screen.width - width - 18f;
-            var panelRect = new Rect(left, 202f, width, 46f);
+            var panelRect = new Rect(left, 278f, width, 46f);
             GUI.Box(panelRect, GUIContent.none);
 
             GUIStyle frameRateStyle = new GUIStyle(GUI.skin.label)
@@ -209,7 +219,7 @@ namespace AnimalGame.MapTest
                     : new Color(1f, 0.35f, 0.28f);
 
             GUI.Label(
-                new Rect(left + 6f, 207f, width - 12f, 34f),
+                new Rect(left + 6f, 283f, width - 12f, 34f),
                 $"FPS  {displayedFramesPerSecond:F1}",
                 frameRateStyle);
         }
