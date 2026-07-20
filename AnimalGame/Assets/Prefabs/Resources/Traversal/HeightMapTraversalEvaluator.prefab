@@ -44,11 +44,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8df474af5b4344a1ba7a754f09c65da8, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  robotFootprintLengthMeters: 4
-  robotFootprintWidthMeters: 3
-  footprintLongitudinalSamples: 5
-  footprintLateralSamples: 5
-  blockSlopeAngle: 45
+  robotFootprintLengthMeters: 2
+  robotFootprintWidthMeters: 1.5
+  footprintLongitudinalSamples: 7
+  footprintLateralSamples: 7
+  blockSlopeAngle: 36
   maximumDownhillSlopeAngle: 55
   minimumBlockingSlopeLengthMeters: 1.5
   maximumStepHeightMeters: 0.65

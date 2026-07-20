@@ -49,11 +49,11 @@ MonoBehaviour:
   mapHeightMeters: 250
   minimumHeightMeters: 0
   maximumHeightMeters: 70
-  bakedHeightResolution: 1024
+  bakedHeightResolution: 2048
   normalizeSourceRange: 1
   surfaceSmoothingSigmaMeters: 0.75
   previewResolution: 2160
-  contourIntervalMeters: 10
+  contourIntervalMeters: 8
   pixelsPerUnit: 32
   minimumContourWidth: 0.7
   maximumContourWidth: 3.68
