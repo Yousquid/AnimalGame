@@ -45,16 +45,18 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   heightMap: {fileID: 2800000, guid: 8b67fa9e7636ced418527687e79fd9a3, type: 3}
-  mapWidthMeters: 1000
-  mapHeightMeters: 1000
+  mapWidthMeters: 250
+  mapHeightMeters: 250
   minimumHeightMeters: 0
   maximumHeightMeters: 70
+  bakedHeightResolution: 2048
+  normalizeSourceRange: 1
+  surfaceSmoothingSigmaMeters: 0.75
   previewResolution: 2160
-  contourIntervalMeters: 10
+  contourIntervalMeters: 8
   pixelsPerUnit: 32
   minimumContourWidth: 0.7
   maximumContourWidth: 3.68
-  contourHeightSmoothing: 0.8
   maximumContourCoverage: 0.3
   contourEdgeSoftness: 0.4
   viewportHeightSamples: 64

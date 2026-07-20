@@ -14,12 +14,8 @@ Shader "AnimalGame/Dynamic Height Contours"
         _MaximumLineWidth ("Maximum Line Width", Float) = 3
         _MinimumOpacity ("Minimum Opacity", Range(0, 1)) = 0.15
         _MaximumOpacity ("Maximum Opacity", Range(0, 1)) = 1
-        _HeightSmoothing ("Height Smoothing", Range(0, 1)) = 0.65
-        _HeightMipLevel ("Height Mip Level", Float) = 0
         _MaximumCoverage ("Maximum Contour Coverage", Range(0.1, 0.7)) = 0.45
         _EdgeSoftness ("Edge Softness", Range(0.1, 1.5)) = 0.4
-        _SourceMinimum ("Source Minimum", Float) = 0
-        _SourceMaximum ("Source Maximum", Float) = 1
     }
 
     SubShader
@@ -61,7 +57,6 @@ Shader "AnimalGame/Dynamic Height Contours"
 
             sampler2D _MainTex;
             sampler2D _HeightTex;
-            float4 _HeightTex_TexelSize;
             fixed4 _ContourColor;
             float _MinimumHeight;
             float _MaximumHeight;
@@ -72,12 +67,8 @@ Shader "AnimalGame/Dynamic Height Contours"
             float _MaximumLineWidth;
             float _MinimumOpacity;
             float _MaximumOpacity;
-            float _HeightSmoothing;
-            float _HeightMipLevel;
             float _MaximumCoverage;
             float _EdgeSoftness;
-            float _SourceMinimum;
-            float _SourceMaximum;
 
             v2f vert(appdata input)
             {
@@ -91,18 +82,10 @@ Shader "AnimalGame/Dynamic Height Contours"
             fixed4 frag(v2f input) : SV_Target
             {
                 fixed4 baseColor = tex2D(_MainTex, input.uv) * input.color;
-                float4 heightSample = float4(input.uv, 0.0, _HeightMipLevel);
-                float sourceCenter = tex2Dlod(_HeightTex, heightSample).r;
-                float2 texel = _HeightTex_TexelSize.xy * exp2(_HeightMipLevel);
-                float sourceCrossAverage = (
-                    tex2Dlod(_HeightTex, float4(input.uv + float2(texel.x, 0.0), 0.0, _HeightMipLevel)).r
-                    + tex2Dlod(_HeightTex, float4(input.uv - float2(texel.x, 0.0), 0.0, _HeightMipLevel)).r
-                    + tex2Dlod(_HeightTex, float4(input.uv + float2(0.0, texel.y), 0.0, _HeightMipLevel)).r
-                    + tex2Dlod(_HeightTex, float4(input.uv - float2(0.0, texel.y), 0.0, _HeightMipLevel)).r) * 0.25;
-                float sourceBlurred = lerp(sourceCenter, sourceCrossAverage, 0.5);
-                float sourceGray = lerp(sourceCenter, sourceBlurred, saturate(_HeightSmoothing));
-                float normalizedHeight = saturate(
-                    (sourceGray - _SourceMinimum) / max(0.0001, _SourceMaximum - _SourceMinimum));
+                // This texture is the same normalized physical surface sampled by
+                // movement and traversal UI. Only screen-space antialiasing below may
+                // alter presentation; contour positions never use a separate blur/LOD.
+                float normalizedHeight = saturate(tex2D(_HeightTex, input.uv).r);
                 float heightMeters = lerp(_MinimumHeight, _MaximumHeight, normalizedHeight);
 
                 float interval = max(0.0001, _ContourInterval);

@@ -9,15 +9,39 @@ namespace AnimalGame.MapTest
         private const float HighestVisibleContourOpacity = 1f;
 
         [Header("Height Source")]
+        [Tooltip("Original readable 8-bit grayscale image used only as the source for the runtime physical-height bake. It is no longer sampled directly by movement or contours.")]
         [SerializeField] private Texture2D heightMap;
+
+        [Tooltip("Physical width represented by the complete height source, in logical map meters.")]
         [SerializeField, Min(1f)] private float mapWidthMeters = 1000f;
+
+        [Tooltip("Physical height represented by the complete height source, in logical map meters.")]
         [SerializeField, Min(1f)] private float mapHeightMeters = 1000f;
+
+        [Tooltip("Elevation assigned to the lowest normalized value in the baked height field.")]
         [SerializeField] private float minimumHeightMeters;
+
+        [Tooltip("Elevation assigned to the highest normalized value in the baked height field.")]
         [SerializeField] private float maximumHeightMeters = 200f;
 
+        [Header("Physical Height Field Bake")]
+        [Tooltip("Square resolution of the shared runtime height field. Higher values retain smaller terrain details but increase bake time and memory.")]
+        [SerializeField, Range(128, 2048)] private int bakedHeightResolution = 1024;
+
+        [Tooltip("Maps the darkest and brightest values actually present in the 8-bit source to the configured minimum and maximum elevations. Disable to preserve the full 0-to-1 grayscale scale.")]
+        [SerializeField] private bool normalizeSourceRange = true;
+
+        [Tooltip("Gaussian standard deviation in logical map meters used to reconstruct a continuous physical surface from 8-bit height steps. About 99.7% of the smoothing kernel lies within three times this distance.")]
+        [SerializeField, Min(0f)] private float surfaceSmoothingSigmaMeters = 0.75f;
+
         [Header("Visualization")]
+        [Tooltip("Resolution of the generated color-map sprite. This changes visual sharpness only; physical height precision is controlled by Baked Height Resolution.")]
         [SerializeField, Range(128, 8000)] private int previewResolution = 512;
+
+        [Tooltip("Vertical elevation difference in meters between neighboring contour lines.")]
         [SerializeField, Min(1f)] private float contourIntervalMeters = 10f;
+
+        [Tooltip("Generated preview pixels per Unity world unit. Together with Preview Resolution, this determines the rendered map object's world-space size, not its logical meter size.")]
         [SerializeField, Min(1f)] private float pixelsPerUnit = 16f;
 
         [Header("Viewport Contours")]
@@ -26,9 +50,6 @@ namespace AnimalGame.MapTest
 
         [Tooltip("Width of the highest contour currently visible in the camera.")]
         [SerializeField, Range(0.1f, 10f)] private float maximumContourWidth = 3f;
-
-        [Tooltip("Smooths small 8-bit height steps before drawing contours. Higher values remove more echo lines.")]
-        [SerializeField, Range(0f, 1f)] private float contourHeightSmoothing = 0.65f;
 
         [Tooltip("Maximum fraction of the gap between neighboring contours that one line may occupy.")]
         [SerializeField, Range(0.1f, 0.7f)] private float maximumContourCoverage = 0.45f;
@@ -52,26 +73,31 @@ namespace AnimalGame.MapTest
         [Tooltip("Color used at the maximum map height.")]
         [SerializeField] private Color highHeightColor = new Color(0.72f, 0.82f, 0.67f);
 
+        [Tooltip("Base color of all dynamic contour lines before height-dependent opacity is applied.")]
         [SerializeField] private Color contourColor = new Color(0.92f, 0.97f, 1f);
+
+        [Tooltip("Color of the mouse height-probe crosshair in the standalone map inspection scene.")]
         [SerializeField] private Color probeColor = new Color(1f, 0.83f, 0.27f);
 
         private Camera mapCamera;
         private SpriteRenderer mapRenderer;
         private LineRenderer crosshair;
-        private float sourceMinimum;
-        private float sourceMaximum = 1f;
+        private BakedHeightField heightField;
         private bool cursorInsideMap;
         private Vector2 cursorUv;
         private float cursorRawGray;
         private float cursorHeight;
         private Material contourMaterial;
+        private Texture2D generatedPreviewTexture;
+        private Sprite generatedMapSprite;
         private int lastViewportUpdateFrame = -1;
 
         public float VisibleMinimumContourHeight { get; private set; }
         public float VisibleMaximumContourHeight { get; private set; }
         public Vector2 MapSizeMeters => new Vector2(mapWidthMeters, mapHeightMeters);
+        public BakedHeightField HeightField => heightField;
 
-        public bool HasGeneratedMap => mapRenderer != null;
+        public bool HasGeneratedMap => mapRenderer != null && heightField != null;
 
         public Bounds WorldBounds
         {
@@ -92,7 +118,7 @@ namespace AnimalGame.MapTest
                 return;
             }
 
-            FindSourceRange();
+            BakePhysicalHeightField();
             CreateCamera();
             CreateHeightVisualization();
             CreateCrosshair();
@@ -118,9 +144,16 @@ namespace AnimalGame.MapTest
 
         public float SampleHeight(Vector2 uv)
         {
-            float gray = heightMap.GetPixelBilinear(Mathf.Clamp01(uv.x), Mathf.Clamp01(uv.y)).grayscale;
-            float normalized = Mathf.InverseLerp(sourceMinimum, sourceMaximum, gray);
-            return Mathf.Lerp(minimumHeightMeters, maximumHeightMeters, normalized);
+            return heightField != null
+                ? heightField.SampleSurfaceHeight(uv)
+                : minimumHeightMeters;
+        }
+
+        public float SampleDetailHeight(Vector2 uv)
+        {
+            return heightField != null
+                ? heightField.SampleDetailHeight(uv)
+                : minimumHeightMeters;
         }
 
         public bool TrySampleWorldPosition(
@@ -171,6 +204,28 @@ namespace AnimalGame.MapTest
             return true;
         }
 
+        public bool TrySampleDetailMapPosition(
+            Vector2 mapPositionMeters,
+            out float heightMeters)
+        {
+            heightMeters = 0f;
+
+            if (!HasGeneratedMap
+                || mapPositionMeters.x < 0f
+                || mapPositionMeters.x > mapWidthMeters
+                || mapPositionMeters.y < 0f
+                || mapPositionMeters.y > mapHeightMeters)
+            {
+                return false;
+            }
+
+            Vector2 uv = new Vector2(
+                mapPositionMeters.x / Mathf.Max(0.0001f, mapWidthMeters),
+                mapPositionMeters.y / Mathf.Max(0.0001f, mapHeightMeters));
+            heightMeters = SampleDetailHeight(uv);
+            return true;
+        }
+
         public Vector3 MapPositionToWorld(Vector2 mapPositionMeters)
         {
             if (!HasGeneratedMap)
@@ -216,6 +271,18 @@ namespace AnimalGame.MapTest
             return mapDirection.normalized;
         }
 
+        public Vector2 MapDirectionToWorldDirection(Vector2 mapDirection)
+        {
+            if (!HasGeneratedMap || mapDirection.sqrMagnitude < 0.000001f)
+                return Vector2.zero;
+
+            Bounds bounds = WorldBounds;
+            Vector2 worldDirection = new Vector2(
+                mapDirection.x * bounds.size.x / Mathf.Max(0.0001f, mapWidthMeters),
+                mapDirection.y * bounds.size.y / Mathf.Max(0.0001f, mapHeightMeters));
+            return worldDirection.normalized;
+        }
+
         public void UseCamera(Camera cameraToUse)
         {
             if (cameraToUse == null)
@@ -229,17 +296,17 @@ namespace AnimalGame.MapTest
             UpdateVisibleContourRange(mapCamera);
         }
 
-        private void FindSourceRange()
+        private void BakePhysicalHeightField()
         {
-            Color[] pixels = heightMap.GetPixels();
-            sourceMinimum = 1f;
-            sourceMaximum = 0f;
-            for (int i = 0; i < pixels.Length; i++)
-            {
-                float gray = pixels[i].grayscale;
-                sourceMinimum = Mathf.Min(sourceMinimum, gray);
-                sourceMaximum = Mathf.Max(sourceMaximum, gray);
-            }
+            heightField?.Dispose();
+            heightField = BakedHeightField.Bake(
+                heightMap,
+                bakedHeightResolution,
+                MapSizeMeters,
+                minimumHeightMeters,
+                maximumHeightMeters,
+                normalizeSourceRange,
+                surfaceSmoothingSigmaMeters);
         }
 
         private void CreateCamera()
@@ -260,7 +327,7 @@ namespace AnimalGame.MapTest
 
         private void CreateHeightVisualization()
         {
-            var preview = new Texture2D(previewResolution, previewResolution, TextureFormat.RGBA32, false, true)
+            generatedPreviewTexture = new Texture2D(previewResolution, previewResolution, TextureFormat.RGBA32, false, true)
             {
                 name = "Generated Height Preview",
                 filterMode = FilterMode.Bilinear,
@@ -287,13 +354,17 @@ namespace AnimalGame.MapTest
                 }
             }
 
-            preview.SetPixels(colors);
-            preview.Apply(false, false);
-            Sprite sprite = Sprite.Create(preview, new Rect(0f, 0f, preview.width, preview.height), new Vector2(0.5f, 0.5f), pixelsPerUnit);
-            sprite.name = "Height Map Visualization";
+            generatedPreviewTexture.SetPixels(colors);
+            generatedPreviewTexture.Apply(false, false);
+            generatedMapSprite = Sprite.Create(
+                generatedPreviewTexture,
+                new Rect(0f, 0f, generatedPreviewTexture.width, generatedPreviewTexture.height),
+                new Vector2(0.5f, 0.5f),
+                pixelsPerUnit);
+            generatedMapSprite.name = "Height Map Visualization";
             var mapObject = new GameObject("2D Height Map");
             mapRenderer = mapObject.AddComponent<SpriteRenderer>();
-            mapRenderer.sprite = sprite;
+            mapRenderer.sprite = generatedMapSprite;
             CreateDynamicContourMaterial();
         }
 
@@ -307,9 +378,7 @@ namespace AnimalGame.MapTest
             }
 
             contourMaterial = new Material(shader) { name = "Runtime Dynamic Contour Material" };
-            contourMaterial.SetTexture("_HeightTex", heightMap);
-            contourMaterial.SetFloat("_SourceMinimum", sourceMinimum);
-            contourMaterial.SetFloat("_SourceMaximum", sourceMaximum);
+            contourMaterial.SetTexture("_HeightTex", heightField.SurfaceTexture);
             contourMaterial.SetFloat("_MinimumHeight", minimumHeightMeters);
             contourMaterial.SetFloat("_MaximumHeight", maximumHeightMeters);
             contourMaterial.SetFloat("_ContourInterval", contourIntervalMeters);
@@ -344,10 +413,8 @@ namespace AnimalGame.MapTest
             if (cameraToSample == null || contourMaterial == null || !HasGeneratedMap)
                 return;
 
-            int heightMipLevel = CalculateHeightMipLevel(cameraToSample);
             if (!TryFindVisibleTerrainRange(
                     cameraToSample,
-                    heightMipLevel,
                     out float minimumTerrain,
                     out float maximumTerrain))
                 return;
@@ -377,14 +444,12 @@ namespace AnimalGame.MapTest
             VisibleMaximumContourHeight = minimumHeightMeters + highestIndex * interval;
 
             RefreshContourMaterialSettings();
-            contourMaterial.SetFloat("_HeightMipLevel", heightMipLevel);
             contourMaterial.SetFloat("_VisibleMinimumHeight", VisibleMinimumContourHeight);
             contourMaterial.SetFloat("_VisibleMaximumHeight", VisibleMaximumContourHeight);
         }
 
         private bool TryFindVisibleTerrainRange(
             Camera cameraToSample,
-            int heightMipLevel,
             out float minimumTerrain,
             out float maximumTerrain)
         {
@@ -417,7 +482,7 @@ namespace AnimalGame.MapTest
                     Vector2 uv = new Vector2(
                         Mathf.InverseLerp(bounds.min.x, bounds.max.x, world.x),
                         Mathf.InverseLerp(bounds.min.y, bounds.max.y, world.y));
-                    float height = SampleContourHeight(uv, heightMipLevel);
+                    float height = SampleHeight(uv);
                     minimumTerrain = Mathf.Min(minimumTerrain, height);
                     maximumTerrain = Mathf.Max(maximumTerrain, height);
                     validSamples++;
@@ -427,45 +492,6 @@ namespace AnimalGame.MapTest
             return validSamples > 0;
         }
 
-        private int CalculateHeightMipLevel(Camera cameraToSample)
-        {
-            if (!cameraToSample.orthographic || heightMap.mipmapCount <= 1 || !HasGeneratedMap)
-                return 0;
-
-            Bounds bounds = WorldBounds;
-            float worldUnitsPerScreenPixel =
-                cameraToSample.orthographicSize * 2f / Mathf.Max(1, cameraToSample.pixelHeight);
-            float texelsPerWorldUnit = Mathf.Max(
-                heightMap.width / Mathf.Max(0.0001f, bounds.size.x),
-                heightMap.height / Mathf.Max(0.0001f, bounds.size.y));
-            float texelsPerScreenPixel = Mathf.Max(
-                1f,
-                worldUnitsPerScreenPixel * texelsPerWorldUnit);
-
-            return Mathf.Clamp(
-                Mathf.FloorToInt(Mathf.Log(texelsPerScreenPixel, 2f)),
-                0,
-                heightMap.mipmapCount - 1);
-        }
-
-        private float SampleContourHeight(Vector2 uv, int mipLevel)
-        {
-            float mipScale = Mathf.Pow(2f, mipLevel);
-            Vector2 texel = new Vector2(
-                mipScale / heightMap.width,
-                mipScale / heightMap.height);
-            float center = heightMap.GetPixelBilinear(uv.x, uv.y, mipLevel).grayscale;
-            float crossAverage = (
-                heightMap.GetPixelBilinear(uv.x + texel.x, uv.y, mipLevel).grayscale
-                + heightMap.GetPixelBilinear(uv.x - texel.x, uv.y, mipLevel).grayscale
-                + heightMap.GetPixelBilinear(uv.x, uv.y + texel.y, mipLevel).grayscale
-                + heightMap.GetPixelBilinear(uv.x, uv.y - texel.y, mipLevel).grayscale) * 0.25f;
-            float blurred = Mathf.Lerp(center, crossAverage, 0.5f);
-            float gray = Mathf.Lerp(center, blurred, contourHeightSmoothing);
-            float normalized = Mathf.InverseLerp(sourceMinimum, sourceMaximum, gray);
-            return Mathf.Lerp(minimumHeightMeters, maximumHeightMeters, normalized);
-        }
-
         private void RefreshContourMaterialSettings()
         {
             if (contourMaterial == null)
@@ -473,7 +499,6 @@ namespace AnimalGame.MapTest
 
             contourMaterial.SetFloat("_MinimumLineWidth", minimumContourWidth);
             contourMaterial.SetFloat("_MaximumLineWidth", maximumContourWidth);
-            contourMaterial.SetFloat("_HeightSmoothing", contourHeightSmoothing);
             contourMaterial.SetFloat("_MaximumCoverage", maximumContourCoverage);
             contourMaterial.SetFloat("_EdgeSoftness", contourEdgeSoftness);
             contourMaterial.SetFloat("_MinimumOpacity", LowestVisibleContourOpacity);
@@ -546,6 +571,33 @@ namespace AnimalGame.MapTest
             return height < 0.55f
                 ? Color.Lerp(lowHeightColor, middleHeightColor, height / 0.55f)
                 : Color.Lerp(middleHeightColor, highHeightColor, (height - 0.55f) / 0.45f);
+        }
+
+        private void OnDestroy()
+        {
+            heightField?.Dispose();
+            heightField = null;
+
+            if (contourMaterial != null)
+                Destroy(contourMaterial);
+
+            if (generatedMapSprite != null)
+                Destroy(generatedMapSprite);
+
+            if (generatedPreviewTexture != null)
+                Destroy(generatedPreviewTexture);
+        }
+
+        private void OnValidate()
+        {
+            mapWidthMeters = Mathf.Max(1f, mapWidthMeters);
+            mapHeightMeters = Mathf.Max(1f, mapHeightMeters);
+            maximumHeightMeters = Mathf.Max(minimumHeightMeters + 0.01f, maximumHeightMeters);
+            bakedHeightResolution = Mathf.Clamp(bakedHeightResolution, 128, 2048);
+            surfaceSmoothingSigmaMeters = Mathf.Max(0f, surfaceSmoothingSigmaMeters);
+            previewResolution = Mathf.Clamp(previewResolution, 128, 8000);
+            contourIntervalMeters = Mathf.Max(1f, contourIntervalMeters);
+            pixelsPerUnit = Mathf.Max(1f, pixelsPerUnit);
         }
     }
 }

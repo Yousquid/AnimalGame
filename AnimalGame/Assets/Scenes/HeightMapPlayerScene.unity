@@ -167,7 +167,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7f904736fbae4fc1972054c8b2cc7d49, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  playerSpawnMapPositionMeters: {x: 800, y: 765}
+  playerSpawnMapPositionMeters: {x: 200, y: 191}
   showFrameRate: 1
   frameRateRefreshInterval: 0.25
 --- !u!1 &347674280
