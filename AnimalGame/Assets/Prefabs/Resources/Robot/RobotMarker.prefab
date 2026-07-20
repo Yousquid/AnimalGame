@@ -69,9 +69,9 @@ MonoBehaviour:
   levelThreeAngularDriftAcceleration: 180
   levelThreeAngularRecoveryAcceleration: 420
   automaticallyAlignDownhillAfterLevelThreeSlip: 1
-  downhillHeadingAlignmentSpeed: 90
-  downhillHeadingAlignmentTolerance: 3.23
-  downhillHeadingMinimumSlideSpeed: 0.15
+  downhillHeadingAlignmentSpeed: 120
+  downhillHeadingRecoveryDuration: 0.45
+  downhillSlideLateralDamping: 18
   terrainVelocityRecoveryAcceleration: 4
   downhillBoostStartAngle: 4
   downhillFullBoostAngle: 35

@@ -88,11 +88,11 @@ namespace AnimalGame.RobotMap
         [Tooltip("Automatic downhill-facing rotation speed after a Level Three climbing failure, in degrees per second.")]
         [SerializeField, Min(0f)] private float downhillHeadingAlignmentSpeed = 260f;
 
-        [Tooltip("The downhill alignment finishes when the robot is within this many degrees of the measured downhill direction.")]
-        [SerializeField, Range(0.1f, 20f)] private float downhillHeadingAlignmentTolerance = 2.5f;
+        [Tooltip("Fixed duration of the downhill-recovery event. Steering is returned when this time expires, even if the visual heading has not completely aligned.")]
+        [SerializeField, Min(0.05f)] private float downhillHeadingRecoveryDuration = 0.45f;
 
-        [Tooltip("Minimum natural terrain-slide speed required to begin or continue automatic downhill alignment.")]
-        [SerializeField, Min(0f)] private float downhillHeadingMinimumSlideSpeed = 0.15f;
+        [Tooltip("How quickly velocity perpendicular to the measured downhill direction is removed during recovery, in Unity world units per second squared. This can be high while visual rotation remains slow.")]
+        [SerializeField, Min(0f)] private float downhillSlideLateralDamping = 18f;
 
         [Header("Terrain Velocity Recovery")]
         [Tooltip("How quickly old sliding velocity returns to zero after the robot reaches Level One terrain or loses valid terrain data, in Unity world units per second squared.")]
@@ -128,6 +128,8 @@ namespace AnimalGame.RobotMap
         private float unstableLateralBlend;
         private float unstableLateralBlendVelocity;
         private float nextUnstableDirectionChangeTime;
+        private float downhillHeadingRecoveryEndTime;
+        private Vector2 downhillHeadingRecoveryDirection;
 
         public void SetTraversalEvaluator(HeightMapTraversalEvaluator evaluator)
         {
@@ -138,6 +140,8 @@ namespace AnimalGame.RobotMap
             IsDownhillBoosted = false;
             CurrentTerrainTurnSpeed = 0f;
             CurrentTerrainVelocity = Vector2.zero;
+            downhillHeadingRecoveryEndTime = 0f;
+            downhillHeadingRecoveryDirection = Vector2.zero;
             CurrentTraversalResult = SlopeTraversalResult.NoData;
         }
 
@@ -159,8 +163,14 @@ namespace AnimalGame.RobotMap
             float throttle = SelectStrongerInput(keyboardThrottle, gamepadThrottle);
             float steering = SelectStrongerInput(keyboardSteering, gamepadSteering);
 
+            ExpireDownhillHeadingRecoveryIfNeeded();
+
             float probeSign = DetermineProbeSign(throttle);
-            Vector2 probeDirection = (Vector2)transform.up * probeSign;
+            Vector2 probeDirection = IsAutoAligningDownhill
+                                     && downhillHeadingRecoveryDirection
+                                         .sqrMagnitude > 0.000001f
+                ? downhillHeadingRecoveryDirection
+                : (Vector2)transform.up * probeSign;
             SlopeTraversalResult pathResult = traversalEvaluator != null
                 ? traversalEvaluator.EvaluateImmediateSafety(
                     transform.position,
@@ -190,9 +200,10 @@ namespace AnimalGame.RobotMap
             float terrainVelocityAcceleration = terrainVelocityRecoveryAcceleration;
             float targetTerrainTurnSpeed;
             bool wasLevelThreeUnstable = IsLevelThreeUnstable;
+            float terrainThrottle = IsAutoAligningDownhill ? 0f : throttle;
             Vector2 targetTerrainVelocity = CalculateTerrainTargetVelocity(
                 groundResult,
-                throttle,
+                terrainThrottle,
                 ref topSpeedMultiplier,
                 ref accelerationBonus,
                 ref terrainVelocityAcceleration,
@@ -204,6 +215,7 @@ namespace AnimalGame.RobotMap
             UpdateDownhillHeadingRecoveryState(
                 wasLevelThreeUnstable,
                 groundResult);
+            ApplyDownhillSlideDirectionRecovery();
             float terrainTurnAcceleration = IsLevelThreeUnstable
                 ? levelThreeAngularDriftAcceleration
                 : levelThreeAngularRecoveryAcceleration;
@@ -212,11 +224,16 @@ namespace AnimalGame.RobotMap
                 targetTerrainTurnSpeed,
                 terrainTurnAcceleration * Time.deltaTime);
 
-            float baseTargetSpeed = throttle >= 0f
-                ? throttle * forwardSpeed
-                : throttle * reverseSpeed;
+            float movementThrottle = IsAutoAligningDownhill ? 0f : throttle;
+            if (IsAutoAligningDownhill)
+                CurrentSpeed = 0f;
+            float baseTargetSpeed = movementThrottle >= 0f
+                ? movementThrottle * forwardSpeed
+                : movementThrottle * reverseSpeed;
             float targetSpeed = baseTargetSpeed * topSpeedMultiplier;
-            float speedChangeRate = GetSpeedChangeRate(throttle, targetSpeed)
+            float speedChangeRate = GetSpeedChangeRate(
+                                        movementThrottle,
+                                        targetSpeed)
                                     + accelerationBonus;
             CurrentSpeed = Mathf.MoveTowards(
                 CurrentSpeed,
@@ -247,7 +264,7 @@ namespace AnimalGame.RobotMap
                 0f,
                 0f,
                 -CurrentTerrainTurnSpeed * Time.deltaTime);
-            ApplyDownhillHeadingRecovery(groundResult);
+            ApplyDownhillHeadingRecovery();
         }
 
         private void UpdateTurning(
@@ -417,42 +434,77 @@ namespace AnimalGame.RobotMap
             bool hasUsableDownhillDirection = groundResult.HasData
                                               && groundResult.DownhillWorldDirection
                                                   .sqrMagnitude > 0.000001f;
-            bool isNaturallySliding = CurrentTerrainVelocity.magnitude
-                                      >= downhillHeadingMinimumSlideSpeed;
 
             if (wasLevelThreeUnstable
-                && hasUsableDownhillDirection
-                && isNaturallySliding)
+                && hasUsableDownhillDirection)
             {
                 IsAutoAligningDownhill = true;
+                downhillHeadingRecoveryEndTime = Time.time
+                                                   + downhillHeadingRecoveryDuration;
+                downhillHeadingRecoveryDirection =
+                    groundResult.DownhillWorldDirection.normalized;
+                CurrentSpeed = 0f;
                 CurrentTurnSpeed = 0f;
                 CurrentTerrainTurnSpeed = 0f;
             }
 
-            if (!hasUsableDownhillDirection || !isNaturallySliding)
+            if (IsAutoAligningDownhill && hasUsableDownhillDirection)
+            {
+                downhillHeadingRecoveryDirection = Vector2.Lerp(
+                        downhillHeadingRecoveryDirection,
+                        groundResult.DownhillWorldDirection.normalized,
+                        1f - Mathf.Exp(-12f * Time.deltaTime))
+                    .normalized;
+            }
+            else if (IsAutoAligningDownhill)
+            {
                 IsAutoAligningDownhill = false;
+            }
         }
 
-        private void ApplyDownhillHeadingRecovery(
-            SlopeTraversalResult groundResult)
+        private void ExpireDownhillHeadingRecoveryIfNeeded()
         {
-            if (!IsAutoAligningDownhill)
-                return;
+            if (IsAutoAligningDownhill
+                && Time.time >= downhillHeadingRecoveryEndTime)
+            {
+                IsAutoAligningDownhill = false;
+            }
+        }
 
-            Vector2 downhill = groundResult.DownhillWorldDirection.normalized;
+        private void ApplyDownhillSlideDirectionRecovery()
+        {
+            if (!IsAutoAligningDownhill
+                || downhillHeadingRecoveryDirection.sqrMagnitude < 0.000001f)
+            {
+                return;
+            }
+
+            Vector2 downhill = downhillHeadingRecoveryDirection.normalized;
+            float downhillSpeed = Mathf.Max(
+                0f,
+                Vector2.Dot(CurrentTerrainVelocity, downhill));
+            Vector2 downhillVelocity = downhill * downhillSpeed;
+            Vector2 lateralVelocity = CurrentTerrainVelocity - downhillVelocity;
+            lateralVelocity = Vector2.MoveTowards(
+                lateralVelocity,
+                Vector2.zero,
+                downhillSlideLateralDamping * Time.deltaTime);
+            CurrentTerrainVelocity = downhillVelocity + lateralVelocity;
+        }
+
+        private void ApplyDownhillHeadingRecovery()
+        {
+            if (!IsAutoAligningDownhill
+                || downhillHeadingRecoveryDirection.sqrMagnitude < 0.000001f)
+            {
+                return;
+            }
+
+            Vector2 downhill = downhillHeadingRecoveryDirection.normalized;
             float targetAngle = Mathf.Atan2(downhill.y, downhill.x)
                                 * Mathf.Rad2Deg
                                 - 90f;
             float currentAngle = transform.eulerAngles.z;
-            float remainingAngle = Mathf.Abs(
-                Mathf.DeltaAngle(currentAngle, targetAngle));
-            if (remainingAngle <= downhillHeadingAlignmentTolerance)
-            {
-                transform.rotation = Quaternion.Euler(0f, 0f, targetAngle);
-                IsAutoAligningDownhill = false;
-                return;
-            }
-
             float alignedAngle = Mathf.MoveTowardsAngle(
                 currentAngle,
                 targetAngle,
@@ -507,6 +559,8 @@ namespace AnimalGame.RobotMap
             IsLevelThreeUnstable = false;
             IsAutoAligningDownhill = false;
             IsDownhillBoosted = false;
+            downhillHeadingRecoveryEndTime = 0f;
+            downhillHeadingRecoveryDirection = Vector2.zero;
             CurrentTraversalResult = result;
             RelaxUnstableDrift();
         }
@@ -609,13 +663,12 @@ namespace AnimalGame.RobotMap
             downhillHeadingAlignmentSpeed = Mathf.Max(
                 0f,
                 downhillHeadingAlignmentSpeed);
-            downhillHeadingAlignmentTolerance = Mathf.Clamp(
-                downhillHeadingAlignmentTolerance,
-                0.1f,
-                20f);
-            downhillHeadingMinimumSlideSpeed = Mathf.Max(
+            downhillHeadingRecoveryDuration = Mathf.Max(
+                0.05f,
+                downhillHeadingRecoveryDuration);
+            downhillSlideLateralDamping = Mathf.Max(
                 0f,
-                downhillHeadingMinimumSlideSpeed);
+                downhillSlideLateralDamping);
             terrainVelocityRecoveryAcceleration = Mathf.Max(
                 0f,
                 terrainVelocityRecoveryAcceleration);
