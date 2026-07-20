@@ -48,11 +48,13 @@ MonoBehaviour:
   robotFootprintWidthMeters: 1.5
   footprintLongitudinalSamples: 7
   footprintLateralSamples: 7
-  blockSlopeAngle: 36
+  levelOneMaximumUphillAngle: 12
+  levelThreeUphillAngle: 38
   maximumDownhillSlopeAngle: 55
-  minimumBlockingSlopeLengthMeters: 1.5
+  minimumUnsafeDownhillLengthMeters: 1.5
   maximumStepHeightMeters: 0.65
   stepProbeSpacingMeters: 0.5
   stepLateralSamples: 3
   movementProbeDistanceMeters: 6
   pathEvaluationSpacingMeters: 1
+  hardStopProbeDistanceMeters: 2

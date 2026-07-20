@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace AnimalGame.MapTest
 {
@@ -7,37 +8,60 @@ namespace AnimalGame.MapTest
         None,
         Slope,
         Step,
+        UnsafeDownhill,
         Boundary
+    }
+
+    public enum UphillSlopeLevel
+    {
+        LevelOne,
+        LevelTwo,
+        LevelThree
     }
 
     public struct SlopeTraversalResult
     {
         public bool HasData { get; }
         public bool IsPassable { get; }
+        public bool RequiresHardStop { get; }
+        public UphillSlopeLevel UphillLevel { get; }
         public float SlopeAngle { get; }
         public float SignedSlopeAngle { get; }
+        public float MaximumUphillAngle { get; }
+        public float MaximumDownhillAngle { get; }
         public float MaximumSurfaceSlopeAngle { get; }
         public float MaximumStepHeight { get; }
         public float SurfaceRoughness { get; }
+        public Vector2 DownhillWorldDirection { get; }
         public TraversalBlockReason BlockReason { get; }
 
         public SlopeTraversalResult(
             bool hasData,
             bool isPassable,
+            bool requiresHardStop,
+            UphillSlopeLevel uphillLevel,
             float slopeAngle,
             float signedSlopeAngle,
+            float maximumUphillAngle,
+            float maximumDownhillAngle,
             float maximumSurfaceSlopeAngle,
             float maximumStepHeight,
             float surfaceRoughness,
+            Vector2 downhillWorldDirection,
             TraversalBlockReason blockReason)
         {
             HasData = hasData;
             IsPassable = isPassable;
+            RequiresHardStop = requiresHardStop;
+            UphillLevel = uphillLevel;
             SlopeAngle = slopeAngle;
             SignedSlopeAngle = signedSlopeAngle;
+            MaximumUphillAngle = maximumUphillAngle;
+            MaximumDownhillAngle = maximumDownhillAngle;
             MaximumSurfaceSlopeAngle = maximumSurfaceSlopeAngle;
             MaximumStepHeight = maximumStepHeight;
             SurfaceRoughness = surfaceRoughness;
+            DownhillWorldDirection = downhillWorldDirection;
             BlockReason = blockReason;
         }
 
@@ -45,22 +69,32 @@ namespace AnimalGame.MapTest
             new SlopeTraversalResult(
                 false,
                 false,
+                false,
+                UphillSlopeLevel.LevelOne,
                 0f,
                 0f,
                 0f,
                 0f,
                 0f,
+                0f,
+                0f,
+                Vector2.zero,
                 TraversalBlockReason.None);
 
         public static SlopeTraversalResult BlockedBoundary =>
             new SlopeTraversalResult(
                 true,
                 false,
-                90f,
+                true,
+                UphillSlopeLevel.LevelOne,
                 90f,
                 90f,
                 0f,
                 0f,
+                90f,
+                0f,
+                0f,
+                Vector2.zero,
                 TraversalBlockReason.Boundary);
     }
 
@@ -80,14 +114,19 @@ namespace AnimalGame.MapTest
         [SerializeField, Range(3, 11)] private int footprintLateralSamples = 5;
 
         [Header("Slope Ability")]
-        [Tooltip("Maximum sustained uphill angle the robot can traverse. The angle comes from a least-squares plane fitted under the full contact footprint.")]
-        [SerializeField, Range(0f, 89f)] private float blockSlopeAngle = 45f;
+        [Tooltip("Largest uphill angle treated as Level One. Level One does not change top speed and does not make the robot slide while idle.")]
+        [SerializeField, Range(0f, 89f)] private float levelOneMaximumUphillAngle = 12f;
 
-        [Tooltip("Maximum sustained downhill angle the robot can traverse. This can be higher than the uphill limit so the robot can retreat from steep terrain.")]
+        [Tooltip("Uphill angle at which Level Three begins. Between the Level One limit and this value is Level Two. Level Three no longer hard-stops the robot; it produces strong downhill and lateral instability instead.")]
+        [FormerlySerializedAs("blockSlopeAngle")]
+        [SerializeField, Range(0f, 89f)] private float levelThreeUphillAngle = 45f;
+
+        [Tooltip("Maximum downhill angle that remains controllable. A downhill steeper than this still performs a hard stop for safety.")]
         [SerializeField, Range(0f, 89f)] private float maximumDownhillSlopeAngle = 55f;
 
-        [Tooltip("Distance for which an over-limit fitted slope must continue before it blocks movement. This rejects isolated short bumps while preserving real extended slopes.")]
-        [SerializeField, Min(0f)] private float minimumBlockingSlopeLengthMeters = 1.5f;
+        [Tooltip("Distance for which an unsafe downhill must continue before it hard-stops movement. This rejects isolated short noisy samples.")]
+        [FormerlySerializedAs("minimumBlockingSlopeLengthMeters")]
+        [SerializeField, Min(0f)] private float minimumUnsafeDownhillLengthMeters = 1.5f;
 
         [Header("Step and Ledge Detection")]
         [Tooltip("Maximum abrupt height residual the robot can cross, in meters. The expected rise of the fitted slope is subtracted first, so a continuous steep slope is not mistaken for a vertical step.")]
@@ -96,7 +135,7 @@ namespace AnimalGame.MapTest
         [Tooltip("Distance between detail-height samples used to find abrupt steps. This may be smaller than the slope evaluation spacing because it measures discontinuities rather than overall inclination.")]
         [SerializeField, Min(0.1f)] private float stepProbeSpacingMeters = 0.5f;
 
-        [Tooltip("Number of parallel step probes distributed across the robot width. Odd values include the centre line.")]
+        [Tooltip("Number of parallel step probes distributed across the robot width. Odd values include the centre line. Each longitudinal slice uses the median residual across these probes, so an isolated noisy lane cannot hard-stop the robot.")]
         [SerializeField, Range(1, 9)] private int stepLateralSamples = 3;
 
         [Header("Path Evaluation")]
@@ -106,14 +145,22 @@ namespace AnimalGame.MapTest
         [Tooltip("Spacing in logical map meters between consecutive fitted-footprint evaluations along a path. Smaller values are more precise but more expensive.")]
         [SerializeField, Min(0.1f)] private float pathEvaluationSpacingMeters = 1f;
 
-        private MapTestSceneController map;
+        [Tooltip("Short look-ahead used only for hard blockers (steps, unsafe drops and map boundaries) during real movement. Keep this near the robot footprint so a blocker several meters ahead does not feel like an invisible wall.")]
+        [SerializeField, Min(0.25f)] private float hardStopProbeDistanceMeters = 2f;
 
-        public float BlockSlopeAngle => blockSlopeAngle;
+        private MapTestSceneController map;
+        private readonly float[] stepPreviousHeightScratch = new float[9];
+        private readonly float[] stepResidualScratch = new float[9];
+
+        public float LevelOneMaximumUphillAngle => levelOneMaximumUphillAngle;
+        public float LevelThreeUphillAngle => levelThreeUphillAngle;
+        public float BlockSlopeAngle => levelThreeUphillAngle;
         public float MaximumDownhillSlopeAngle => maximumDownhillSlopeAngle;
         public float RobotFootprintLengthMeters => robotFootprintLengthMeters;
         public float RobotFootprintWidthMeters => robotFootprintWidthMeters;
         public float MaximumStepHeightMeters => maximumStepHeightMeters;
         public float MovementProbeDistanceMeters => movementProbeDistanceMeters;
+        public float HardStopProbeDistanceMeters => hardStopProbeDistanceMeters;
         public float PathSampleSpacingMeters => pathEvaluationSpacingMeters;
         public bool IsInitialized => map != null && map.HasGeneratedMap;
 
@@ -124,7 +171,20 @@ namespace AnimalGame.MapTest
 
         public void SetMaximumPassableSlopeAngle(float maximumSlopeAngle)
         {
-            blockSlopeAngle = Mathf.Clamp(maximumSlopeAngle, 0f, 89f);
+            levelThreeUphillAngle = Mathf.Clamp(
+                maximumSlopeAngle,
+                levelOneMaximumUphillAngle + 0.1f,
+                89f);
+        }
+
+        public UphillSlopeLevel ClassifyUphillSlope(float uphillAngle)
+        {
+            float angle = Mathf.Max(0f, uphillAngle);
+            if (angle <= levelOneMaximumUphillAngle)
+                return UphillSlopeLevel.LevelOne;
+            return angle < levelThreeUphillAngle
+                ? UphillSlopeLevel.LevelTwo
+                : UphillSlopeLevel.LevelThree;
         }
 
         public void SetMaximumDownhillSlopeAngle(float maximumSlopeAngle)
@@ -135,6 +195,27 @@ namespace AnimalGame.MapTest
         public SlopeTraversalResult EvaluateMovement(
             Vector2 startWorld,
             Vector2 worldDirection)
+        {
+            return EvaluateMovement(
+                startWorld,
+                worldDirection,
+                movementProbeDistanceMeters);
+        }
+
+        public SlopeTraversalResult EvaluateImmediateSafety(
+            Vector2 startWorld,
+            Vector2 worldDirection)
+        {
+            return EvaluateMovement(
+                startWorld,
+                worldDirection,
+                hardStopProbeDistanceMeters);
+        }
+
+        private SlopeTraversalResult EvaluateMovement(
+            Vector2 startWorld,
+            Vector2 worldDirection,
+            float probeDistanceMeters)
         {
             if (!IsInitialized || worldDirection.sqrMagnitude < 0.000001f)
                 return SlopeTraversalResult.NoData;
@@ -147,7 +228,9 @@ namespace AnimalGame.MapTest
                 return SlopeTraversalResult.NoData;
 
             Vector2 endMapPosition = startMapPosition
-                                     + mapDirection * movementProbeDistanceMeters;
+                                     + mapDirection * Mathf.Max(
+                                         0.25f,
+                                         probeDistanceMeters);
             return EvaluateMapPath(startMapPosition, endMapPosition);
         }
 
@@ -168,14 +251,18 @@ namespace AnimalGame.MapTest
             float pathLength = path.magnitude;
             if (pathLength <= 0.0001f)
             {
-                return new SlopeTraversalResult(
+                return CreateResult(
                     true,
-                    true,
+                    false,
+                    UphillSlopeLevel.LevelOne,
                     0f,
                     0f,
                     0f,
                     0f,
                     0f,
+                    0f,
+                    0f,
+                    Vector2.zero,
                     TraversalBlockReason.None);
             }
 
@@ -185,12 +272,15 @@ namespace AnimalGame.MapTest
                 Mathf.CeilToInt(pathLength /
                                 Mathf.Max(0.1f, pathEvaluationSpacingMeters)));
             float segmentLength = pathLength / evaluationCount;
-            float consecutiveOverLimitLength = 0f;
+            float consecutiveUnsafeDownhillLength = 0f;
             float maximumDirectionalSlope = 0f;
             float signedSlopeAtMaximum = 0f;
+            float maximumUphillSlope = 0f;
+            float maximumDownhillSlope = 0f;
             float maximumSurfaceSlope = 0f;
             float maximumStepHeight = 0f;
             float maximumRoughness = 0f;
+            Vector2 downhillMapDirectionAtMaximum = Vector2.zero;
 
             for (int evaluationIndex = 0;
                  evaluationIndex < evaluationCount;
@@ -209,9 +299,18 @@ namespace AnimalGame.MapTest
                     signedSlopeAtMaximum = analysis.SignedDirectionalSlopeAngle;
                 }
 
-                maximumSurfaceSlope = Mathf.Max(
-                    maximumSurfaceSlope,
-                    analysis.MaximumSurfaceSlopeAngle);
+                maximumUphillSlope = Mathf.Max(
+                    maximumUphillSlope,
+                    Mathf.Max(0f, analysis.SignedDirectionalSlopeAngle));
+                maximumDownhillSlope = Mathf.Max(
+                    maximumDownhillSlope,
+                    Mathf.Max(0f, -analysis.SignedDirectionalSlopeAngle));
+
+                if (analysis.MaximumSurfaceSlopeAngle > maximumSurfaceSlope)
+                {
+                    maximumSurfaceSlope = analysis.MaximumSurfaceSlopeAngle;
+                    downhillMapDirectionAtMaximum = analysis.DownhillMapDirection;
+                }
                 maximumStepHeight = Mathf.Max(
                     maximumStepHeight,
                     analysis.MaximumStepResidualHeight);
@@ -223,74 +322,114 @@ namespace AnimalGame.MapTest
                 {
                     return CreateResult(
                         false,
+                        true,
+                        ClassifyUphillSlope(maximumUphillSlope),
                         maximumDirectionalSlope,
                         signedSlopeAtMaximum,
+                        maximumUphillSlope,
+                        maximumDownhillSlope,
                         maximumSurfaceSlope,
                         maximumStepHeight,
                         maximumRoughness,
+                        downhillMapDirectionAtMaximum,
                         TraversalBlockReason.Step);
                 }
 
-                float relevantSlopeLimit = analysis.SignedDirectionalSlopeAngle >= 0f
-                    ? blockSlopeAngle
-                    : maximumDownhillSlopeAngle;
-                bool exceedsSlopeLimit = absoluteDirectionalSlope > relevantSlopeLimit;
-                consecutiveOverLimitLength = exceedsSlopeLimit
-                    ? consecutiveOverLimitLength + segmentLength
+                bool unsafeDownhill = analysis.SignedDirectionalSlopeAngle
+                                      < -maximumDownhillSlopeAngle;
+                consecutiveUnsafeDownhillLength = unsafeDownhill
+                    ? consecutiveUnsafeDownhillLength + segmentLength
                     : 0f;
 
-                if (exceedsSlopeLimit
-                    && consecutiveOverLimitLength
-                    >= Mathf.Max(0f, minimumBlockingSlopeLengthMeters))
+                if (unsafeDownhill
+                    && consecutiveUnsafeDownhillLength
+                    >= Mathf.Max(0f, minimumUnsafeDownhillLengthMeters))
                 {
                     return CreateResult(
                         false,
+                        true,
+                        ClassifyUphillSlope(maximumUphillSlope),
                         maximumDirectionalSlope,
                         signedSlopeAtMaximum,
+                        maximumUphillSlope,
+                        maximumDownhillSlope,
                         maximumSurfaceSlope,
                         maximumStepHeight,
                         maximumRoughness,
-                        TraversalBlockReason.Slope);
+                        downhillMapDirectionAtMaximum,
+                        TraversalBlockReason.UnsafeDownhill);
                 }
             }
 
+            UphillSlopeLevel uphillLevel = ClassifyUphillSlope(maximumUphillSlope);
+            bool deliberatelyPassable = uphillLevel != UphillSlopeLevel.LevelThree;
             return CreateResult(
-                true,
+                deliberatelyPassable,
+                false,
+                uphillLevel,
                 maximumDirectionalSlope,
                 signedSlopeAtMaximum,
+                maximumUphillSlope,
+                maximumDownhillSlope,
                 maximumSurfaceSlope,
                 maximumStepHeight,
                 maximumRoughness,
-                TraversalBlockReason.None);
+                downhillMapDirectionAtMaximum,
+                deliberatelyPassable
+                    ? TraversalBlockReason.None
+                    : TraversalBlockReason.Slope);
         }
 
         public SlopeTraversalResult EvaluateLocalSurface(Vector2 worldPosition)
         {
+            return EvaluateCurrentSurface(worldPosition, Vector2.up);
+        }
+
+        public SlopeTraversalResult EvaluateCurrentSurface(
+            Vector2 worldPosition,
+            Vector2 worldDirection)
+        {
             if (!IsInitialized
+                || worldDirection.sqrMagnitude < 0.000001f
                 || !map.TrySampleWorldPosition(worldPosition, out Vector2 mapPosition, out _))
             {
                 return SlopeTraversalResult.NoData;
             }
 
-            if (!TryAnalyzeSurface(mapPosition, Vector2.up, out SurfaceAnalysis analysis))
+            Vector2 mapDirection = map.WorldDirectionToMapDirection(worldDirection);
+            if (mapDirection.sqrMagnitude < 0.000001f
+                || !TryAnalyzeSurface(mapPosition, mapDirection, out SurfaceAnalysis analysis))
+            {
                 return SlopeTraversalResult.BlockedBoundary;
+            }
 
             bool stepBlocked = analysis.MaximumStepResidualHeight > maximumStepHeightMeters;
-            bool slopeBlocked = analysis.MaximumSurfaceSlopeAngle > blockSlopeAngle;
+            bool unsafeDownhill = analysis.SignedDirectionalSlopeAngle
+                                  < -maximumDownhillSlopeAngle;
+            float uphillAngle = Mathf.Max(0f, analysis.SignedDirectionalSlopeAngle);
+            float downhillAngle = Mathf.Max(0f, -analysis.SignedDirectionalSlopeAngle);
+            UphillSlopeLevel uphillLevel = ClassifyUphillSlope(uphillAngle);
+            bool deliberatelyPassable = uphillLevel != UphillSlopeLevel.LevelThree;
             TraversalBlockReason reason = stepBlocked
                 ? TraversalBlockReason.Step
-                : slopeBlocked
-                    ? TraversalBlockReason.Slope
-                    : TraversalBlockReason.None;
+                : unsafeDownhill
+                    ? TraversalBlockReason.UnsafeDownhill
+                    : deliberatelyPassable
+                        ? TraversalBlockReason.None
+                        : TraversalBlockReason.Slope;
 
-            return new SlopeTraversalResult(
-                true,
-                reason == TraversalBlockReason.None,
-                analysis.MaximumSurfaceSlopeAngle,
+            return CreateResult(
+                deliberatelyPassable && !stepBlocked && !unsafeDownhill,
+                stepBlocked || unsafeDownhill,
+                uphillLevel,
+                Mathf.Abs(analysis.SignedDirectionalSlopeAngle),
                 analysis.SignedDirectionalSlopeAngle,
+                uphillAngle,
+                downhillAngle,
                 analysis.MaximumSurfaceSlopeAngle,
                 analysis.MaximumStepResidualHeight,
                 analysis.SurfaceRoughness,
+                analysis.DownhillMapDirection,
                 reason);
         }
 
@@ -365,6 +504,11 @@ namespace AnimalGame.MapTest
                 Mathf.Sqrt(
                     forwardGradient * forwardGradient
                     + lateralGradient * lateralGradient)) * Mathf.Rad2Deg;
+            Vector2 heightGradient = forward * forwardGradient
+                                     + right * lateralGradient;
+            Vector2 downhillMapDirection = heightGradient.sqrMagnitude > 0.000001f
+                ? -heightGradient.normalized
+                : Vector2.zero;
 
             if (!TryMeasureMaximumStepResidual(
                     center,
@@ -380,7 +524,8 @@ namespace AnimalGame.MapTest
                 signedDirectionalSlope,
                 maximumSurfaceSlope,
                 maximumStepResidual,
-                surfaceRoughness);
+                surfaceRoughness,
+                downhillMapDirection);
             return true;
         }
 
@@ -400,9 +545,8 @@ namespace AnimalGame.MapTest
             int lateralSamples = EnsureOdd(stepLateralSamples, 1, 9);
             float actualSpacing = length / segments;
 
-            for (int lateralIndex = 0;
-                 lateralIndex < lateralSamples;
-                 lateralIndex++)
+            Vector2 footprintBack = center - forward * (length * 0.5f);
+            for (int lateralIndex = 0; lateralIndex < lateralSamples; lateralIndex++)
             {
                 float lateral = lateralSamples == 1
                     ? 0f
@@ -410,21 +554,31 @@ namespace AnimalGame.MapTest
                         -width * 0.5f,
                         width * 0.5f,
                         lateralIndex / (float)(lateralSamples - 1));
-                Vector2 previousPosition = center
-                                           - forward * (length * 0.5f)
-                                           + right * lateral;
+                Vector2 previousPosition = footprintBack + right * lateral;
                 if (!map.TrySampleDetailMapPosition(
                         previousPosition,
-                        out float previousHeight))
+                        out stepPreviousHeightScratch[lateralIndex]))
                 {
                     return false;
                 }
+            }
 
-                for (int segmentIndex = 1;
-                     segmentIndex <= segments;
-                     segmentIndex++)
+            for (int segmentIndex = 1; segmentIndex <= segments; segmentIndex++)
+            {
+                float forwardOffset = segmentIndex * actualSpacing;
+                for (int lateralIndex = 0;
+                     lateralIndex < lateralSamples;
+                     lateralIndex++)
                 {
-                    Vector2 currentPosition = previousPosition + forward * actualSpacing;
+                    float lateral = lateralSamples == 1
+                        ? 0f
+                        : Mathf.Lerp(
+                            -width * 0.5f,
+                            width * 0.5f,
+                            lateralIndex / (float)(lateralSamples - 1));
+                    Vector2 currentPosition = footprintBack
+                                              + forward * forwardOffset
+                                              + right * lateral;
                     if (!map.TrySampleDetailMapPosition(
                             currentPosition,
                             out float currentHeight))
@@ -432,36 +586,67 @@ namespace AnimalGame.MapTest
                         return false;
                     }
 
-                    float measuredHeightChange = currentHeight - previousHeight;
+                    float measuredHeightChange = currentHeight
+                                                 - stepPreviousHeightScratch[lateralIndex];
                     float expectedSlopeChange = fittedForwardGradient * actualSpacing;
-                    float residual = Mathf.Abs(
+                    stepResidualScratch[lateralIndex] = Mathf.Abs(
                         measuredHeightChange - expectedSlopeChange);
-                    maximumResidual = Mathf.Max(maximumResidual, residual);
-                    previousPosition = currentPosition;
-                    previousHeight = currentHeight;
+                    stepPreviousHeightScratch[lateralIndex] = currentHeight;
                 }
+
+                SortAscending(stepResidualScratch, lateralSamples);
+                float medianResidual = stepResidualScratch[lateralSamples / 2];
+                maximumResidual = Mathf.Max(maximumResidual, medianResidual);
             }
 
             return true;
         }
 
-        private static SlopeTraversalResult CreateResult(
+        private static void SortAscending(float[] values, int count)
+        {
+            for (int index = 1; index < count; index++)
+            {
+                float value = values[index];
+                int insertionIndex = index - 1;
+                while (insertionIndex >= 0 && values[insertionIndex] > value)
+                {
+                    values[insertionIndex + 1] = values[insertionIndex];
+                    insertionIndex--;
+                }
+
+                values[insertionIndex + 1] = value;
+            }
+        }
+
+        private SlopeTraversalResult CreateResult(
             bool isPassable,
+            bool requiresHardStop,
+            UphillSlopeLevel uphillLevel,
             float slopeAngle,
             float signedSlopeAngle,
+            float maximumUphillAngle,
+            float maximumDownhillAngle,
             float maximumSurfaceSlopeAngle,
             float maximumStepHeight,
             float surfaceRoughness,
+            Vector2 downhillMapDirection,
             TraversalBlockReason blockReason)
         {
             return new SlopeTraversalResult(
                 true,
                 isPassable,
+                requiresHardStop,
+                uphillLevel,
                 slopeAngle,
                 signedSlopeAngle,
+                maximumUphillAngle,
+                maximumDownhillAngle,
                 maximumSurfaceSlopeAngle,
                 maximumStepHeight,
                 surfaceRoughness,
+                map != null
+                    ? map.MapDirectionToWorldDirection(downhillMapDirection)
+                    : Vector2.zero,
                 blockReason);
         }
 
@@ -482,12 +667,21 @@ namespace AnimalGame.MapTest
                 3,
                 11);
             footprintLateralSamples = EnsureOdd(footprintLateralSamples, 3, 11);
-            maximumDownhillSlopeAngle = Mathf.Max(
-                blockSlopeAngle,
-                maximumDownhillSlopeAngle);
-            minimumBlockingSlopeLengthMeters = Mathf.Max(
+            levelOneMaximumUphillAngle = Mathf.Clamp(
+                levelOneMaximumUphillAngle,
                 0f,
-                minimumBlockingSlopeLengthMeters);
+                88f);
+            levelThreeUphillAngle = Mathf.Clamp(
+                levelThreeUphillAngle,
+                levelOneMaximumUphillAngle + 0.1f,
+                89f);
+            maximumDownhillSlopeAngle = Mathf.Clamp(
+                maximumDownhillSlopeAngle,
+                0f,
+                89f);
+            minimumUnsafeDownhillLengthMeters = Mathf.Max(
+                0f,
+                minimumUnsafeDownhillLengthMeters);
             maximumStepHeightMeters = Mathf.Max(0f, maximumStepHeightMeters);
             stepProbeSpacingMeters = Mathf.Max(0.1f, stepProbeSpacingMeters);
             stepLateralSamples = EnsureOdd(stepLateralSamples, 1, 9);
@@ -495,6 +689,9 @@ namespace AnimalGame.MapTest
                 robotFootprintLengthMeters,
                 movementProbeDistanceMeters);
             pathEvaluationSpacingMeters = Mathf.Max(0.1f, pathEvaluationSpacingMeters);
+            hardStopProbeDistanceMeters = Mathf.Max(
+                0.25f,
+                hardStopProbeDistanceMeters);
         }
 
         private readonly struct SurfaceAnalysis
@@ -503,17 +700,20 @@ namespace AnimalGame.MapTest
             public float MaximumSurfaceSlopeAngle { get; }
             public float MaximumStepResidualHeight { get; }
             public float SurfaceRoughness { get; }
+            public Vector2 DownhillMapDirection { get; }
 
             public SurfaceAnalysis(
                 float signedDirectionalSlopeAngle,
                 float maximumSurfaceSlopeAngle,
                 float maximumStepResidualHeight,
-                float surfaceRoughness)
+                float surfaceRoughness,
+                Vector2 downhillMapDirection)
             {
                 SignedDirectionalSlopeAngle = signedDirectionalSlopeAngle;
                 MaximumSurfaceSlopeAngle = maximumSurfaceSlopeAngle;
                 MaximumStepResidualHeight = maximumStepResidualHeight;
                 SurfaceRoughness = surfaceRoughness;
+                DownhillMapDirection = downhillMapDirection;
             }
         }
     }

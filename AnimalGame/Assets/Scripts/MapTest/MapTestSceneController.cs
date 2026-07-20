@@ -271,6 +271,18 @@ namespace AnimalGame.MapTest
             return mapDirection.normalized;
         }
 
+        public Vector2 MapDirectionToWorldDirection(Vector2 mapDirection)
+        {
+            if (!HasGeneratedMap || mapDirection.sqrMagnitude < 0.000001f)
+                return Vector2.zero;
+
+            Bounds bounds = WorldBounds;
+            Vector2 worldDirection = new Vector2(
+                mapDirection.x * bounds.size.x / Mathf.Max(0.0001f, mapWidthMeters),
+                mapDirection.y * bounds.size.y / Mathf.Max(0.0001f, mapHeightMeters));
+            return worldDirection.normalized;
+        }
+
         public void UseCamera(Camera cameraToUse)
         {
             if (cameraToUse == null)

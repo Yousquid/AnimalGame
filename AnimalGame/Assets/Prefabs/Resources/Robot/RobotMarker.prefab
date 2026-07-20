@@ -55,6 +55,28 @@ MonoBehaviour:
   runningAcceleration: 4.8
   coastDeceleration: 5
   brakingDeceleration: 8
+  levelTwoMinimumTopSpeedMultiplier: 0.55
+  levelTwoMaximumSlideSpeedFraction: 0.18
+  levelTwoSlideAcceleration: 2.2
+  levelThreeForwardSpeedMultiplier: 0.5
+  levelThreeSlideSpeedFraction: 0.55
+  levelThreeSlideAcceleration: 10
+  levelThreeLateralDriftSpeedFraction: 0.65
+  levelThreeInitialLateralDriftStrength: 0.3
+  levelThreeDriftDirectionChangeInterval: 0.55
+  levelThreeDriftSmoothing: 0.12
+  levelThreeAngularDriftSpeed: 90
+  levelThreeAngularDriftAcceleration: 180
+  levelThreeAngularRecoveryAcceleration: 420
+  automaticallyAlignDownhillAfterLevelThreeSlip: 1
+  downhillHeadingAlignmentSpeed: 90
+  downhillHeadingAlignmentTolerance: 3.23
+  downhillHeadingMinimumSlideSpeed: 0.15
+  terrainVelocityRecoveryAcceleration: 4
+  downhillBoostStartAngle: 4
+  downhillFullBoostAngle: 35
+  downhillMaximumSpeedMultiplier: 1.5
+  downhillAccelerationBonus: 3
 --- !u!114 &3540108170491067500
 MonoBehaviour:
   m_ObjectHideFlags: 0

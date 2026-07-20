@@ -184,14 +184,46 @@ namespace AnimalGame.MapTest
                 : "STEP RESIDUAL   NO DATA";
             GUI.Label(new Rect(left + 16f, 169f, 280f, 26f), stepText, data);
             GUIStyle state = new GUIStyle(data);
-            state.normal.textColor = robot != null && robot.IsSlopeBlocked
-                ? new Color(1f, 0.35f, 0.28f)
-                : new Color(0.35f, 1f, 0.66f);
+            string traversalText = "TRAVERSAL   NO DATA";
+            state.normal.textColor = new Color(0.75f, 0.9f, 0.93f);
+            if (robot != null && robot.CurrentTraversalResult.HasData)
+            {
+                if (robot.IsSlopeBlocked)
+                {
+                    traversalText =
+                        $"TRAVERSAL   BLOCKED ({robot.CurrentTraversalResult.BlockReason})";
+                    state.normal.textColor = new Color(1f, 0.35f, 0.28f);
+                }
+                else if (robot.IsLevelThreeUnstable)
+                {
+                    traversalText = "TRAVERSAL   LEVEL III / UNSTABLE";
+                    state.normal.textColor = new Color(1f, 0.55f, 0.2f);
+                }
+                else if (robot.IsDownhillBoosted)
+                {
+                    traversalText = "TRAVERSAL   DOWNHILL BOOST";
+                    state.normal.textColor = new Color(0.3f, 0.8f, 1f);
+                }
+                else
+                {
+                    UphillSlopeLevel surfaceLevel = traversalEvaluator != null
+                        ? traversalEvaluator.ClassifyUphillSlope(
+                            robot.CurrentTraversalResult.MaximumSurfaceSlopeAngle)
+                        : UphillSlopeLevel.LevelOne;
+                    traversalText = surfaceLevel switch
+                    {
+                        UphillSlopeLevel.LevelTwo => "TRAVERSAL   SLOPE LEVEL II",
+                        UphillSlopeLevel.LevelThree => "TRAVERSAL   SLOPE LEVEL III",
+                        _ => "TRAVERSAL   SLOPE LEVEL I"
+                    };
+                    state.normal.textColor = surfaceLevel == UphillSlopeLevel.LevelOne
+                        ? new Color(0.35f, 1f, 0.66f)
+                        : new Color(1f, 0.83f, 0.27f);
+                }
+            }
             GUI.Label(
                 new Rect(left + 16f, 196f, 280f, 26f),
-                robot != null && robot.IsSlopeBlocked
-                    ? $"TRAVERSAL   BLOCKED ({robot.CurrentTraversalResult.BlockReason})"
-                    : "TRAVERSAL   PASSABLE",
+                traversalText,
                 state);
         }
 
