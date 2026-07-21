@@ -3,9 +3,20 @@ using UnityEngine;
 
 namespace AnimalGame.RobotMap
 {
+    public enum LevelThreeClimbFailurePhase
+    {
+        None,
+        Grip,
+        Strain,
+        Slip
+    }
+
     public sealed class RobotMover : MonoBehaviour
     {
         [Header("Base Movement")]
+        [Tooltip("Global scale applied once to every absolute movement speed, linear/angular acceleration, terrain slide rate and recovery rate. Relative slope multipliers and phase durations are intentionally unchanged. Set to 0.85 for an overall 15 percent reduction.")]
+        [SerializeField, Range(0f, 2f)] private float overallMotionScale = 1f;
+
         [Tooltip("Maximum forward speed on Level One terrain, in Unity world units per second.")]
         [SerializeField, Min(0f)] private float forwardSpeed = 5f;
 
@@ -83,6 +94,28 @@ namespace AnimalGame.RobotMap
         [Tooltip("Time in seconds used to blend between random left and right drift targets. Higher values make the instability smoother.")]
         [SerializeField, Min(0.01f)] private float levelThreeDriftSmoothing = 0.12f;
 
+        [Header("Slope Level III Climb Failure Sequence")]
+        [Tooltip("Uses a Grip -> Strain -> Slip sequence instead of immediately balancing uphill drive against downhill slide on Level Three.")]
+        [SerializeField] private bool useLevelThreeClimbFailureSequence = true;
+
+        [Tooltip("Time for which the robot initially grips Level Three and makes visible uphill progress.")]
+        [SerializeField, Min(0.05f)] private float levelThreeGripDuration = 0.35f;
+
+        [Tooltip("Commanded uphill top-speed multiplier during the initial Grip phase.")]
+        [SerializeField, Range(0f, 1f)] private float levelThreeGripForwardSpeedMultiplier = 0.75f;
+
+        [Tooltip("Fraction of normal Level Three downhill slide applied during the initial Grip phase.")]
+        [SerializeField, Range(0f, 1f)] private float levelThreeGripSlideMultiplier = 0.25f;
+
+        [Tooltip("Time over which drive fades and slide/instability build after the initial Grip phase.")]
+        [SerializeField, Min(0.05f)] private float levelThreeStrainDuration = 0.45f;
+
+        [Tooltip("Commanded uphill top-speed multiplier reached at the end of Strain, immediately before grip failure.")]
+        [SerializeField, Range(0f, 1f)] private float levelThreeStrainEndForwardSpeedMultiplier = 0.25f;
+
+        [Tooltip("Fixed time for which player drive remains disabled while full Level Three slide and instability take over. The existing downhill recovery event begins afterwards.")]
+        [SerializeField, Min(0.05f)] private float levelThreeSlipDuration = 0.45f;
+
         [Header("Slope Level III Uncontrolled Rotation")]
         [Tooltip("Maximum uncontrolled angular speed while slipping on Level Three, in degrees per second. This rotates the actual robot transform, so the Indicator shows the forced change in facing direction.")]
         [SerializeField, Min(0f)] private float levelThreeAngularDriftSpeed = 180f;
@@ -133,6 +166,11 @@ namespace AnimalGame.RobotMap
         public bool IsLevelThreeUnstable { get; private set; }
         public bool IsAutoAligningDownhill { get; private set; }
         public bool IsDownhillBoosted { get; private set; }
+        public LevelThreeClimbFailurePhase CurrentLevelThreeClimbPhase
+        {
+            get;
+            private set;
+        }
         public SlopeTraversalResult CurrentTraversalResult { get; private set; }
 
         private HeightMapTraversalEvaluator traversalEvaluator;
@@ -142,6 +180,8 @@ namespace AnimalGame.RobotMap
         private float nextUnstableDirectionChangeTime;
         private float downhillHeadingRecoveryEndTime;
         private Vector2 downhillHeadingRecoveryDirection;
+        private float levelThreeClimbPhaseStartTime;
+        private bool pendingDownhillRecoveryFromLevelThreeSlip;
 
         public void SetTraversalEvaluator(HeightMapTraversalEvaluator evaluator)
         {
@@ -150,10 +190,12 @@ namespace AnimalGame.RobotMap
             IsLevelThreeUnstable = false;
             IsAutoAligningDownhill = false;
             IsDownhillBoosted = false;
+            ResetLevelThreeClimbFailureSequence();
             CurrentTerrainTurnSpeed = 0f;
             CurrentTerrainVelocity = Vector2.zero;
             downhillHeadingRecoveryEndTime = 0f;
             downhillHeadingRecoveryDirection = Vector2.zero;
+            pendingDownhillRecoveryFromLevelThreeSlip = false;
             CurrentTraversalResult = SlopeTraversalResult.NoData;
         }
 
@@ -192,10 +234,15 @@ namespace AnimalGame.RobotMap
                 ? traversalEvaluator.EvaluateCurrentSurface(transform.position, probeDirection)
                 : SlopeTraversalResult.NoData;
 
+            UpdateLevelThreeClimbFailureSequence(groundResult, throttle);
+
             bool steeringLocked = IsAutoAligningDownhill
-                                  || IsTryingToClimbLevelThree(
-                                      groundResult,
-                                      throttle);
+                                  || CurrentLevelThreeClimbPhase
+                                  != LevelThreeClimbFailurePhase.None
+                                  || (!useLevelThreeClimbFailureSequence
+                                      && IsTryingToClimbLevelThree(
+                                          groundResult,
+                                          throttle));
             UpdateTurning(throttle, steering, steeringLocked);
 
             if (pathResult.HasData && pathResult.RequiresHardStop)
@@ -209,10 +256,13 @@ namespace AnimalGame.RobotMap
 
             float topSpeedMultiplier = 1f;
             float accelerationBonus = 0f;
-            float terrainVelocityAcceleration = terrainVelocityRecoveryAcceleration;
+            float terrainVelocityAcceleration = ScaleMotion(terrainVelocityRecoveryAcceleration);
             float targetTerrainTurnSpeed;
             bool wasLevelThreeUnstable = IsLevelThreeUnstable;
-            float terrainThrottle = IsAutoAligningDownhill ? 0f : throttle;
+            bool suppressPlayerDrive = IsAutoAligningDownhill
+                                       || CurrentLevelThreeClimbPhase
+                                       == LevelThreeClimbFailurePhase.Slip;
+            float terrainThrottle = suppressPlayerDrive ? 0f : throttle;
             Vector2 targetTerrainVelocity = CalculateTerrainTargetVelocity(
                 groundResult,
                 terrainThrottle,
@@ -220,9 +270,13 @@ namespace AnimalGame.RobotMap
                 ref accelerationBonus,
                 ref terrainVelocityAcceleration,
                 out targetTerrainTurnSpeed);
+            bool shouldStartDownhillRecovery = useLevelThreeClimbFailureSequence
+                ? pendingDownhillRecoveryFromLevelThreeSlip
+                : wasLevelThreeUnstable;
             UpdateDownhillHeadingRecoveryState(
-                wasLevelThreeUnstable,
+                shouldStartDownhillRecovery,
                 groundResult);
+            pendingDownhillRecoveryFromLevelThreeSlip = false;
             if (IsAutoAligningDownhill
                 && downhillHeadingRecoveryDirection.sqrMagnitude > 0.000001f)
             {
@@ -236,19 +290,19 @@ namespace AnimalGame.RobotMap
             ApplyLevelTwoLateralGrip(groundResult, targetTerrainVelocity);
             ApplyDownhillSlideDirectionRecovery();
             float terrainTurnAcceleration = IsLevelThreeUnstable
-                ? levelThreeAngularDriftAcceleration
-                : levelThreeAngularRecoveryAcceleration;
+                ? ScaleMotion(levelThreeAngularDriftAcceleration)
+                : ScaleMotion(levelThreeAngularRecoveryAcceleration);
             CurrentTerrainTurnSpeed = Mathf.MoveTowards(
                 CurrentTerrainTurnSpeed,
                 targetTerrainTurnSpeed,
                 terrainTurnAcceleration * Time.deltaTime);
 
-            float movementThrottle = IsAutoAligningDownhill ? 0f : throttle;
-            if (IsAutoAligningDownhill)
+            float movementThrottle = suppressPlayerDrive ? 0f : throttle;
+            if (suppressPlayerDrive)
                 CurrentSpeed = 0f;
             float baseTargetSpeed = movementThrottle >= 0f
-                ? movementThrottle * forwardSpeed
-                : movementThrottle * reverseSpeed;
+                ? movementThrottle * ScaleMotion(forwardSpeed)
+                : movementThrottle * ScaleMotion(reverseSpeed);
             float targetSpeed = baseTargetSpeed * topSpeedMultiplier;
             float speedChangeRate = GetSpeedChangeRate(
                                         movementThrottle,
@@ -291,11 +345,13 @@ namespace AnimalGame.RobotMap
             float steering,
             bool steeringLocked)
         {
-            float targetTurnSpeed = steeringLocked ? 0f : steering * turnSpeed;
+            float targetTurnSpeed = steeringLocked
+                ? 0f
+                : steering * ScaleMotion(turnSpeed);
             float turnChangeRate = steeringLocked
                                    || Mathf.Approximately(steering, 0f)
-                ? turnDeceleration
-                : turnAcceleration;
+                ? ScaleMotion(turnDeceleration)
+                : ScaleMotion(turnAcceleration);
             CurrentTurnSpeed = Mathf.MoveTowards(
                 CurrentTurnSpeed,
                 targetTurnSpeed,
@@ -326,7 +382,8 @@ namespace AnimalGame.RobotMap
             if (!groundResult.HasData || traversalEvaluator == null)
             {
                 RelaxUnstableDrift();
-                terrainVelocityAcceleration = terrainVelocityRecoveryAcceleration;
+                terrainVelocityAcceleration = ScaleMotion(
+                    terrainVelocityRecoveryAcceleration);
                 return Vector2.zero;
             }
 
@@ -340,12 +397,13 @@ namespace AnimalGame.RobotMap
 
             if (surfaceLevel == UphillSlopeLevel.LevelTwo)
             {
-                terrainVelocityAcceleration = levelTwoSlideAcceleration;
+                terrainVelocityAcceleration = ScaleMotion(
+                    levelTwoSlideAcceleration);
                 float levelTwoProgress = Mathf.InverseLerp(
                     levelOneAngle,
                     levelThreeAngle,
                     directionalAngle);
-                float slideSpeed = forwardSpeed
+                float slideSpeed = ScaleMotion(forwardSpeed)
                                    * levelTwoMaximumSlideSpeedFraction
                                    * levelTwoProgress;
                 Vector2 slideVector = CalculateTractionAdjustedSlideVector(
@@ -356,7 +414,8 @@ namespace AnimalGame.RobotMap
             }
             else if (surfaceLevel == UphillSlopeLevel.LevelThree)
             {
-                terrainVelocityAcceleration = levelThreeSlideAcceleration;
+                terrainVelocityAcceleration = ScaleMotion(
+                    levelThreeSlideAcceleration);
                 float effectiveLevelThreeAngle = Mathf.Max(
                     levelThreeAngle,
                     directionalAngle);
@@ -372,7 +431,10 @@ namespace AnimalGame.RobotMap
                     groundResult.DownhillWorldDirection,
                     levelThreePhysicalDownhillWeight,
                     1f);
-                terrainVelocity += slideVector * forwardSpeed * slideFraction;
+                terrainVelocity += slideVector
+                                   * ScaleMotion(forwardSpeed)
+                                   * slideFraction
+                                   * GetLevelThreeSlideMultiplier();
             }
 
             if (groundResult.SignedSlopeAngle > levelOneAngle)
@@ -390,14 +452,14 @@ namespace AnimalGame.RobotMap
                 }
                 else if (groundResult.UphillLevel == UphillSlopeLevel.LevelThree)
                 {
-                    topSpeedMultiplier = levelThreeForwardSpeedMultiplier;
+                    topSpeedMultiplier = GetLevelThreeForwardSpeedMultiplier();
                 }
             }
 
-            bool tryingToClimbLevelThree = IsTryingToClimbLevelThree(
+            float levelThreeInstability = GetLevelThreeInstability(
                 groundResult,
                 throttle);
-            if (tryingToClimbLevelThree)
+            if (levelThreeInstability > 0f)
             {
                 IsLevelThreeUnstable = true;
                 UpdateUnstableDriftTarget();
@@ -406,10 +468,12 @@ namespace AnimalGame.RobotMap
                     groundResult.DownhillWorldDirection.x);
                 terrainVelocity += crossSlopeDirection
                                    * unstableLateralBlend
-                                   * forwardSpeed
-                                   * levelThreeLateralDriftSpeedFraction;
+                                   * ScaleMotion(forwardSpeed)
+                                   * levelThreeLateralDriftSpeedFraction
+                                   * levelThreeInstability;
                 targetTerrainTurnSpeed = unstableLateralBlend
-                                         * levelThreeAngularDriftSpeed;
+                                         * ScaleMotion(levelThreeAngularDriftSpeed)
+                                         * levelThreeInstability;
             }
             else
             {
@@ -417,7 +481,10 @@ namespace AnimalGame.RobotMap
             }
 
             if (surfaceLevel == UphillSlopeLevel.LevelOne)
-                terrainVelocityAcceleration = terrainVelocityRecoveryAcceleration;
+            {
+                terrainVelocityAcceleration = ScaleMotion(
+                    terrainVelocityRecoveryAcceleration);
+            }
 
             if (groundResult.SignedSlopeAngle < -downhillBoostStartAngle)
             {
@@ -428,11 +495,76 @@ namespace AnimalGame.RobotMap
                 topSpeedMultiplier = Mathf.Max(
                     topSpeedMultiplier,
                     Mathf.Lerp(1f, downhillMaximumSpeedMultiplier, downhillProgress));
-                accelerationBonus += downhillAccelerationBonus * downhillProgress;
+                accelerationBonus += ScaleMotion(downhillAccelerationBonus)
+                                     * downhillProgress;
                 IsDownhillBoosted = downhillProgress > 0f;
             }
 
             return terrainVelocity;
+        }
+
+        private float GetLevelThreeForwardSpeedMultiplier()
+        {
+            if (!useLevelThreeClimbFailureSequence)
+                return levelThreeForwardSpeedMultiplier;
+
+            return CurrentLevelThreeClimbPhase switch
+            {
+                LevelThreeClimbFailurePhase.Grip =>
+                    levelThreeGripForwardSpeedMultiplier,
+                LevelThreeClimbFailurePhase.Strain => Mathf.Lerp(
+                    levelThreeGripForwardSpeedMultiplier,
+                    levelThreeStrainEndForwardSpeedMultiplier,
+                    GetCurrentLevelThreePhaseProgress(levelThreeStrainDuration)),
+                LevelThreeClimbFailurePhase.Slip => 0f,
+                _ => levelThreeForwardSpeedMultiplier
+            };
+        }
+
+        private float GetLevelThreeSlideMultiplier()
+        {
+            if (!useLevelThreeClimbFailureSequence)
+                return 1f;
+
+            return CurrentLevelThreeClimbPhase switch
+            {
+                LevelThreeClimbFailurePhase.Grip =>
+                    levelThreeGripSlideMultiplier,
+                LevelThreeClimbFailurePhase.Strain => Mathf.Lerp(
+                    levelThreeGripSlideMultiplier,
+                    1f,
+                    GetCurrentLevelThreePhaseProgress(levelThreeStrainDuration)),
+                _ => 1f
+            };
+        }
+
+        private float GetLevelThreeInstability(
+            SlopeTraversalResult groundResult,
+            float throttle)
+        {
+            if (!useLevelThreeClimbFailureSequence)
+            {
+                return IsTryingToClimbLevelThree(groundResult, throttle)
+                    ? 1f
+                    : 0f;
+            }
+
+            return CurrentLevelThreeClimbPhase switch
+            {
+                LevelThreeClimbFailurePhase.Strain => Mathf.Lerp(
+                    0.15f,
+                    1f,
+                    GetCurrentLevelThreePhaseProgress(levelThreeStrainDuration)),
+                LevelThreeClimbFailurePhase.Slip => 1f,
+                _ => 0f
+            };
+        }
+
+        private float GetCurrentLevelThreePhaseProgress(float duration)
+        {
+            return Mathf.Clamp01(
+                (Time.time - levelThreeClimbPhaseStartTime)
+                / Mathf.Max(0.05f, duration));
         }
 
         private Vector2 CalculateTractionAdjustedSlideVector(
@@ -487,8 +619,95 @@ namespace AnimalGame.RobotMap
             Vector2 correctedLateral = Vector2.MoveTowards(
                 currentLateral,
                 targetLateral,
-                levelTwoLateralGripAcceleration * Time.deltaTime);
+                ScaleMotion(levelTwoLateralGripAcceleration) * Time.deltaTime);
             CurrentTerrainVelocity = currentLongitudinal + correctedLateral;
+        }
+
+        private void UpdateLevelThreeClimbFailureSequence(
+            SlopeTraversalResult groundResult,
+            float throttle)
+        {
+            if (!useLevelThreeClimbFailureSequence
+                || IsAutoAligningDownhill
+                || traversalEvaluator == null
+                || !groundResult.HasData)
+            {
+                ResetLevelThreeClimbFailureSequence();
+                return;
+            }
+
+            bool onLevelThreeSurface = traversalEvaluator.ClassifyUphillSlope(
+                                           groundResult.MaximumSurfaceSlopeAngle)
+                                       == UphillSlopeLevel.LevelThree;
+            bool tryingToClimb = IsTryingToClimbLevelThree(
+                groundResult,
+                throttle);
+
+            switch (CurrentLevelThreeClimbPhase)
+            {
+                case LevelThreeClimbFailurePhase.None:
+                    if (tryingToClimb)
+                    {
+                        EnterLevelThreeClimbPhase(
+                            LevelThreeClimbFailurePhase.Grip);
+                    }
+                    break;
+
+                case LevelThreeClimbFailurePhase.Grip:
+                    if (!onLevelThreeSurface)
+                    {
+                        ResetLevelThreeClimbFailureSequence();
+                    }
+                    else if (!tryingToClimb
+                             || GetCurrentLevelThreePhaseProgress(
+                                 levelThreeGripDuration) >= 1f)
+                    {
+                        EnterLevelThreeClimbPhase(
+                            tryingToClimb
+                                ? LevelThreeClimbFailurePhase.Strain
+                                : LevelThreeClimbFailurePhase.Slip);
+                    }
+                    break;
+
+                case LevelThreeClimbFailurePhase.Strain:
+                    if (!onLevelThreeSurface)
+                    {
+                        ResetLevelThreeClimbFailureSequence();
+                    }
+                    else if (!tryingToClimb
+                             || GetCurrentLevelThreePhaseProgress(
+                                 levelThreeStrainDuration) >= 1f)
+                    {
+                        EnterLevelThreeClimbPhase(
+                            LevelThreeClimbFailurePhase.Slip);
+                    }
+                    break;
+
+                case LevelThreeClimbFailurePhase.Slip:
+                    if (GetCurrentLevelThreePhaseProgress(
+                            levelThreeSlipDuration) >= 1f)
+                    {
+                        pendingDownhillRecoveryFromLevelThreeSlip = true;
+                        ResetLevelThreeClimbFailureSequence();
+                    }
+                    break;
+            }
+        }
+
+        private void EnterLevelThreeClimbPhase(
+            LevelThreeClimbFailurePhase phase)
+        {
+            CurrentLevelThreeClimbPhase = phase;
+            levelThreeClimbPhaseStartTime = Time.time;
+            CurrentTurnSpeed = 0f;
+            if (phase == LevelThreeClimbFailurePhase.Slip)
+                CurrentSpeed = 0f;
+        }
+
+        private void ResetLevelThreeClimbFailureSequence()
+        {
+            CurrentLevelThreeClimbPhase = LevelThreeClimbFailurePhase.None;
+            levelThreeClimbPhaseStartTime = 0f;
         }
 
         private static bool IsTryingToClimbLevelThree(
@@ -502,7 +721,7 @@ namespace AnimalGame.RobotMap
         }
 
         private void UpdateDownhillHeadingRecoveryState(
-            bool wasLevelThreeUnstable,
+            bool shouldStartRecovery,
             SlopeTraversalResult groundResult)
         {
             if (!automaticallyAlignDownhillAfterLevelThreeSlip)
@@ -521,7 +740,7 @@ namespace AnimalGame.RobotMap
                                               && groundResult.DownhillWorldDirection
                                                   .sqrMagnitude > 0.000001f;
 
-            if (wasLevelThreeUnstable
+            if (shouldStartRecovery
                 && hasUsableDownhillDirection)
             {
                 IsAutoAligningDownhill = true;
@@ -574,7 +793,7 @@ namespace AnimalGame.RobotMap
             lateralVelocity = Vector2.MoveTowards(
                 lateralVelocity,
                 Vector2.zero,
-                downhillSlideLateralDamping * Time.deltaTime);
+                ScaleMotion(downhillSlideLateralDamping) * Time.deltaTime);
             CurrentTerrainVelocity = downhillVelocity + lateralVelocity;
         }
 
@@ -594,7 +813,7 @@ namespace AnimalGame.RobotMap
             float alignedAngle = Mathf.MoveTowardsAngle(
                 currentAngle,
                 targetAngle,
-                downhillHeadingAlignmentSpeed * Time.deltaTime);
+                ScaleMotion(downhillHeadingAlignmentSpeed) * Time.deltaTime);
             transform.rotation = Quaternion.Euler(0f, 0f, alignedAngle);
         }
 
@@ -645,8 +864,10 @@ namespace AnimalGame.RobotMap
             IsLevelThreeUnstable = false;
             IsAutoAligningDownhill = false;
             IsDownhillBoosted = false;
+            ResetLevelThreeClimbFailureSequence();
             downhillHeadingRecoveryEndTime = 0f;
             downhillHeadingRecoveryDirection = Vector2.zero;
+            pendingDownhillRecoveryFromLevelThreeSlip = false;
             CurrentTraversalResult = result;
             RelaxUnstableDrift();
         }
@@ -689,23 +910,32 @@ namespace AnimalGame.RobotMap
         private float GetSpeedChangeRate(float throttle, float targetSpeed)
         {
             if (Mathf.Approximately(throttle, 0f))
-                return coastDeceleration;
+                return ScaleMotion(coastDeceleration);
 
             bool isBraking = !Mathf.Approximately(CurrentSpeed, 0f)
                              && Mathf.Sign(targetSpeed) != Mathf.Sign(CurrentSpeed);
             if (isBraking)
-                return brakingDeceleration;
+                return ScaleMotion(brakingDeceleration);
 
-            float relevantTopSpeed = targetSpeed >= 0f ? forwardSpeed : reverseSpeed;
+            float relevantTopSpeed = targetSpeed >= 0f
+                ? ScaleMotion(forwardSpeed)
+                : ScaleMotion(reverseSpeed);
             float normalizedSpeed = relevantTopSpeed > 0f
                 ? Mathf.Clamp01(Mathf.Abs(CurrentSpeed) / relevantTopSpeed)
                 : 0f;
 
-            return Mathf.Lerp(launchAcceleration, runningAcceleration, normalizedSpeed);
+            return ScaleMotion(
+                Mathf.Lerp(launchAcceleration, runningAcceleration, normalizedSpeed));
+        }
+
+        private float ScaleMotion(float value)
+        {
+            return value * overallMotionScale;
         }
 
         private void OnValidate()
         {
+            overallMotionScale = Mathf.Clamp(overallMotionScale, 0f, 2f);
             forwardSpeed = Mathf.Max(0f, forwardSpeed);
             reverseSpeed = Mathf.Max(0f, reverseSpeed);
             turnSpeed = Mathf.Max(0f, turnSpeed);
@@ -746,6 +976,15 @@ namespace AnimalGame.RobotMap
                 0.1f,
                 levelThreeDriftDirectionChangeInterval);
             levelThreeDriftSmoothing = Mathf.Max(0.01f, levelThreeDriftSmoothing);
+            levelThreeGripDuration = Mathf.Max(0.05f, levelThreeGripDuration);
+            levelThreeGripForwardSpeedMultiplier = Mathf.Clamp01(
+                levelThreeGripForwardSpeedMultiplier);
+            levelThreeGripSlideMultiplier = Mathf.Clamp01(
+                levelThreeGripSlideMultiplier);
+            levelThreeStrainDuration = Mathf.Max(0.05f, levelThreeStrainDuration);
+            levelThreeStrainEndForwardSpeedMultiplier = Mathf.Clamp01(
+                levelThreeStrainEndForwardSpeedMultiplier);
+            levelThreeSlipDuration = Mathf.Max(0.05f, levelThreeSlipDuration);
             levelThreeAngularDriftSpeed = Mathf.Max(
                 0f,
                 levelThreeAngularDriftSpeed);

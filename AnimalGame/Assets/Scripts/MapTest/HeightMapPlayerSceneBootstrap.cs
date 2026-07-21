@@ -194,6 +194,21 @@ namespace AnimalGame.MapTest
                         $"TRAVERSAL   BLOCKED ({robot.CurrentTraversalResult.BlockReason})";
                     state.normal.textColor = new Color(1f, 0.35f, 0.28f);
                 }
+                else if (robot.CurrentLevelThreeClimbPhase
+                         != LevelThreeClimbFailurePhase.None)
+                {
+                    traversalText = robot.CurrentLevelThreeClimbPhase switch
+                    {
+                        LevelThreeClimbFailurePhase.Grip =>
+                            "TRAVERSAL   LEVEL III / GRIP",
+                        LevelThreeClimbFailurePhase.Strain =>
+                            "TRAVERSAL   LEVEL III / STRAIN",
+                        LevelThreeClimbFailurePhase.Slip =>
+                            "TRAVERSAL   LEVEL III / SLIP",
+                        _ => "TRAVERSAL   SLOPE LEVEL III"
+                    };
+                    state.normal.textColor = new Color(1f, 0.55f, 0.2f);
+                }
                 else if (robot.IsLevelThreeUnstable)
                 {
                     traversalText = "TRAVERSAL   LEVEL III / UNSTABLE";
