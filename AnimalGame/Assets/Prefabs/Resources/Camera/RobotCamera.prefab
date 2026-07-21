@@ -109,6 +109,17 @@ MonoBehaviour:
   positionDamping: 0.18
   rotationDamping: 0.28
   followTargetRotation: 1
+  enableManualImbalancePreview: 1
+  lightImbalance: 0.3
+  mediumImbalance: 0.62
+  severeImbalance: 1
+  maximumRollAngle: 11
+  maximumYawAngle: 16
+  maximumLateralOffset: 0.84
+  imbalanceSpringFrequency: 0.85
+  imbalanceDampingRatio: 0.58
+  imbalanceNoiseAngle: 0.48
+  imbalanceNoiseFrequency: 0.42
 --- !u!114 &9082400791978122201
 MonoBehaviour:
   m_ObjectHideFlags: 0

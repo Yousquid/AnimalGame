@@ -153,8 +153,6 @@ namespace AnimalGame.MapTest
             CreateOverlayIfNeeded();
 
             Bounds bounds = map.WorldBounds;
-            float mapPlaneDistance = Mathf.Abs(
-                bounds.center.z - mapCamera.transform.position.z);
             Vector3 robotViewport = mapCamera.WorldToViewportPoint(playerRobot.transform.position);
             Vector2 robotScreenPosition = new Vector2(
                 robotViewport.x * Screen.width,
@@ -183,8 +181,14 @@ namespace AnimalGame.MapTest
                 Vector2 viewportPosition = new Vector2(
                     screenPosition.x / Mathf.Max(1f, Screen.width),
                     screenPosition.y / Mathf.Max(1f, Screen.height));
-                Vector3 worldPosition = mapCamera.ViewportToWorldPoint(
-                    new Vector3(viewportPosition.x, viewportPosition.y, mapPlaneDistance));
+                if (!TryProjectViewportPointToMapPlane(
+                        viewportPosition,
+                        bounds.center.z,
+                        out Vector3 worldPosition))
+                {
+                    continue;
+                }
+
                 if (!map.TrySampleWorldPosition(
                         worldPosition,
                         out Vector2 targetMapPosition,
@@ -220,6 +224,32 @@ namespace AnimalGame.MapTest
 
             for (; imageIndex < pooledImages.Count; imageIndex++)
                 SetImageEnabled(pooledImages[imageIndex], false);
+        }
+
+        private bool TryProjectViewportPointToMapPlane(
+            Vector2 viewportPoint,
+            float mapPlaneZ,
+            out Vector3 worldPoint)
+        {
+            Ray ray = mapCamera.ViewportPointToRay(
+                new Vector3(viewportPoint.x, viewportPoint.y, 0f));
+            float directionAlongPlaneNormal = ray.direction.z;
+            if (Mathf.Abs(directionAlongPlaneNormal) < 0.000001f)
+            {
+                worldPoint = default;
+                return false;
+            }
+
+            float distance = (mapPlaneZ - ray.origin.z)
+                             / directionAlongPlaneNormal;
+            if (distance < 0f)
+            {
+                worldPoint = default;
+                return false;
+            }
+
+            worldPoint = ray.GetPoint(distance);
+            return true;
         }
 
         private void CreateOverlayIfNeeded()
