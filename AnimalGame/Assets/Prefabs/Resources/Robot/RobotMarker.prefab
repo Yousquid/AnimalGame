@@ -45,10 +45,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cd26522b95a63ad47912ec0bb2cdf8c8, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  overallMotionScale: 0.88
   forwardSpeed: 4.2
   reverseSpeed: 3
-  turnSpeed: 55
-  turnAcceleration: 52.4
+  turnSpeed: 60
+  turnAcceleration: 60
   turnDeceleration: 240
   stickDeadZone: 0.15
   launchAcceleration: 2.2
@@ -69,11 +70,18 @@ MonoBehaviour:
   levelThreeInitialLateralDriftStrength: 0.3
   levelThreeDriftDirectionChangeInterval: 0.55
   levelThreeDriftSmoothing: 0.12
+  useLevelThreeClimbFailureSequence: 1
+  levelThreeGripDuration: 0.35
+  levelThreeGripForwardSpeedMultiplier: 0.75
+  levelThreeGripSlideMultiplier: 0.25
+  levelThreeStrainDuration: 0.45
+  levelThreeStrainEndForwardSpeedMultiplier: 0.25
+  levelThreeSlipDuration: 0.45
   levelThreeAngularDriftSpeed: 90
   levelThreeAngularDriftAcceleration: 180
   levelThreeAngularRecoveryAcceleration: 420
   automaticallyAlignDownhillAfterLevelThreeSlip: 1
-  downhillHeadingAlignmentSpeed: 120
+  downhillHeadingAlignmentSpeed: 90
   downhillHeadingRecoveryDuration: 0.45
   downhillSlideLateralDamping: 18
   terrainVelocityRecoveryAcceleration: 4
@@ -103,4 +111,17 @@ MonoBehaviour:
   indicatorScale: 1.35
   indicatorRotationOffsetDegrees: 0
   indicatorColor: {r: 0.92, g: 0.98, b: 1, a: 1}
+  showDriveBob: 1
+  driveBobAmplitude: 0.1
+  driveBobCyclesPerMeter: 0.32
+  driveBobFullStrengthSpeed: 1.25
+  driveBobEnterSmoothing: 0.12
+  driveBobExitSmoothing: 0.2
+  driveBobPositionSmoothing: 0.06
+  driveBobAmplitudeRandomness: 0.18
+  driveBobFrequencyRandomness: 0.22
+  driveBobNoiseAmplitudeRatio: 0.12
+  driveBobNoiseFrequency: 0.65
+  levelTwoDriveBobMultiplier: 1.4
+  levelThreeGripDriveBobMultiplier: 1.8
   showMotionTail: 0
