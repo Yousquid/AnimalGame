@@ -460,8 +460,6 @@ namespace AnimalGame.MapTest
             int horizontalSamples = Mathf.Max(
                 2,
                 Mathf.CeilToInt(verticalSamples * Mathf.Max(0.1f, cameraToSample.aspect)));
-            float mapPlaneDistance = Mathf.Abs(
-                mapRenderer.transform.position.z - cameraToSample.transform.position.z);
             int validSamples = 0;
 
             for (int y = 0; y < verticalSamples; y++)
@@ -470,8 +468,14 @@ namespace AnimalGame.MapTest
                 for (int x = 0; x < horizontalSamples; x++)
                 {
                     float viewportX = x / (float)(horizontalSamples - 1);
-                    Vector3 world = cameraToSample.ViewportToWorldPoint(
-                        new Vector3(viewportX, viewportY, mapPlaneDistance));
+                    if (!TryProjectViewportPointToMapPlane(
+                            cameraToSample,
+                            new Vector2(viewportX, viewportY),
+                            mapRenderer.transform.position.z,
+                            out Vector3 world))
+                    {
+                        continue;
+                    }
 
                     if (world.x < bounds.min.x || world.x > bounds.max.x
                         || world.y < bounds.min.y || world.y > bounds.max.y)
@@ -490,6 +494,41 @@ namespace AnimalGame.MapTest
             }
 
             return validSamples > 0;
+        }
+
+        private static bool TryProjectViewportPointToMapPlane(
+            Camera cameraToSample,
+            Vector2 viewportPoint,
+            float mapPlaneZ,
+            out Vector3 worldPoint)
+        {
+            Ray ray = cameraToSample.ViewportPointToRay(
+                new Vector3(viewportPoint.x, viewportPoint.y, 0f));
+            return TryProjectRayToMapPlane(ray, mapPlaneZ, out worldPoint);
+        }
+
+        private static bool TryProjectRayToMapPlane(
+            Ray ray,
+            float mapPlaneZ,
+            out Vector3 worldPoint)
+        {
+            float directionAlongPlaneNormal = ray.direction.z;
+            if (Mathf.Abs(directionAlongPlaneNormal) < 0.000001f)
+            {
+                worldPoint = default;
+                return false;
+            }
+
+            float distance = (mapPlaneZ - ray.origin.z)
+                             / directionAlongPlaneNormal;
+            if (distance < 0f)
+            {
+                worldPoint = default;
+                return false;
+            }
+
+            worldPoint = ray.GetPoint(distance);
+            return true;
         }
 
         private void RefreshContourMaterialSettings()
@@ -522,7 +561,17 @@ namespace AnimalGame.MapTest
 
         private void UpdateHeightProbe()
         {
-            Vector3 world = mapCamera.ScreenToWorldPoint(Input.mousePosition);
+            Ray cursorRay = mapCamera.ScreenPointToRay(Input.mousePosition);
+            if (!TryProjectRayToMapPlane(
+                    cursorRay,
+                    mapRenderer.transform.position.z,
+                    out Vector3 world))
+            {
+                cursorInsideMap = false;
+                crosshair.enabled = false;
+                return;
+            }
+
             Bounds bounds = mapRenderer.bounds;
             cursorInsideMap = world.x >= bounds.min.x && world.x <= bounds.max.x
                               && world.y >= bounds.min.y && world.y <= bounds.max.y;
