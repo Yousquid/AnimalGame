@@ -365,6 +365,10 @@ namespace AnimalGame.MapTest
             var mapObject = new GameObject("2D Height Map");
             mapRenderer = mapObject.AddComponent<SpriteRenderer>();
             mapRenderer.sprite = generatedMapSprite;
+            // The map is the visual background. Keep it well behind every robot
+            // marker layer so transparent contour rendering can never win an
+            // ambiguous same-plane draw-order comparison.
+            mapRenderer.sortingOrder = -1000;
             CreateDynamicContourMaterial();
         }
 
