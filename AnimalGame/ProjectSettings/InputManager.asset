@@ -489,10 +489,10 @@ InputManager:
     m_Name: Gamepad Move
     descriptiveName: Left Stick Vertical
     descriptiveNegativeName: Reverse
-    negativeButton:
-    positiveButton:
-    altNegativeButton:
-    altPositiveButton:
+    negativeButton: 
+    positiveButton: 
+    altNegativeButton: 
+    altPositiveButton: 
     gravity: 0
     dead: 0.001
     sensitivity: 1
@@ -503,12 +503,44 @@ InputManager:
     joyNum: 0
   - serializedVersion: 3
     m_Name: Gamepad Turn
-    descriptiveName: Right Stick Horizontal
+    descriptiveName: Left Stick Horizontal
     descriptiveNegativeName: Turn Left
-    negativeButton:
-    positiveButton:
-    altNegativeButton:
-    altPositiveButton:
+    negativeButton: 
+    positiveButton: 
+    altNegativeButton: 
+    altPositiveButton: 
+    gravity: 0
+    dead: 0.001
+    sensitivity: 1
+    snap: 0
+    invert: 0
+    type: 2
+    axis: 0
+    joyNum: 0
+  - serializedVersion: 3
+    m_Name: Gamepad Trigger Throttle
+    descriptiveName: Right Trigger Forward Left Trigger Reverse
+    descriptiveNegativeName: Left Trigger Reverse
+    negativeButton: 
+    positiveButton: 
+    altNegativeButton: 
+    altPositiveButton: 
+    gravity: 0
+    dead: 0.001
+    sensitivity: 1
+    snap: 0
+    invert: 0
+    type: 2
+    axis: 2
+    joyNum: 0
+  - serializedVersion: 3
+    m_Name: Gamepad Balance Horizontal
+    descriptiveName: Right Stick Horizontal Balance
+    descriptiveNegativeName: Counterbalance Left
+    negativeButton: 
+    positiveButton: 
+    altNegativeButton: 
+    altPositiveButton: 
     gravity: 0
     dead: 0.001
     sensitivity: 1
@@ -517,3 +549,20 @@ InputManager:
     type: 2
     axis: 3
     joyNum: 0
+  - serializedVersion: 3
+    m_Name: Gamepad Balance Vertical
+    descriptiveName: Right Stick Vertical Balance
+    descriptiveNegativeName: Counterbalance Backward
+    negativeButton: 
+    positiveButton: 
+    altNegativeButton: 
+    altPositiveButton: 
+    gravity: 0
+    dead: 0.001
+    sensitivity: 1
+    snap: 0
+    invert: 1
+    type: 2
+    axis: 4
+    joyNum: 0
+  m_UsePhysicalKeys: 1

@@ -53,6 +53,12 @@ namespace AnimalGame.MapTest
 
             map = mapObject.GetComponent<MapTestSceneController>();
             robot = robotObject.GetComponent<RobotMover>();
+            RobotBalanceController balance =
+                robotObject.GetComponent<RobotBalanceController>();
+            if (balance == null)
+                balance = robotObject.AddComponent<RobotBalanceController>();
+            if (robotObject.GetComponent<RobotBalanceView>() == null)
+                robotObject.AddComponent<RobotBalanceView>();
             Camera camera = cameraObject.GetComponent<Camera>();
             RobotCameraFollow cameraFollow = cameraObject.GetComponent<RobotCameraFollow>();
             traversalEvaluator = traversalObject.GetComponent<HeightMapTraversalEvaluator>();
@@ -70,7 +76,7 @@ namespace AnimalGame.MapTest
 
             robot.transform.position = map.MapPositionToWorld(playerSpawnMapPositionMeters);
             map.UseCamera(camera);
-            cameraFollow.Target = robot.transform;
+            cameraFollow.Target = balance.CameraFollowTarget;
             cameraFollow.SnapToTarget();
             traversalEvaluator.Initialize(map);
             robot.SetTraversalEvaluator(traversalEvaluator);

@@ -10,6 +10,8 @@ GameObject:
   m_Component:
   - component: {fileID: 1075418996823516578}
   - component: {fileID: 5167503192331160194}
+  - component: {fileID: 6754498989903123456}
+  - component: {fileID: 6754498989903123457}
   - component: {fileID: 3540108170491067500}
   m_Layer: 0
   m_Name: RobotMarker
@@ -51,7 +53,10 @@ MonoBehaviour:
   turnSpeed: 60
   turnAcceleration: 60
   turnDeceleration: 240
+  useTriggerThrottleGamepadMode: 1
   stickDeadZone: 0.15
+  triggerDeadZone: 0.05
+  invertTriggerThrottle: 0
   launchAcceleration: 2.2
   runningAcceleration: 4.8
   coastDeceleration: 5
@@ -89,6 +94,68 @@ MonoBehaviour:
   downhillFullBoostAngle: 35
   downhillMaximumSpeedMultiplier: 1.5
   downhillAccelerationBonus: 3
+--- !u!114 &6754498989903123456
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4839072109466370475}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a1c31e825b5b4e79b2bdf2d9207d8c63, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  centerOfMassHeightMeters: 0.9
+  usableSupportFraction: 0.98
+  slopeBalanceInfluence: 0.65
+  accelerationForFullOffset: 8
+  inertiaInfluence: 0.08
+  accelerationSmoothingTime: 0.22
+  maximumMeasuredAcceleration: 30
+  maximumCounterbalance: 0.6
+  rightStickDeadZone: 0.2
+  counterbalanceInputExponent: 1.6
+  counterbalanceResponseTime: 0.16
+  counterbalanceReturnTime: 0.34
+  balanceSpringFrequency: 2
+  balanceDampingRatio: 1.3
+  maximumNormalizedOffset: 1.2
+  edgeResistanceStart: 0.72
+  edgeResistanceStrength: 1.8
+  influenceMovement: 1
+  movementInfluenceStart: 0.75
+  minimumDriveAuthority: 0.68
+  minimumSteeringAuthority: 0.45
+  cameraFollowOffsetAtRing: 0.3
+--- !u!114 &6754498989903123457
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4839072109466370475}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d7f9b1c263da4b20b95f52c0a6d98931, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  showBalanceDisplay: 1
+  ringColor: {r: 0.92, g: 0.98, b: 1, a: 1}
+  lineColor: {r: 0.92, g: 0.98, b: 1, a: 1}
+  pointColor: {r: 0.92, g: 0.98, b: 1, a: 1}
+  centeredPointAlpha: 0.35
+  edgePointAlpha: 0.8
+  centeredGuideAlpha: 0.08
+  edgeGuideAlpha: 0.35
+  controlRingDiameterPixels: 150
+  ringThicknessPixels: 1
+  lineThicknessPixels: 1.1
+  minimumPointRadiusPixels: 2.2
+  maximumPointRadiusPixels: 8.5
+  displayedOverflowLimit: 1.16
+  circleSegments: 64
+  canvasSortingOrder: 40
 --- !u!114 &3540108170491067500
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -111,7 +178,7 @@ MonoBehaviour:
   indicatorScale: 1.35
   indicatorRotationOffsetDegrees: 0
   indicatorColor: {r: 0.92, g: 0.98, b: 1, a: 1}
-  showDriveBob: 1
+  showDriveBob: 0
   driveBobAmplitude: 0.1
   driveBobCyclesPerMeter: 0.32
   driveBobFullStrengthSpeed: 1.25

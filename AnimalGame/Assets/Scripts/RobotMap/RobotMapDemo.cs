@@ -39,7 +39,11 @@ namespace AnimalGame.RobotMap
             if (sceneCamera != null && sceneCamera != demoCamera)
                 sceneCamera.gameObject.SetActive(false);
 
-            demoCamera.GetComponent<RobotCameraFollow>().Target = mover.transform;
+            RobotBalanceController balance =
+                mover.GetComponent<RobotBalanceController>();
+            demoCamera.GetComponent<RobotCameraFollow>().Target = balance != null
+                ? balance.CameraFollowTarget
+                : mover.transform;
         }
 
         private static void ConfigureFallbackCamera(Camera camera)
@@ -121,6 +125,10 @@ namespace AnimalGame.RobotMap
 
             if (robot.GetComponent<RobotMarkerView>() == null)
                 robot.AddComponent<RobotMarkerView>();
+            if (robot.GetComponent<RobotBalanceController>() == null)
+                robot.AddComponent<RobotBalanceController>();
+            if (robot.GetComponent<RobotBalanceView>() == null)
+                robot.AddComponent<RobotBalanceView>();
         }
 
         internal static LineRenderer CreateLine(Transform parent, string name, IReadOnlyList<Vector3> points,
