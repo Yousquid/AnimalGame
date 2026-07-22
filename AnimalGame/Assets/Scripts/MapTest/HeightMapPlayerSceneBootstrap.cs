@@ -57,10 +57,18 @@ namespace AnimalGame.MapTest
                 robotObject.GetComponent<RobotBalanceController>();
             if (balance == null)
                 balance = robotObject.AddComponent<RobotBalanceController>();
+            RobotHeightMotionDetector heightMotion =
+                robotObject.GetComponent<RobotHeightMotionDetector>();
+            if (heightMotion == null)
+                heightMotion = robotObject.AddComponent<RobotHeightMotionDetector>();
             if (robotObject.GetComponent<RobotBalanceView>() == null)
                 robotObject.AddComponent<RobotBalanceView>();
             Camera camera = cameraObject.GetComponent<Camera>();
             RobotCameraFollow cameraFollow = cameraObject.GetComponent<RobotCameraFollow>();
+            RobotCameraShake cameraShake =
+                cameraObject.GetComponent<RobotCameraShake>();
+            if (cameraShake == null)
+                cameraShake = cameraObject.AddComponent<RobotCameraShake>();
             traversalEvaluator = traversalObject.GetComponent<HeightMapTraversalEvaluator>();
             TraversalOverlayUI traversalOverlay = overlayObject.GetComponent<TraversalOverlayUI>();
 
@@ -80,6 +88,8 @@ namespace AnimalGame.MapTest
             cameraFollow.SnapToTarget();
             traversalEvaluator.Initialize(map);
             robot.SetTraversalEvaluator(traversalEvaluator);
+            heightMotion.Initialize(map);
+            cameraShake.Initialize(robot, balance, heightMotion);
             traversalOverlay.Initialize(map, traversalEvaluator, camera, robot);
             UpdatePlayerHeight();
         }

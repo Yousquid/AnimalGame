@@ -26,14 +26,39 @@ namespace AnimalGame.RobotMap
         [Tooltip("Ring and direction-line alpha when the centre of mass reaches the outer control ring.")]
         [SerializeField, Range(0f, 1f)] private float edgeGuideAlpha = 0.35f;
 
-        [Header("Screen-space Shape")]
+        [Header("Screen-space Ranges")]
+        [Tooltip("Diameter of the visible balance-control ring in screen pixels. This changes only the UI ring, not the physical balance simulation.")]
         [SerializeField, Min(16f)] private float controlRingDiameterPixels = 150f;
-        [SerializeField, Min(0.25f)] private float ringThicknessPixels = 1f;
-        [SerializeField, Min(0.25f)] private float lineThicknessPixels = 1.1f;
-        [SerializeField, Min(0.5f)] private float minimumPointRadiusPixels = 2.2f;
-        [SerializeField, Min(0.5f)] private float maximumPointRadiusPixels = 8.5f;
+
+        [Tooltip("Maximum screen-space distance from the robot centre to the centre-of-mass point when balance magnitude is 100%. Set this equal to half the ring diameter for the point to reach the ring at 100%.")]
+        [SerializeField, Min(1f)] private float pointTravelRangePixels = 75f;
+
+        [Tooltip("How far the connection line starts away from the exact robot centre, in screen pixels.")]
+        [SerializeField, Min(0f)] private float lineStartInsetPixels;
+
+        [Tooltip("How far the connection line stops before the centre-of-mass point, in screen pixels.")]
+        [SerializeField, Min(0f)] private float lineEndInsetPixels;
+
+        [Tooltip("Maximum displayed point/line distance as a multiple of Point Travel Range. Values above one allow the point to visibly leave the ring.")]
         [SerializeField, Range(1f, 1.5f)] private float displayedOverflowLimit = 1.16f;
+
+        [Header("Screen-space Thickness and Size")]
+        [Tooltip("Thickness of the balance range ring in screen pixels.")]
+        [SerializeField, Min(0.25f)] private float ringThicknessPixels = 1f;
+
+        [Tooltip("Thickness of the centre-to-balance-point connection line in screen pixels.")]
+        [SerializeField, Min(0.25f)] private float lineThicknessPixels = 1.1f;
+
+        [Tooltip("Radius of the centre-of-mass point while balance is centred, in screen pixels.")]
+        [SerializeField, Min(0.5f)] private float minimumPointRadiusPixels = 2.2f;
+
+        [Tooltip("Radius of the centre-of-mass point at 100% balance displacement, in screen pixels.")]
+        [SerializeField, Min(0.5f)] private float maximumPointRadiusPixels = 8.5f;
+
+        [Tooltip("Number of segments used to draw the range ring. Higher values make it rounder.")]
         [SerializeField, Range(12, 128)] private int circleSegments = 64;
+
+        [Tooltip("Screen-space canvas sorting order of the complete balance display.")]
         [SerializeField] private int canvasSortingOrder = 40;
 
         private RobotBalanceController balance;
@@ -116,6 +141,9 @@ namespace AnimalGame.RobotMap
             graphic.SetBalance(
                 displayOffset,
                 controlRingDiameterPixels * 0.5f,
+                pointTravelRangePixels,
+                lineStartInsetPixels,
+                lineEndInsetPixels,
                 ringThicknessPixels,
                 lineThicknessPixels,
                 minimumPointRadiusPixels,
@@ -194,6 +222,9 @@ namespace AnimalGame.RobotMap
         private void OnValidate()
         {
             controlRingDiameterPixels = Mathf.Max(16f, controlRingDiameterPixels);
+            pointTravelRangePixels = Mathf.Max(1f, pointTravelRangePixels);
+            lineStartInsetPixels = Mathf.Max(0f, lineStartInsetPixels);
+            lineEndInsetPixels = Mathf.Max(0f, lineEndInsetPixels);
             ringThicknessPixels = Mathf.Max(0.25f, ringThicknessPixels);
             lineThicknessPixels = Mathf.Max(0.25f, lineThicknessPixels);
             minimumPointRadiusPixels = Mathf.Max(0.5f, minimumPointRadiusPixels);
@@ -214,6 +245,9 @@ namespace AnimalGame.RobotMap
     {
         private Vector2 normalizedOffset;
         private float ringRadius = 75f;
+        private float pointTravelRange = 75f;
+        private float lineStartInset;
+        private float lineEndInset;
         private float ringThickness = 1f;
         private float lineThickness = 1f;
         private float minimumPointRadius = 2f;
@@ -227,6 +261,9 @@ namespace AnimalGame.RobotMap
         public void SetBalance(
             Vector2 newNormalizedOffset,
             float newRingRadius,
+            float newPointTravelRange,
+            float newLineStartInset,
+            float newLineEndInset,
             float newRingThickness,
             float newLineThickness,
             float newMinimumPointRadius,
@@ -239,6 +276,9 @@ namespace AnimalGame.RobotMap
         {
             normalizedOffset = newNormalizedOffset;
             ringRadius = newRingRadius;
+            pointTravelRange = newPointTravelRange;
+            lineStartInset = newLineStartInset;
+            lineEndInset = newLineEndInset;
             ringThickness = newRingThickness;
             lineThickness = newLineThickness;
             minimumPointRadius = newMinimumPointRadius;
@@ -249,7 +289,10 @@ namespace AnimalGame.RobotMap
             lineColor = newLineColor;
             pointColor = newPointColor;
             rectTransform.sizeDelta = Vector2.one
-                                      * (ringRadius * 2f
+                                      * (Mathf.Max(
+                                             ringRadius,
+                                             pointTravelRange * overflowLimit)
+                                         * 2f
                                          + maximumPointRadius * 2f
                                          + 12f);
             SetVerticesDirty();
@@ -267,18 +310,27 @@ namespace AnimalGame.RobotMap
             Vector2 pointCenter = center
                                   + direction
                                   * displayedMagnitude
-                                  * ringRadius;
+                                  * pointTravelRange;
             float pointRadius = Mathf.Lerp(
                 minimumPointRadius,
                 maximumPointRadius,
                 Mathf.Clamp01(magnitude));
 
-            if ((pointCenter - center).sqrMagnitude > 0.25f)
+            float connectionDistance = Vector2.Distance(center, pointCenter);
+            float safeStartInset = Mathf.Min(
+                Mathf.Max(0f, lineStartInset),
+                connectionDistance);
+            float safeEndInset = Mathf.Min(
+                Mathf.Max(0f, lineEndInset),
+                Mathf.Max(0f, connectionDistance - safeStartInset));
+            Vector2 lineStart = center + direction * safeStartInset;
+            Vector2 lineEnd = pointCenter - direction * safeEndInset;
+            if ((lineEnd - lineStart).sqrMagnitude > 0.25f)
             {
                 AddLine(
                     vertexHelper,
-                    center,
-                    pointCenter,
+                    lineStart,
+                    lineEnd,
                     lineThickness,
                     lineColor);
             }

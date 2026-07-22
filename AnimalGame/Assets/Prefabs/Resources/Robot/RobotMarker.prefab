@@ -11,6 +11,7 @@ GameObject:
   - component: {fileID: 1075418996823516578}
   - component: {fileID: 5167503192331160194}
   - component: {fileID: 6754498989903123456}
+  - component: {fileID: 7410917293342164201}
   - component: {fileID: 6754498989903123457}
   - component: {fileID: 3540108170491067500}
   m_Layer: 0
@@ -45,8 +46,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: cd26522b95a63ad47912ec0bb2cdf8c8, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   overallMotionScale: 0.88
   forwardSpeed: 4.2
   reverseSpeed: 3
@@ -128,6 +129,31 @@ MonoBehaviour:
   minimumDriveAuthority: 0.68
   minimumSteeringAuthority: 0.45
   cameraFollowOffsetAtRing: 0.3
+--- !u!114 &7410917293342164201
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4839072109466370475}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b84e64a953154db2a09c7de7e55c1731, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  enableHeightMotionDetection: 1
+  virtualGravityMetersPerSecondSquared: 9.81
+  minimumTakeoffPlanarSpeed: 0.65
+  minimumGroundFallAwaySpeed: 1.25
+  takeoffClearanceMeters: 0.025
+  landingClearanceMeters: 0.02
+  minimumAirborneDurationSeconds: 0.055
+  recentAirborneMemorySeconds: 0.6
+  minimumLandingImpactSpeed: 0.7
+  fullLandingImpactSpeed: 5.5
+  groundVerticalSpeedSmoothingTime: 0.06
+  maximumGroundVerticalSpeed: 20
+  maximumVerticalAcceleration: 60
 --- !u!114 &6754498989903123457
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -144,16 +170,19 @@ MonoBehaviour:
   ringColor: {r: 0.92, g: 0.98, b: 1, a: 1}
   lineColor: {r: 0.92, g: 0.98, b: 1, a: 1}
   pointColor: {r: 0.92, g: 0.98, b: 1, a: 1}
-  centeredPointAlpha: 0.35
+  centeredPointAlpha: 0.084
   edgePointAlpha: 0.8
-  centeredGuideAlpha: 0.08
+  centeredGuideAlpha: 0.015
   edgeGuideAlpha: 0.35
   controlRingDiameterPixels: 150
+  pointTravelRangePixels: 75
+  lineStartInsetPixels: 0
+  lineEndInsetPixels: 0
+  displayedOverflowLimit: 1.16
   ringThicknessPixels: 1
   lineThicknessPixels: 1.1
   minimumPointRadiusPixels: 2.2
   maximumPointRadiusPixels: 8.5
-  displayedOverflowLimit: 1.16
   circleSegments: 64
   canvasSortingOrder: 40
 --- !u!114 &3540108170491067500
@@ -176,6 +205,7 @@ MonoBehaviour:
   bodyFillColor: {r: 0.008, g: 0.012, b: 0.017, a: 1}
   matchBodyFillToCameraBackground: 1
   bodyOutlineColor: {r: 0.89622635, g: 0.97395486, b: 1, a: 1}
+  visualDepthOffset: -0.1
   indicatorSprite: {fileID: 21300000, guid: 7ebc16e768ef2ec49bf9b1a1bd364849, type: 3}
   indicatorScale: 1.35
   indicatorRotationOffsetDegrees: 0

@@ -44,6 +44,14 @@ namespace AnimalGame.RobotMap
             demoCamera.GetComponent<RobotCameraFollow>().Target = balance != null
                 ? balance.CameraFollowTarget
                 : mover.transform;
+            RobotCameraShake cameraShake =
+                demoCamera.GetComponent<RobotCameraShake>();
+            if (cameraShake == null)
+                cameraShake = demoCamera.gameObject.AddComponent<RobotCameraShake>();
+            cameraShake.Initialize(
+                mover,
+                balance,
+                mover.GetComponent<RobotHeightMotionDetector>());
         }
 
         private static void ConfigureFallbackCamera(Camera camera)
