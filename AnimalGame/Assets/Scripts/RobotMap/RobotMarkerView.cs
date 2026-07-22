@@ -7,12 +7,18 @@ namespace AnimalGame.RobotMap
     {
         [Header("Body")]
         [SerializeField] private Sprite robotBodySprite;
+        [Tooltip("Filled silhouette drawn directly beneath robot_body. Use Arts/robot_body_fill so both sprites share the same canvas, pivot and scale.")]
+        [SerializeField] private Sprite robotBodyFillSprite;
         [SerializeField, Min(0.1f)] private float bodyDiameter = 0.72f;
         [Tooltip("Visible ring diameter in the source robot_body sprite, excluding transparent padding.")]
         [SerializeField, Min(1f)] private float bodyArtworkVisibleDiameterPixels = 85.4f;
-        [SerializeField, Range(0.1f, 1f)] private float bodyFillDiameterRatio = 0.92f;
-        [SerializeField] private Color bodyFillColor = new Color(0.008f, 0.011f, 0.014f, 0.94f);
+        [SerializeField, Range(0.1f, 1f)] private float bodyFillDiameterRatio = 1f;
+        [SerializeField] private Color bodyFillColor = new Color(0.008f, 0.011f, 0.014f, 1f);
+        [Tooltip("When enabled, robot_body_fill always uses the active game camera's background color. Body Fill Color remains the fallback when no camera is active.")]
+        [SerializeField] private bool matchBodyFillToCameraBackground = true;
         [SerializeField] private Color bodyOutlineColor = new Color(0.92f, 0.98f, 1f, 1f);
+        [Tooltip("Camera-facing depth offset used by the complete robot visual. A small negative value places it in front of the map camera's Z=0 map plane.")]
+        [SerializeField] private float visualDepthOffset = -0.1f;
 
         [Header("Direction Indicator")]
         [SerializeField] private Sprite indicatorSprite;
@@ -71,6 +77,8 @@ namespace AnimalGame.RobotMap
         private LineRenderer tail;
         private Sprite generatedBodySprite;
         private Texture2D generatedBodyTexture;
+        private Material foregroundSpriteMaterial;
+        private Camera bodyFillBackgroundCamera;
         private RobotMover mover;
         private float driveBobPhase;
         private float driveBobBlend;
@@ -90,6 +98,7 @@ namespace AnimalGame.RobotMap
             driveBobNoiseSeed = NextDriveBobRandom(0f, 1000f);
             RandomizeDriveBobCycle();
             CreateMarkerVisualRoot();
+            CreateForegroundSpriteMaterial();
             CreateBodySpriteRenderer();
             CreateDirectionIndicatorRenderer();
 
@@ -116,6 +125,8 @@ namespace AnimalGame.RobotMap
 
         private void Update()
         {
+            SynchronizeBodyFillColor();
+
             float pulse = 1f + Mathf.Sin(Time.time * 3.2f) * 0.035f;
             if (bodyVisualRoot != null)
                 bodyVisualRoot.localScale = Vector3.one * pulse;
@@ -189,7 +200,10 @@ namespace AnimalGame.RobotMap
                 targetOffset,
                 ref driveBobOffsetVelocity,
                 Mathf.Max(0.005f, driveBobPositionSmoothing));
-            markerVisualRoot.localPosition = Vector3.up * driveBobOffset;
+            markerVisualRoot.localPosition = new Vector3(
+                0f,
+                driveBobOffset,
+                visualDepthOffset);
         }
 
         private void RandomizeDriveBobCycle()
@@ -274,6 +288,29 @@ namespace AnimalGame.RobotMap
             var visualRootObject = new GameObject("Marker Visual Root");
             visualRootObject.transform.SetParent(transform, false);
             markerVisualRoot = visualRootObject.transform;
+            markerVisualRoot.localPosition = new Vector3(0f, 0f, visualDepthOffset);
+        }
+
+        private void CreateForegroundSpriteMaterial()
+        {
+            Shader spriteShader = Shader.Find("Sprites/Default");
+            if (spriteShader == null)
+            {
+                Debug.LogWarning(
+                    "RobotMarkerView could not find the Sprites/Default shader. " +
+                    "The depth and sorting-order safeguards will still be used.",
+                    this);
+                return;
+            }
+
+            foregroundSpriteMaterial = new Material(spriteShader)
+            {
+                name = "Runtime Robot Foreground Sprite Material",
+                hideFlags = HideFlags.DontSave,
+                // Draw after the map's normal transparent queue. Body fill,
+                // artwork and indicator still order among themselves below.
+                renderQueue = 3500
+            };
         }
 
         private void CreateBodySpriteRenderer()
@@ -282,29 +319,43 @@ namespace AnimalGame.RobotMap
             bodyVisualObject.transform.SetParent(markerVisualRoot, false);
             bodyVisualRoot = bodyVisualObject.transform;
 
-            generatedBodySprite = CreateCircularFillSprite(out generatedBodyTexture);
+            Sprite fillSprite = robotBodyFillSprite;
+            if (fillSprite == null)
+            {
+                generatedBodySprite = CreateCircularFillSprite(out generatedBodyTexture);
+                fillSprite = generatedBodySprite;
+                Debug.LogWarning(
+                    "RobotMarkerView is missing Arts/robot_body_fill. " +
+                    "Using the generated circular fallback fill.",
+                    this);
+            }
 
-            var fillObject = new GameObject("Body Fill");
+            float sharedArtworkScale = CalculateBodyArtworkScale();
+
+            var fillObject = new GameObject("Body Fill (robot_body_fill)");
             fillObject.transform.SetParent(bodyVisualRoot, false);
             bodyFill = fillObject.AddComponent<SpriteRenderer>();
-            bodyFill.sprite = generatedBodySprite;
+            bodyFill.sprite = fillSprite;
             bodyFill.color = bodyFillColor;
-            bodyFill.sortingOrder = 19;
-            bodyFill.transform.localScale = Vector3.one * (bodyDiameter * bodyFillDiameterRatio);
+            bodyFill.sortingOrder = 1000;
+            if (foregroundSpriteMaterial != null)
+                bodyFill.sharedMaterial = foregroundSpriteMaterial;
+            bodyFill.transform.localScale = robotBodyFillSprite != null
+                ? Vector3.one * (sharedArtworkScale * bodyFillDiameterRatio)
+                : Vector3.one * (bodyDiameter * bodyFillDiameterRatio);
 
             var artworkObject = new GameObject("Body Artwork");
             artworkObject.transform.SetParent(bodyVisualRoot, false);
             bodyArtwork = artworkObject.AddComponent<SpriteRenderer>();
             bodyArtwork.sprite = robotBodySprite;
             bodyArtwork.color = bodyOutlineColor;
-            bodyArtwork.sortingOrder = 20;
+            bodyArtwork.sortingOrder = 1001;
+            if (foregroundSpriteMaterial != null)
+                bodyArtwork.sharedMaterial = foregroundSpriteMaterial;
 
             if (robotBodySprite != null)
             {
-                float artworkDiameter = bodyArtworkVisibleDiameterPixels /
-                    Mathf.Max(1f, robotBodySprite.pixelsPerUnit);
-                float artworkScale = bodyDiameter / artworkDiameter;
-                bodyArtwork.transform.localScale = Vector3.one * artworkScale;
+                bodyArtwork.transform.localScale = Vector3.one * sharedArtworkScale;
             }
             else
             {
@@ -312,6 +363,38 @@ namespace AnimalGame.RobotMap
                     "RobotMarkerView is missing its Arts/robot_body Sprite.",
                     this);
             }
+        }
+
+        private float CalculateBodyArtworkScale()
+        {
+            if (robotBodySprite == null)
+                return bodyDiameter;
+
+            float artworkDiameter = bodyArtworkVisibleDiameterPixels /
+                Mathf.Max(1f, robotBodySprite.pixelsPerUnit);
+            return bodyDiameter / Mathf.Max(0.0001f, artworkDiameter);
+        }
+
+        private void SynchronizeBodyFillColor()
+        {
+            if (bodyFill == null)
+                return;
+
+            Color targetColor = bodyFillColor;
+            if (matchBodyFillToCameraBackground)
+            {
+                if (bodyFillBackgroundCamera == null
+                    || !bodyFillBackgroundCamera.isActiveAndEnabled)
+                {
+                    bodyFillBackgroundCamera = Camera.main;
+                }
+
+                if (bodyFillBackgroundCamera != null)
+                    targetColor = bodyFillBackgroundCamera.backgroundColor;
+            }
+
+            targetColor.a = 1f;
+            bodyFill.color = targetColor;
         }
 
         private void CreateDirectionIndicatorRenderer()
@@ -327,7 +410,9 @@ namespace AnimalGame.RobotMap
             directionIndicator = indicatorObject.AddComponent<SpriteRenderer>();
             directionIndicator.sprite = indicatorSprite;
             directionIndicator.color = indicatorColor;
-            directionIndicator.sortingOrder = 21;
+            directionIndicator.sortingOrder = 1002;
+            if (foregroundSpriteMaterial != null)
+                directionIndicator.sharedMaterial = foregroundSpriteMaterial;
 
             if (indicatorSprite == null)
             {
@@ -340,7 +425,9 @@ namespace AnimalGame.RobotMap
         private static Sprite CreateCircularFillSprite(out Texture2D texture)
         {
             const int Resolution = 128;
-            const float OuterFadeStart = 0.94f;
+            // Keep the body interior fully opaque. Only the outermost pixels are
+            // antialiased so bright contour lines cannot bleed through the centre.
+            const float OuterFadeStart = 0.985f;
 
             texture = new Texture2D(
                 Resolution,
@@ -402,6 +489,9 @@ namespace AnimalGame.RobotMap
 
             if (generatedBodyTexture != null)
                 Destroy(generatedBodyTexture);
+
+            if (foregroundSpriteMaterial != null)
+                Destroy(foregroundSpriteMaterial);
         }
 
         private void OnValidate()
@@ -432,7 +522,7 @@ namespace AnimalGame.RobotMap
                 0f,
                 levelThreeGripDriveBobMultiplier);
             if (!showDriveBob && markerVisualRoot != null)
-                markerVisualRoot.localPosition = Vector3.zero;
+                markerVisualRoot.localPosition = new Vector3(0f, 0f, visualDepthOffset);
             ApplyMotionTailVisibility();
         }
     }

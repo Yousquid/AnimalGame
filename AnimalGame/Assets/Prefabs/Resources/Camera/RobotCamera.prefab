@@ -12,6 +12,7 @@ GameObject:
   - component: {fileID: 20200000}
   - component: {fileID: 81200000}
   - component: {fileID: 114200000}
+  - component: {fileID: 114250000}
   - component: {fileID: 9082400791978122201}
   m_Layer: 0
   m_Name: RobotCamera
@@ -109,17 +110,66 @@ MonoBehaviour:
   positionDamping: 0.18
   rotationDamping: 0.28
   followTargetRotation: 1
-  enableManualImbalancePreview: 1
-  lightImbalance: 0.3
-  mediumImbalance: 0.62
-  severeImbalance: 1
-  maximumRollAngle: 11
-  maximumYawAngle: 16
-  maximumLateralOffset: 0.84
-  imbalanceSpringFrequency: 0.85
-  imbalanceDampingRatio: 0.58
-  imbalanceNoiseAngle: 0.48
-  imbalanceNoiseFrequency: 0.42
+--- !u!114 &114250000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 100200000}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c45dd5e9f8d84d43aacd14f6a63f526b, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  enableCameraShake: 1
+  globalIntensity: 1
+  maximumPositionOffset: 0.28
+  maximumRotationDegrees: 4
+  maximumZoomFraction: 0.03
+  fullVibrationSpeed: 4
+  minimumMovingVibrationStrength: 0.35
+  stationaryBalanceVibrationStrength: 0.28
+  drivePositionAmplitude: 0.03
+  driveRotationAmplitude: 0.24
+  driveVibrationFrequency: 3.4
+  levelTwoVibrationMultiplier: 1.8
+  levelThreeVibrationMultiplier: 2.8
+  balanceVibrationInfluence: 1.05
+  roughnessAtFullVibration: 0.35
+  roughnessVibrationInfluence: 0.75
+  airborneVibrationMultiplier: 0.18
+  stepPositionImpact: 0.15
+  stepRotationImpactDegrees: 1.7
+  stepZoomImpactFraction: 0.01
+  unsafeDownhillPositionImpact: 0.18
+  unsafeDownhillRotationImpactDegrees: 1.8
+  unsafeDownhillZoomImpactFraction: 0.016
+  levelThreeSlipPositionImpact: 0.2
+  levelThreeSlipRotationImpactDegrees: 2.8
+  levelThreeSlipZoomImpactFraction: 0.008
+  landingPositionImpact: 0.24
+  landingRotationImpactDegrees: 3.2
+  landingZoomImpactFraction: 0.026
+  minimumHeightImpactAcceleration: 3.5
+  fullHeightImpactAcceleration: 16
+  heightPositionImpact: 0.075
+  heightRotationImpactDegrees: 0.65
+  heightZoomImpactFraction: 0.006
+  minimumImpactDeceleration: 3.25
+  fullImpactDeceleration: 10
+  decelerationPositionImpact: 0.085
+  decelerationRotationImpactDegrees: 0.95
+  decelerationZoomImpactFraction: 0.004
+  impactCooldownSeconds: 0.22
+  impactVelocityMultiplier: 1.8
+  balanceImpactRotationInfluence: 0.75
+  positionSpringFrequency: 3
+  positionSpringDamping: 0.62
+  rotationSpringFrequency: 2.4
+  rotationSpringDamping: 0.58
+  zoomSpringFrequency: 3.4
+  zoomSpringDamping: 0.68
 --- !u!114 &9082400791978122201
 MonoBehaviour:
   m_ObjectHideFlags: 0

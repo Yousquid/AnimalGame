@@ -34,8 +34,17 @@ namespace AnimalGame.RobotMap
         [SerializeField, Min(0f)] private float turnDeceleration = 240f;
 
         [Header("Input")]
+        [Tooltip("Unchecked: left-stick Y controls forward/reverse and left-stick X controls steering. Checked: left-stick X controls steering, right trigger drives forward, and left trigger drives in reverse.")]
+        [SerializeField] private bool useTriggerThrottleGamepadMode;
+
         [Tooltip("Ignores small gamepad stick movement while keeping keyboard input unchanged.")]
         [SerializeField, Range(0f, 0.9f)] private float stickDeadZone = 0.15f;
+
+        [Tooltip("Dead zone applied to the combined analog trigger throttle in Trigger Throttle mode.")]
+        [SerializeField, Range(0f, 0.9f)] private float triggerDeadZone = 0.05f;
+
+        [Tooltip("Reverses the combined trigger axis for controller drivers that report the two triggers in the opposite direction.")]
+        [SerializeField] private bool invertTriggerThrottle;
 
         [Header("Acceleration Feel")]
         [Tooltip("Acceleration from rest. Lower values make the initial launch feel heavier.")]
@@ -174,6 +183,7 @@ namespace AnimalGame.RobotMap
         public SlopeTraversalResult CurrentTraversalResult { get; private set; }
 
         private HeightMapTraversalEvaluator traversalEvaluator;
+        private RobotBalanceController balanceController;
         private float unstableLateralTarget;
         private float unstableLateralBlend;
         private float unstableLateralBlendVelocity;
@@ -183,9 +193,17 @@ namespace AnimalGame.RobotMap
         private float levelThreeClimbPhaseStartTime;
         private bool pendingDownhillRecoveryFromLevelThreeSlip;
 
+        private void Awake()
+        {
+            balanceController = GetComponent<RobotBalanceController>();
+        }
+
         public void SetTraversalEvaluator(HeightMapTraversalEvaluator evaluator)
         {
             traversalEvaluator = evaluator;
+            if (balanceController == null)
+                balanceController = GetComponent<RobotBalanceController>();
+            balanceController?.SetTraversalEvaluator(evaluator);
             IsSlopeBlocked = false;
             IsLevelThreeUnstable = false;
             IsAutoAligningDownhill = false;
@@ -203,19 +221,46 @@ namespace AnimalGame.RobotMap
         {
             float keyboardThrottle = ReadKeyboardAxis(
                 KeyCode.S,
-                KeyCode.DownArrow,
+                KeyCode.None,
                 KeyCode.W,
-                KeyCode.UpArrow);
+                KeyCode.None);
             float keyboardSteering = ReadKeyboardAxis(
                 KeyCode.A,
-                KeyCode.LeftArrow,
+                KeyCode.None,
                 KeyCode.D,
-                KeyCode.RightArrow);
-            float gamepadThrottle = ApplyDeadZone(Input.GetAxisRaw("Gamepad Move"));
-            float gamepadSteering = ApplyDeadZone(Input.GetAxisRaw("Gamepad Turn"));
+                KeyCode.None);
+            float rawGamepadSteering = Input.GetAxisRaw("Gamepad Turn");
+            float gamepadThrottle;
+            float gamepadSteering;
+            if (useTriggerThrottleGamepadMode)
+            {
+                gamepadSteering = ApplyAxisDeadZone(
+                    rawGamepadSteering,
+                    stickDeadZone);
+                float triggerThrottle = ReadTriggerThrottleSafely();
+                if (invertTriggerThrottle)
+                    triggerThrottle = -triggerThrottle;
+                gamepadThrottle = ApplyAxisDeadZone(
+                    triggerThrottle,
+                    triggerDeadZone);
+            }
+            else
+            {
+                Vector2 gamepadMovement = ApplyRadialDeadZone(
+                    new Vector2(
+                        rawGamepadSteering,
+                        Input.GetAxisRaw("Gamepad Move")));
+                gamepadThrottle = gamepadMovement.y;
+                gamepadSteering = gamepadMovement.x;
+            }
 
             float throttle = SelectStrongerInput(keyboardThrottle, gamepadThrottle);
             float steering = SelectStrongerInput(keyboardSteering, gamepadSteering);
+            if (balanceController != null)
+            {
+                throttle *= balanceController.DriveAuthority;
+                steering *= balanceController.SteeringAuthority;
+            }
 
             ExpireDownhillHeadingRecoveryIfNeeded();
 
@@ -897,14 +942,50 @@ namespace AnimalGame.RobotMap
             return Mathf.Abs(first) >= Mathf.Abs(second) ? first : second;
         }
 
-        private float ApplyDeadZone(float value)
+        private Vector2 ApplyRadialDeadZone(Vector2 value)
         {
-            float magnitude = Mathf.Abs(value);
+            float magnitude = value.magnitude;
             if (magnitude <= stickDeadZone)
-                return 0f;
+                return Vector2.zero;
 
             float remappedMagnitude = Mathf.InverseLerp(stickDeadZone, 1f, magnitude);
+            return value.normalized * remappedMagnitude;
+        }
+
+        private static float ApplyAxisDeadZone(float value, float deadZone)
+        {
+            float magnitude = Mathf.Abs(value);
+            if (magnitude <= deadZone)
+                return 0f;
+
+            float remappedMagnitude = Mathf.InverseLerp(deadZone, 1f, magnitude);
             return Mathf.Sign(value) * remappedMagnitude;
+        }
+
+        private static bool triggerAxisMissing;
+        private static bool triggerAxisWarningShown;
+
+        private static float ReadTriggerThrottleSafely()
+        {
+            if (triggerAxisMissing)
+                return 0f;
+
+            try
+            {
+                return Input.GetAxisRaw("Gamepad Trigger Throttle");
+            }
+            catch (System.ArgumentException)
+            {
+                triggerAxisMissing = true;
+                if (!triggerAxisWarningShown)
+                {
+                    triggerAxisWarningShown = true;
+                    Debug.LogWarning(
+                        "Gamepad Trigger Throttle was not loaded by Unity's legacy Input Manager. Exit Play Mode and let the Animal Game editor input repair run once; trigger throttle is temporarily disabled.");
+                }
+
+                return 0f;
+            }
         }
 
         private float GetSpeedChangeRate(float throttle, float targetSpeed)
@@ -936,6 +1017,8 @@ namespace AnimalGame.RobotMap
         private void OnValidate()
         {
             overallMotionScale = Mathf.Clamp(overallMotionScale, 0f, 2f);
+            stickDeadZone = Mathf.Clamp(stickDeadZone, 0f, 0.9f);
+            triggerDeadZone = Mathf.Clamp(triggerDeadZone, 0f, 0.9f);
             forwardSpeed = Mathf.Max(0f, forwardSpeed);
             reverseSpeed = Mathf.Max(0f, reverseSpeed);
             turnSpeed = Mathf.Max(0f, turnSpeed);
