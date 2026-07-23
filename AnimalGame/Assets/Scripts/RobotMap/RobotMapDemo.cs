@@ -41,9 +41,16 @@ namespace AnimalGame.RobotMap
 
             RobotBalanceController balance =
                 mover.GetComponent<RobotBalanceController>();
-            demoCamera.GetComponent<RobotCameraFollow>().Target = balance != null
-                ? balance.CameraFollowTarget
-                : mover.transform;
+            RobotCameraFollow cameraFollow =
+                demoCamera.GetComponent<RobotCameraFollow>();
+            if (balance != null)
+            {
+                cameraFollow.FollowBalanceTarget(balance);
+            }
+            else
+            {
+                cameraFollow.Target = mover.transform;
+            }
             RobotCameraShake cameraShake =
                 demoCamera.GetComponent<RobotCameraShake>();
             if (cameraShake == null)

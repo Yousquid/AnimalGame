@@ -42,9 +42,6 @@ namespace AnimalGame.RobotMap
     [RequireComponent(typeof(RobotMover))]
     public sealed class RobotBalanceController : MonoBehaviour
     {
-        private const string BalanceHorizontalAxis = "Gamepad Balance Horizontal";
-        private const string BalanceVerticalAxis = "Gamepad Balance Vertical";
-
         [Header("Physical Balance Model")]
         [Tooltip("Height of the robot centre of mass above its support plane, in logical map metres. A higher centre of mass creates more displacement on the same slope.")]
         [SerializeField, Min(0.05f)] private float centerOfMassHeightMeters = 0.9f;
@@ -115,7 +112,7 @@ namespace AnimalGame.RobotMap
 
         [Header("Camera Balance Target")]
         [Tooltip("Maximum local offset, in Unity world units, between the robot body and the balance target followed by the camera when the point reaches the ring.")]
-        [SerializeField, Min(0f)] private float cameraFollowOffsetAtRing = 0.3f;
+        [SerializeField, Min(0f)] private float cameraFollowOffsetAtRing = 1.25f;
 
         public RobotBalanceState CurrentState { get; private set; }
         public Transform CameraFollowTarget
@@ -151,9 +148,6 @@ namespace AnimalGame.RobotMap
         private Vector2 previousWorldVelocity;
         private Vector2 filteredWorldAcceleration;
         private bool velocityInitialized;
-        private static bool balanceAxisMissing;
-        private static bool balanceAxisWarningShown;
-
         private void Awake()
         {
             mover = GetComponent<RobotMover>();
@@ -394,28 +388,7 @@ namespace AnimalGame.RobotMap
 
         private static Vector2 ReadRightStickSafely()
         {
-            if (balanceAxisMissing)
-                return Vector2.zero;
-
-            try
-            {
-                return new Vector2(
-                    Input.GetAxisRaw(BalanceHorizontalAxis),
-                    Input.GetAxisRaw(BalanceVerticalAxis));
-            }
-            catch (System.ArgumentException)
-            {
-                balanceAxisMissing = true;
-                if (!balanceAxisWarningShown)
-                {
-                    Debug.LogWarning(
-                        "The right-stick balance axes are missing from the legacy Input Manager. "
-                        + "Run Animal Game/Repair Gamepad Input Axes after returning to Edit Mode.");
-                    balanceAxisWarningShown = true;
-                }
-
-                return Vector2.zero;
-            }
+            return AdaptiveLegacyGamepadInput.ReadBalance();
         }
 
         private static Vector2 ApplyRadialDeadZone(Vector2 value, float deadZone)

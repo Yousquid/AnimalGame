@@ -229,7 +229,8 @@ namespace AnimalGame.RobotMap
                 KeyCode.None,
                 KeyCode.D,
                 KeyCode.None);
-            float rawGamepadSteering = Input.GetAxisRaw("Gamepad Turn");
+            float rawGamepadSteering =
+                AdaptiveLegacyGamepadInput.ReadSteering();
             float gamepadThrottle;
             float gamepadSteering;
             if (useTriggerThrottleGamepadMode)
@@ -249,7 +250,7 @@ namespace AnimalGame.RobotMap
                 Vector2 gamepadMovement = ApplyRadialDeadZone(
                     new Vector2(
                         rawGamepadSteering,
-                        Input.GetAxisRaw("Gamepad Move")));
+                        AdaptiveLegacyGamepadInput.ReadMove()));
                 gamepadThrottle = gamepadMovement.y;
                 gamepadSteering = gamepadMovement.x;
             }
@@ -962,30 +963,9 @@ namespace AnimalGame.RobotMap
             return Mathf.Sign(value) * remappedMagnitude;
         }
 
-        private static bool triggerAxisMissing;
-        private static bool triggerAxisWarningShown;
-
         private static float ReadTriggerThrottleSafely()
         {
-            if (triggerAxisMissing)
-                return 0f;
-
-            try
-            {
-                return Input.GetAxisRaw("Gamepad Trigger Throttle");
-            }
-            catch (System.ArgumentException)
-            {
-                triggerAxisMissing = true;
-                if (!triggerAxisWarningShown)
-                {
-                    triggerAxisWarningShown = true;
-                    Debug.LogWarning(
-                        "Gamepad Trigger Throttle was not loaded by Unity's legacy Input Manager. Exit Play Mode and let the Animal Game editor input repair run once; trigger throttle is temporarily disabled.");
-                }
-
-                return 0f;
-            }
+            return AdaptiveLegacyGamepadInput.ReadTriggerThrottle();
         }
 
         private float GetSpeedChangeRate(float throttle, float targetSpeed)

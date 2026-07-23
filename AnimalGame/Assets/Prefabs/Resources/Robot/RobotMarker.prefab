@@ -128,7 +128,7 @@ MonoBehaviour:
   movementInfluenceStart: 0.75
   minimumDriveAuthority: 0.68
   minimumSteeringAuthority: 0.45
-  cameraFollowOffsetAtRing: 0.3
+  cameraFollowOffsetAtRing: 1.25
 --- !u!114 &7410917293342164201
 MonoBehaviour:
   m_ObjectHideFlags: 0
