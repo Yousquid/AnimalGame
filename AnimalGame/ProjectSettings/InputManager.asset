@@ -565,4 +565,68 @@ InputManager:
     type: 2
     axis: 4
     joyNum: 0
+  - serializedVersion: 3
+    m_Name: Gamepad Sony Balance Horizontal
+    descriptiveName: Sony Right Stick Horizontal Balance
+    descriptiveNegativeName: Sony Counterbalance Left
+    negativeButton: 
+    positiveButton: 
+    altNegativeButton: 
+    altPositiveButton: 
+    gravity: 0
+    dead: 0.001
+    sensitivity: 1
+    snap: 0
+    invert: 0
+    type: 2
+    axis: 2
+    joyNum: 0
+  - serializedVersion: 3
+    m_Name: Gamepad Sony Balance Vertical
+    descriptiveName: Sony Right Stick Vertical Balance
+    descriptiveNegativeName: Sony Counterbalance Backward
+    negativeButton: 
+    positiveButton: 
+    altNegativeButton: 
+    altPositiveButton: 
+    gravity: 0
+    dead: 0.001
+    sensitivity: 1
+    snap: 0
+    invert: 1
+    type: 2
+    axis: 5
+    joyNum: 0
+  - serializedVersion: 3
+    m_Name: Gamepad Sony Left Trigger
+    descriptiveName: Sony Left Trigger Reverse
+    descriptiveNegativeName: Sony Left Trigger Released
+    negativeButton: 
+    positiveButton: 
+    altNegativeButton: 
+    altPositiveButton: 
+    gravity: 0
+    dead: 0.001
+    sensitivity: 1
+    snap: 0
+    invert: 0
+    type: 2
+    axis: 3
+    joyNum: 0
+  - serializedVersion: 3
+    m_Name: Gamepad Sony Right Trigger
+    descriptiveName: Sony Right Trigger Forward
+    descriptiveNegativeName: Sony Right Trigger Released
+    negativeButton: 
+    positiveButton: 
+    altNegativeButton: 
+    altPositiveButton: 
+    gravity: 0
+    dead: 0.001
+    sensitivity: 1
+    snap: 0
+    invert: 0
+    type: 2
+    axis: 4
+    joyNum: 0
   m_UsePhysicalKeys: 1

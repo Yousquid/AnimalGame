@@ -15,6 +15,14 @@ namespace AnimalGame.Editor
         private const string TriggerThrottleAxisName = "Gamepad Trigger Throttle";
         private const string BalanceHorizontalAxisName = "Gamepad Balance Horizontal";
         private const string BalanceVerticalAxisName = "Gamepad Balance Vertical";
+        private const string SonyBalanceHorizontalAxisName =
+            "Gamepad Sony Balance Horizontal";
+        private const string SonyBalanceVerticalAxisName =
+            "Gamepad Sony Balance Vertical";
+        private const string SonyLeftTriggerAxisName =
+            "Gamepad Sony Left Trigger";
+        private const string SonyRightTriggerAxisName =
+            "Gamepad Sony Right Trigger";
 
         static RobotMapPrefabGenerator()
         {
@@ -89,6 +97,34 @@ namespace AnimalGame.Editor
                 "Counterbalance Backward",
                 4,
                 true);
+            changed |= EnsureJoystickAxis(
+                axes,
+                SonyBalanceHorizontalAxisName,
+                "Sony Right Stick Horizontal Balance",
+                "Sony Counterbalance Left",
+                2,
+                false);
+            changed |= EnsureJoystickAxis(
+                axes,
+                SonyBalanceVerticalAxisName,
+                "Sony Right Stick Vertical Balance",
+                "Sony Counterbalance Backward",
+                5,
+                true);
+            changed |= EnsureJoystickAxis(
+                axes,
+                SonyLeftTriggerAxisName,
+                "Sony Left Trigger Reverse",
+                "Sony Left Trigger Released",
+                3,
+                false);
+            changed |= EnsureJoystickAxis(
+                axes,
+                SonyRightTriggerAxisName,
+                "Sony Right Trigger Forward",
+                "Sony Right Trigger Released",
+                4,
+                false);
 
             if (!changed)
                 return;

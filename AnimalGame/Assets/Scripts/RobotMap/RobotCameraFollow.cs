@@ -16,6 +16,7 @@ namespace AnimalGame.RobotMap
 
         public Transform Target { get; set; }
 
+        private RobotBalanceController balanceTargetSource;
         private Vector3 followPoint;
         private Vector3 followVelocity;
         private float followAngle;
@@ -23,8 +24,24 @@ namespace AnimalGame.RobotMap
         private float cameraDistance = 10f;
         private bool followPoseInitialized;
 
+        public void FollowBalanceTarget(RobotBalanceController balanceController)
+        {
+            balanceTargetSource = balanceController;
+            Target = balanceTargetSource != null
+                ? balanceTargetSource.CameraFollowTarget
+                : null;
+            followPoseInitialized = false;
+        }
+
+        private void ResolveBalanceTarget()
+        {
+            if (balanceTargetSource != null)
+                Target = balanceTargetSource.CameraFollowTarget;
+        }
+
         public void SnapToTarget()
         {
+            ResolveBalanceTarget();
             if (Target == null)
                 return;
 
@@ -43,6 +60,7 @@ namespace AnimalGame.RobotMap
 
         private void LateUpdate()
         {
+            ResolveBalanceTarget();
             if (Target == null)
                 return;
 
