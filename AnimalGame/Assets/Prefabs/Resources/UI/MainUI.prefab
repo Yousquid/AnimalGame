@@ -304,4 +304,4 @@ MonoBehaviour:
   animator: {fileID: 950000002}
   keyboardScanKey: 101
   gamepadScanButton: 335
-  maximumChargeDuration: 0.35
+  maximumChargeDuration: 0.1
