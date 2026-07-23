@@ -92,6 +92,28 @@ namespace AnimalGame.RobotMap
         [Tooltip("Motor values below this threshold are sent as zero to prevent faint residual buzzing.")]
         [SerializeField, Range(0f, 0.2f)] private float minimumRumbleOutput = 0.025f;
 
+        [Header("Sony Gamepad Rumble Calibration")]
+        [Tooltip("Applies a separate final-output calibration to native Sony controllers. Camera shake and Xbox/XInput vibration are not changed.")]
+        [SerializeField] private bool enableSonyRumbleCalibration = true;
+
+        [Tooltip("Final multiplier for the Sony low-frequency motor after all common impact, landing, and imbalance calculations.")]
+        [SerializeField, Range(0f, 1f)] private float sonyLowFrequencyMultiplier = 0.3f;
+
+        [Tooltip("Final multiplier for the Sony high-frequency motor after all common impact, landing, and imbalance calculations.")]
+        [SerializeField, Range(0f, 1f)] private float sonyHighFrequencyMultiplier = 0.2f;
+
+        [Tooltip("Sony-only response curve. Values above one reduce ordinary vibration proportionally more than major impacts.")]
+        [SerializeField, Range(0.5f, 3f)] private float sonyRumbleResponseExponent = 1.35f;
+
+        [Tooltip("Hard ceiling for the final Sony low-frequency motor output.")]
+        [SerializeField, Range(0f, 1f)] private float sonyMaximumLowFrequencyStrength = 0.42f;
+
+        [Tooltip("Hard ceiling for the final Sony high-frequency motor output.")]
+        [SerializeField, Range(0f, 1f)] private float sonyMaximumHighFrequencyStrength = 0.28f;
+
+        [Tooltip("Final Sony motor values below this threshold are sent as zero to prevent residual buzzing after calibration.")]
+        [SerializeField, Range(0f, 0.2f)] private float sonyMinimumRumbleOutput = 0.01f;
+
         [Header("Continuous Chassis Vibration")]
         [Tooltip("Planar speed at which ordinary drive vibration reaches full strength.")]
         [SerializeField, Min(0.1f)] private float fullVibrationSpeed = 4f;
@@ -764,7 +786,8 @@ namespace AnimalGame.RobotMap
             rumbleWasSent = AdaptiveGamepadRumble.SetMotorSpeeds(
                 gamepadIndex,
                 outputLow,
-                outputHigh);
+                outputHigh,
+                CreateSonyRumbleCalibration());
             lastSentLowFrequencyRumble = outputLow;
             lastSentHighFrequencyRumble = outputHigh;
             nextRumbleRefreshTime = Time.unscaledTime + 0.25f;
@@ -793,7 +816,8 @@ namespace AnimalGame.RobotMap
                 AdaptiveGamepadRumble.SetMotorSpeeds(
                     gamepadIndex,
                     0f,
-                    0f);
+                    0f,
+                    CreateSonyRumbleCalibration());
             }
 
             currentLowFrequencyRumble = 0f;
@@ -803,6 +827,18 @@ namespace AnimalGame.RobotMap
             rumbleWasSent = false;
             lastLandingRumbleTime = float.NegativeInfinity;
             lastLandingRumbleStrength = 0f;
+        }
+
+        private SonyRumbleCalibration CreateSonyRumbleCalibration()
+        {
+            return new SonyRumbleCalibration(
+                enableSonyRumbleCalibration,
+                sonyLowFrequencyMultiplier,
+                sonyHighFrequencyMultiplier,
+                sonyRumbleResponseExponent,
+                sonyMaximumLowFrequencyStrength,
+                sonyMaximumHighFrequencyStrength,
+                sonyMinimumRumbleOutput);
         }
 
         private Vector2 GetCurrentWorldVelocity()
@@ -980,6 +1016,22 @@ namespace AnimalGame.RobotMap
                 minimumRumbleOutput,
                 0f,
                 0.2f);
+            sonyLowFrequencyMultiplier = Mathf.Clamp01(
+                sonyLowFrequencyMultiplier);
+            sonyHighFrequencyMultiplier = Mathf.Clamp01(
+                sonyHighFrequencyMultiplier);
+            sonyRumbleResponseExponent = Mathf.Clamp(
+                sonyRumbleResponseExponent,
+                0.5f,
+                3f);
+            sonyMaximumLowFrequencyStrength = Mathf.Clamp01(
+                sonyMaximumLowFrequencyStrength);
+            sonyMaximumHighFrequencyStrength = Mathf.Clamp01(
+                sonyMaximumHighFrequencyStrength);
+            sonyMinimumRumbleOutput = Mathf.Clamp(
+                sonyMinimumRumbleOutput,
+                0f,
+                0.2f);
             fullVibrationSpeed = Mathf.Max(0.1f, fullVibrationSpeed);
             minimumMovingVibrationStrength = Mathf.Clamp01(
                 minimumMovingVibrationStrength);
@@ -1007,6 +1059,61 @@ namespace AnimalGame.RobotMap
         }
     }
 
+    internal readonly struct SonyRumbleCalibration
+    {
+        private readonly bool enabled;
+        private readonly float lowFrequencyMultiplier;
+        private readonly float highFrequencyMultiplier;
+        private readonly float responseExponent;
+        private readonly float maximumLowFrequencyStrength;
+        private readonly float maximumHighFrequencyStrength;
+        private readonly float minimumOutput;
+
+        public SonyRumbleCalibration(
+            bool enabled,
+            float lowFrequencyMultiplier,
+            float highFrequencyMultiplier,
+            float responseExponent,
+            float maximumLowFrequencyStrength,
+            float maximumHighFrequencyStrength,
+            float minimumOutput)
+        {
+            this.enabled = enabled;
+            this.lowFrequencyMultiplier = Mathf.Clamp01(
+                lowFrequencyMultiplier);
+            this.highFrequencyMultiplier = Mathf.Clamp01(
+                highFrequencyMultiplier);
+            this.responseExponent = Mathf.Clamp(responseExponent, 0.5f, 3f);
+            this.maximumLowFrequencyStrength = Mathf.Clamp01(
+                maximumLowFrequencyStrength);
+            this.maximumHighFrequencyStrength = Mathf.Clamp01(
+                maximumHighFrequencyStrength);
+            this.minimumOutput = Mathf.Clamp(minimumOutput, 0f, 0.2f);
+        }
+
+        public void Apply(ref float lowFrequency, ref float highFrequency)
+        {
+            lowFrequency = Mathf.Clamp01(lowFrequency);
+            highFrequency = Mathf.Clamp01(highFrequency);
+            if (enabled)
+            {
+                lowFrequency = Mathf.Min(
+                    maximumLowFrequencyStrength,
+                    Mathf.Pow(lowFrequency, responseExponent)
+                    * lowFrequencyMultiplier);
+                highFrequency = Mathf.Min(
+                    maximumHighFrequencyStrength,
+                    Mathf.Pow(highFrequency, responseExponent)
+                    * highFrequencyMultiplier);
+            }
+
+            if (lowFrequency < minimumOutput)
+                lowFrequency = 0f;
+            if (highFrequency < minimumOutput)
+                highFrequency = 0f;
+        }
+    }
+
     internal static class AdaptiveGamepadRumble
     {
         private enum RumbleBackend
@@ -1021,7 +1128,8 @@ namespace AnimalGame.RobotMap
         public static bool SetMotorSpeeds(
             int gamepadIndex,
             float lowFrequency,
-            float highFrequency)
+            float highFrequency,
+            SonyRumbleCalibration sonyCalibration)
         {
             bool stopping = lowFrequency <= 0f && highFrequency <= 0f;
             if (stopping)
@@ -1046,7 +1154,8 @@ namespace AnimalGame.RobotMap
 #if ENABLE_INPUT_SYSTEM
                 if (SonyInputSystemRumble.SetMotorSpeeds(
                         lowFrequency,
-                        highFrequency))
+                        highFrequency,
+                        sonyCalibration))
                 {
                     activeBackend = RumbleBackend.SonyInputSystem;
                     return true;
@@ -1099,15 +1208,15 @@ namespace AnimalGame.RobotMap
 
         public static bool SetMotorSpeeds(
             float lowFrequency,
-            float highFrequency)
+            float highFrequency,
+            SonyRumbleCalibration calibration)
         {
             Gamepad gamepad = ResolveSonyGamepad();
             if (gamepad == null)
                 return false;
 
-            gamepad.SetMotorSpeeds(
-                Mathf.Clamp01(lowFrequency),
-                Mathf.Clamp01(highFrequency));
+            calibration.Apply(ref lowFrequency, ref highFrequency);
+            gamepad.SetMotorSpeeds(lowFrequency, highFrequency);
             return true;
         }
 
