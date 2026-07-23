@@ -3,6 +3,9 @@ using System.Runtime.InteropServices;
 using AnimalGame.MapTest;
 using UnityEngine;
 using Random = UnityEngine.Random;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
 
 namespace AnimalGame.RobotMap
 {
@@ -28,10 +31,10 @@ namespace AnimalGame.RobotMap
         [SerializeField, Range(0f, 0.1f)] private float maximumZoomFraction = 0.03f;
 
         [Header("Gamepad Rumble")]
-        [Tooltip("Sends vibration to an XInput-compatible gamepad using the final, visible screen-shake amplitude.")]
+        [Tooltip("Sends vibration to the detected Xbox/XInput or native Sony gamepad using the final, visible screen-shake amplitude.")]
         [SerializeField] private bool enableGamepadRumble = true;
 
-        [Tooltip("XInput controller slot. Zero is the first connected gamepad.")]
+        [Tooltip("XInput controller slot for Xbox devices. Native Sony devices are selected from the Input System device list.")]
         [SerializeField, Range(0, 3)] private int gamepadIndex;
 
         [Tooltip("Camera position offset that maps to full controller vibration.")]
@@ -758,7 +761,7 @@ namespace AnimalGame.RobotMap
                 return;
             }
 
-            rumbleWasSent = WindowsXInputRumble.SetMotorSpeeds(
+            rumbleWasSent = AdaptiveGamepadRumble.SetMotorSpeeds(
                 gamepadIndex,
                 outputLow,
                 outputHigh);
@@ -787,7 +790,10 @@ namespace AnimalGame.RobotMap
                 || currentLowFrequencyRumble > 0f
                 || currentHighFrequencyRumble > 0f)
             {
-                WindowsXInputRumble.SetMotorSpeeds(gamepadIndex, 0f, 0f);
+                AdaptiveGamepadRumble.SetMotorSpeeds(
+                    gamepadIndex,
+                    0f,
+                    0f);
             }
 
             currentLowFrequencyRumble = 0f;
@@ -1000,6 +1006,163 @@ namespace AnimalGame.RobotMap
                 fullHeightImpactAcceleration);
         }
     }
+
+    internal static class AdaptiveGamepadRumble
+    {
+        private enum RumbleBackend
+        {
+            None,
+            XInput,
+            SonyInputSystem
+        }
+
+        private static RumbleBackend activeBackend;
+
+        public static bool SetMotorSpeeds(
+            int gamepadIndex,
+            float lowFrequency,
+            float highFrequency)
+        {
+            bool stopping = lowFrequency <= 0f && highFrequency <= 0f;
+            if (stopping)
+            {
+                StopActiveBackend(gamepadIndex);
+                return true;
+            }
+
+            LegacyGamepadFamily family =
+                AdaptiveLegacyGamepadInput.ActiveFamily;
+            if (family == LegacyGamepadFamily.Sony)
+            {
+                if (activeBackend == RumbleBackend.XInput)
+                {
+                    WindowsXInputRumble.SetMotorSpeeds(
+                        gamepadIndex,
+                        0f,
+                        0f);
+                    activeBackend = RumbleBackend.None;
+                }
+
+#if ENABLE_INPUT_SYSTEM
+                if (SonyInputSystemRumble.SetMotorSpeeds(
+                        lowFrequency,
+                        highFrequency))
+                {
+                    activeBackend = RumbleBackend.SonyInputSystem;
+                    return true;
+                }
+#endif
+                return false;
+            }
+
+            if (activeBackend == RumbleBackend.SonyInputSystem)
+            {
+#if ENABLE_INPUT_SYSTEM
+                SonyInputSystemRumble.Stop();
+#endif
+                activeBackend = RumbleBackend.None;
+            }
+
+            bool xInputSucceeded = WindowsXInputRumble.SetMotorSpeeds(
+                gamepadIndex,
+                lowFrequency,
+                highFrequency);
+            if (xInputSucceeded)
+                activeBackend = RumbleBackend.XInput;
+            return xInputSucceeded;
+        }
+
+        private static void StopActiveBackend(int gamepadIndex)
+        {
+            if (activeBackend == RumbleBackend.SonyInputSystem)
+            {
+#if ENABLE_INPUT_SYSTEM
+                SonyInputSystemRumble.Stop();
+#endif
+            }
+            else if (activeBackend == RumbleBackend.XInput)
+            {
+                WindowsXInputRumble.SetMotorSpeeds(
+                    gamepadIndex,
+                    0f,
+                    0f);
+            }
+
+            activeBackend = RumbleBackend.None;
+        }
+    }
+
+#if ENABLE_INPUT_SYSTEM
+    internal static class SonyInputSystemRumble
+    {
+        private static Gamepad cachedSonyGamepad;
+
+        public static bool SetMotorSpeeds(
+            float lowFrequency,
+            float highFrequency)
+        {
+            Gamepad gamepad = ResolveSonyGamepad();
+            if (gamepad == null)
+                return false;
+
+            gamepad.SetMotorSpeeds(
+                Mathf.Clamp01(lowFrequency),
+                Mathf.Clamp01(highFrequency));
+            return true;
+        }
+
+        public static void Stop()
+        {
+            if (cachedSonyGamepad == null)
+                return;
+
+            cachedSonyGamepad.SetMotorSpeeds(0f, 0f);
+        }
+
+        private static Gamepad ResolveSonyGamepad()
+        {
+            if (cachedSonyGamepad != null
+                && cachedSonyGamepad.added
+                && IsSony(cachedSonyGamepad))
+            {
+                return cachedSonyGamepad;
+            }
+
+            cachedSonyGamepad = null;
+            foreach (Gamepad gamepad in Gamepad.all)
+            {
+                if (!IsSony(gamepad))
+                    continue;
+
+                cachedSonyGamepad = gamepad;
+                break;
+            }
+
+            return cachedSonyGamepad;
+        }
+
+        private static bool IsSony(Gamepad gamepad)
+        {
+            if (gamepad == null)
+                return false;
+
+            string identity = string.Join(
+                    " ",
+                    gamepad.name,
+                    gamepad.displayName,
+                    gamepad.description.manufacturer,
+                    gamepad.description.product)
+                .ToLowerInvariant();
+            return identity.Contains("dualsense")
+                   || identity.Contains("dualshock")
+                   || identity.Contains("wireless controller")
+                   || identity.Contains("playstation")
+                   || identity.Contains("sony")
+                   || identity.Contains("ps4")
+                   || identity.Contains("ps5");
+        }
+    }
+#endif
 
     internal static class WindowsXInputRumble
     {
