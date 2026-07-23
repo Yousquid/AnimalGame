@@ -149,8 +149,9 @@ MonoBehaviour:
   landingClearanceMeters: 0.02
   minimumAirborneDurationSeconds: 0.055
   recentAirborneMemorySeconds: 0.6
-  minimumLandingImpactSpeed: 0.7
-  fullLandingImpactSpeed: 5.5
+  minimumLandingImpactSpeed: 0.45
+  fullLandingImpactSpeed: 3.6
+  landingImpactStrengthExponent: 0.7
   groundVerticalSpeedSmoothingTime: 0.06
   maximumGroundVerticalSpeed: 20
   maximumVerticalAcceleration: 60

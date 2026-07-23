@@ -127,6 +127,26 @@ MonoBehaviour:
   maximumPositionOffset: 0.28
   maximumRotationDegrees: 4
   maximumZoomFraction: 0.03
+  enableGamepadRumble: 1
+  gamepadIndex: 0
+  positionOffsetAtFullRumble: 0.16
+  rotationDegreesAtFullRumble: 2.2
+  zoomFractionAtFullRumble: 0.018
+  lowFrequencyMotorMultiplier: 0.55
+  highFrequencyMotorMultiplier: 0.45
+  positionToHighFrequencyMotor: 0.35
+  rumbleResponseExponent: 1.45
+  fullImbalanceRumbleMultiplier: 2.6
+  imbalanceRumbleExponent: 1.6
+  enableSevereImbalanceRumble: 1
+  severeImbalanceRumbleThreshold: 0.65
+  severeImbalanceLowFrequencyStrength: 0.72
+  severeImbalanceHighFrequencyStrength: 0.46
+  landingRumbleMultiplier: 1.8
+  landingRumbleBoostDuration: 0.45
+  rumbleAttackSpeed: 12
+  rumbleReleaseSpeed: 6
+  minimumRumbleOutput: 0.025
   fullVibrationSpeed: 4
   minimumMovingVibrationStrength: 0.35
   stationaryBalanceVibrationStrength: 0.28
@@ -148,9 +168,9 @@ MonoBehaviour:
   levelThreeSlipPositionImpact: 0.2
   levelThreeSlipRotationImpactDegrees: 2.8
   levelThreeSlipZoomImpactFraction: 0.008
-  landingPositionImpact: 0.24
-  landingRotationImpactDegrees: 3.2
-  landingZoomImpactFraction: 0.026
+  landingPositionImpact: 0.36
+  landingRotationImpactDegrees: 5.2
+  landingZoomImpactFraction: 0.042
   minimumHeightImpactAcceleration: 3.5
   fullHeightImpactAcceleration: 16
   heightPositionImpact: 0.075

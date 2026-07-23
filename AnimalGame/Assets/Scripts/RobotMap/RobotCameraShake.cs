@@ -1,5 +1,8 @@
+using System;
+using System.Runtime.InteropServices;
 using AnimalGame.MapTest;
 using UnityEngine;
+using Random = UnityEngine.Random;
 
 namespace AnimalGame.RobotMap
 {
@@ -23,6 +26,68 @@ namespace AnimalGame.RobotMap
 
         [Tooltip("Maximum orthographic-size change as a fraction of the base camera size. 0.03 means three percent.")]
         [SerializeField, Range(0f, 0.1f)] private float maximumZoomFraction = 0.03f;
+
+        [Header("Gamepad Rumble")]
+        [Tooltip("Sends vibration to an XInput-compatible gamepad using the final, visible screen-shake amplitude.")]
+        [SerializeField] private bool enableGamepadRumble = true;
+
+        [Tooltip("XInput controller slot. Zero is the first connected gamepad.")]
+        [SerializeField, Range(0, 3)] private int gamepadIndex;
+
+        [Tooltip("Camera position offset that maps to full controller vibration.")]
+        [SerializeField, Min(0.001f)] private float positionOffsetAtFullRumble = 0.16f;
+
+        [Tooltip("Camera rotation offset that maps to full controller vibration.")]
+        [SerializeField, Min(0.01f)] private float rotationDegreesAtFullRumble = 2.2f;
+
+        [Tooltip("Camera zoom offset fraction that maps to full controller vibration.")]
+        [SerializeField, Min(0.0001f)] private float zoomFractionAtFullRumble = 0.018f;
+
+        [Tooltip("Strength multiplier for the low-frequency motor, mainly driven by camera displacement and zoom impact.")]
+        [SerializeField, Range(0f, 2f)] private float lowFrequencyMotorMultiplier = 0.55f;
+
+        [Tooltip("Strength multiplier for the high-frequency motor, mainly driven by camera rotation and fine vibration.")]
+        [SerializeField, Range(0f, 2f)] private float highFrequencyMotorMultiplier = 0.45f;
+
+        [Tooltip("Fraction of camera position shake also sent to the high-frequency motor.")]
+        [SerializeField, Range(0f, 1f)] private float positionToHighFrequencyMotor = 0.35f;
+
+        [Tooltip("Non-linear response applied to visible screen-shake strength before driving the motors. Values above one suppress small everyday vibration while preserving large impacts.")]
+        [SerializeField, Range(0.5f, 3f)] private float rumbleResponseExponent = 1.45f;
+
+        [Tooltip("Additional motor-strength multiplier when the centre of mass reaches maximum imbalance.")]
+        [SerializeField, Range(1f, 5f)] private float fullImbalanceRumbleMultiplier = 2.6f;
+
+        [Tooltip("Shapes when the imbalance boost becomes prominent. Values above one reserve most of the boost for severe imbalance.")]
+        [SerializeField, Range(0.5f, 4f)] private float imbalanceRumbleExponent = 1.6f;
+
+        [Header("Severe Imbalance Rumble")]
+        [Tooltip("Enables a continuous controller warning once centre-of-mass displacement exceeds the severe threshold.")]
+        [SerializeField] private bool enableSevereImbalanceRumble = true;
+
+        [Tooltip("Normalized centre-of-mass displacement at which continuous warning vibration begins. 0.65 means sixty-five percent of the balance radius.")]
+        [SerializeField, Range(0f, 1f)] private float severeImbalanceRumbleThreshold = 0.65f;
+
+        [Tooltip("Low-frequency motor strength reserved for the severe-imbalance warning at maximum displacement.")]
+        [SerializeField, Range(0f, 1f)] private float severeImbalanceLowFrequencyStrength = 0.72f;
+
+        [Tooltip("High-frequency motor strength reserved for the severe-imbalance warning at maximum displacement.")]
+        [SerializeField, Range(0f, 1f)] private float severeImbalanceHighFrequencyStrength = 0.46f;
+
+        [Tooltip("Temporary controller-vibration multiplier applied at the moment of a detected airborne landing.")]
+        [SerializeField, Range(1f, 4f)] private float landingRumbleMultiplier = 1.8f;
+
+        [Tooltip("Time for the landing-specific controller boost to fade while the screen impact spring settles.")]
+        [SerializeField, Min(0.01f)] private float landingRumbleBoostDuration = 0.45f;
+
+        [Tooltip("How quickly controller vibration rises toward the current screen-shake strength.")]
+        [SerializeField, Min(0.1f)] private float rumbleAttackSpeed = 12f;
+
+        [Tooltip("How quickly controller vibration fades after the screen shake subsides.")]
+        [SerializeField, Min(0.1f)] private float rumbleReleaseSpeed = 6f;
+
+        [Tooltip("Motor values below this threshold are sent as zero to prevent faint residual buzzing.")]
+        [SerializeField, Range(0f, 0.2f)] private float minimumRumbleOutput = 0.025f;
 
         [Header("Continuous Chassis Vibration")]
         [Tooltip("Planar speed at which ordinary drive vibration reaches full strength.")]
@@ -77,9 +142,9 @@ namespace AnimalGame.RobotMap
         [SerializeField, Range(0f, 0.1f)] private float levelThreeSlipZoomImpactFraction = 0.008f;
 
         [Header("Landing Impact")]
-        [SerializeField, Min(0f)] private float landingPositionImpact = 0.24f;
-        [SerializeField, Min(0f)] private float landingRotationImpactDegrees = 3.2f;
-        [SerializeField, Range(0f, 0.1f)] private float landingZoomImpactFraction = 0.026f;
+        [SerializeField, Min(0f)] private float landingPositionImpact = 0.36f;
+        [SerializeField, Min(0f)] private float landingRotationImpactDegrees = 5.2f;
+        [SerializeField, Range(0f, 0.1f)] private float landingZoomImpactFraction = 0.042f;
 
         [Header("Supported Terrain Height Impact")]
         [Tooltip("Upward logical-height acceleration that begins producing a small suspension/chassis compression impact while the robot remains grounded.")]
@@ -151,6 +216,14 @@ namespace AnimalGame.RobotMap
         private float noiseSeedX;
         private float noiseSeedY;
         private float noiseSeedRotation;
+        private float currentLowFrequencyRumble;
+        private float currentHighFrequencyRumble;
+        private float lastSentLowFrequencyRumble;
+        private float lastSentHighFrequencyRumble;
+        private float nextRumbleRefreshTime;
+        private bool rumbleWasSent;
+        private float lastLandingRumbleTime = float.NegativeInfinity;
+        private float lastLandingRumbleStrength;
 
         private void Awake()
         {
@@ -190,6 +263,7 @@ namespace AnimalGame.RobotMap
             if (!enableCameraShake)
             {
                 ResetShakeState();
+                StopGamepadRumble();
                 attachedCamera.orthographicSize = baseOrthographicSize;
                 StorePreviousMotionState();
                 return;
@@ -199,6 +273,7 @@ namespace AnimalGame.RobotMap
             UpdateContinuousVibration();
             IntegrateSprings(deltaTime);
             ApplyShakeToCamera();
+            UpdateGamepadRumble(deltaTime);
             StorePreviousMotionState();
         }
 
@@ -296,6 +371,11 @@ namespace AnimalGame.RobotMap
                     landingPositionImpact,
                     landingRotationImpactDegrees,
                     landingZoomImpactFraction);
+                if (landing.Strength01 > 0f)
+                {
+                    lastLandingRumbleTime = Time.time;
+                    lastLandingRumbleStrength = landing.Strength01;
+                }
                 triggeredMajorImpact = landing.Strength01 > 0f
                                        || triggeredMajorImpact;
             }
@@ -571,6 +651,154 @@ namespace AnimalGame.RobotMap
                 baseOrthographicSize * (1f + zoomOffset));
         }
 
+        private void UpdateGamepadRumble(float deltaTime)
+        {
+            if (!enableGamepadRumble
+                || !Application.isFocused
+                || Time.timeScale <= 0.0001f)
+            {
+                StopGamepadRumble();
+                return;
+            }
+
+            float positionStrength = Mathf.Clamp01(
+                CurrentLocalPositionOffset.magnitude
+                / Mathf.Max(0.001f, positionOffsetAtFullRumble));
+            float rotationStrength = Mathf.Clamp01(
+                Mathf.Abs(CurrentRotationOffsetDegrees)
+                / Mathf.Max(0.01f, rotationDegreesAtFullRumble));
+            float zoomStrength = Mathf.Clamp01(
+                Mathf.Abs(CurrentZoomOffsetFraction)
+                / Mathf.Max(0.0001f, zoomFractionAtFullRumble));
+            positionStrength = Mathf.Pow(
+                positionStrength,
+                rumbleResponseExponent);
+            rotationStrength = Mathf.Pow(
+                rotationStrength,
+                rumbleResponseExponent);
+            zoomStrength = Mathf.Pow(
+                zoomStrength,
+                rumbleResponseExponent);
+
+            float balanceMagnitude = balance != null
+                ? Mathf.Clamp01(balance.CurrentState.Magnitude)
+                : 0f;
+            float imbalanceBoost = Mathf.Lerp(
+                1f,
+                fullImbalanceRumbleMultiplier,
+                Mathf.Pow(balanceMagnitude, imbalanceRumbleExponent));
+            float landingEnvelope = 1f - Mathf.Clamp01(
+                (Time.time - lastLandingRumbleTime)
+                / Mathf.Max(0.01f, landingRumbleBoostDuration));
+            float landingBoost = Mathf.Lerp(
+                1f,
+                landingRumbleMultiplier,
+                landingEnvelope * lastLandingRumbleStrength);
+
+            float targetLow = Mathf.Clamp01(
+                Mathf.Max(positionStrength, zoomStrength)
+                * lowFrequencyMotorMultiplier
+                * imbalanceBoost
+                * landingBoost);
+            float targetHigh = Mathf.Clamp01(
+                Mathf.Max(
+                    rotationStrength,
+                    positionStrength * positionToHighFrequencyMotor)
+                * highFrequencyMotorMultiplier
+                * imbalanceBoost
+                * landingBoost);
+            if (enableSevereImbalanceRumble
+                && balanceMagnitude >= severeImbalanceRumbleThreshold)
+            {
+                float severeProgress = Mathf.InverseLerp(
+                    severeImbalanceRumbleThreshold,
+                    1f,
+                    balanceMagnitude);
+                // Start with a clearly perceptible warning at the threshold,
+                // then increase toward the configured full-displacement level.
+                float warningStrength = Mathf.Lerp(
+                    0.65f,
+                    1f,
+                    severeProgress);
+                targetLow = Mathf.Max(
+                    targetLow,
+                    severeImbalanceLowFrequencyStrength * warningStrength);
+                targetHigh = Mathf.Max(
+                    targetHigh,
+                    severeImbalanceHighFrequencyStrength * warningStrength);
+            }
+
+            currentLowFrequencyRumble = MoveRumbleTowards(
+                currentLowFrequencyRumble,
+                targetLow,
+                deltaTime);
+            currentHighFrequencyRumble = MoveRumbleTowards(
+                currentHighFrequencyRumble,
+                targetHigh,
+                deltaTime);
+
+            float outputLow = currentLowFrequencyRumble
+                              >= minimumRumbleOutput
+                ? currentLowFrequencyRumble
+                : 0f;
+            float outputHigh = currentHighFrequencyRumble
+                               >= minimumRumbleOutput
+                ? currentHighFrequencyRumble
+                : 0f;
+            bool changed = Mathf.Abs(
+                               outputLow - lastSentLowFrequencyRumble)
+                           >= 0.005f
+                           || Mathf.Abs(
+                               outputHigh - lastSentHighFrequencyRumble)
+                           >= 0.005f;
+            if (!changed
+                && rumbleWasSent
+                && Time.unscaledTime < nextRumbleRefreshTime)
+            {
+                return;
+            }
+
+            rumbleWasSent = WindowsXInputRumble.SetMotorSpeeds(
+                gamepadIndex,
+                outputLow,
+                outputHigh);
+            lastSentLowFrequencyRumble = outputLow;
+            lastSentHighFrequencyRumble = outputHigh;
+            nextRumbleRefreshTime = Time.unscaledTime + 0.25f;
+        }
+
+        private float MoveRumbleTowards(
+            float current,
+            float target,
+            float deltaTime)
+        {
+            float speed = target > current
+                ? rumbleAttackSpeed
+                : rumbleReleaseSpeed;
+            return Mathf.MoveTowards(
+                current,
+                target,
+                Mathf.Max(0f, speed) * deltaTime);
+        }
+
+        private void StopGamepadRumble()
+        {
+            if (rumbleWasSent
+                || currentLowFrequencyRumble > 0f
+                || currentHighFrequencyRumble > 0f)
+            {
+                WindowsXInputRumble.SetMotorSpeeds(gamepadIndex, 0f, 0f);
+            }
+
+            currentLowFrequencyRumble = 0f;
+            currentHighFrequencyRumble = 0f;
+            lastSentLowFrequencyRumble = 0f;
+            lastSentHighFrequencyRumble = 0f;
+            rumbleWasSent = false;
+            lastLandingRumbleTime = float.NegativeInfinity;
+            lastLandingRumbleStrength = 0f;
+        }
+
         private Vector2 GetCurrentWorldVelocity()
         {
             return mover == null
@@ -667,8 +895,26 @@ namespace AnimalGame.RobotMap
         private void OnDisable()
         {
             ResetShakeState();
+            StopGamepadRumble();
             if (attachedCamera != null)
                 attachedCamera.orthographicSize = baseOrthographicSize;
+        }
+
+        private void OnApplicationFocus(bool hasFocus)
+        {
+            if (!hasFocus)
+                StopGamepadRumble();
+        }
+
+        private void OnApplicationPause(bool pauseStatus)
+        {
+            if (pauseStatus)
+                StopGamepadRumble();
+        }
+
+        private void OnDestroy()
+        {
+            StopGamepadRumble();
         }
 
         private void OnValidate()
@@ -677,6 +923,57 @@ namespace AnimalGame.RobotMap
             maximumPositionOffset = Mathf.Max(0f, maximumPositionOffset);
             maximumRotationDegrees = Mathf.Clamp(maximumRotationDegrees, 0f, 12f);
             maximumZoomFraction = Mathf.Clamp(maximumZoomFraction, 0f, 0.1f);
+            gamepadIndex = Mathf.Clamp(gamepadIndex, 0, 3);
+            positionOffsetAtFullRumble = Mathf.Max(
+                0.001f,
+                positionOffsetAtFullRumble);
+            rotationDegreesAtFullRumble = Mathf.Max(
+                0.01f,
+                rotationDegreesAtFullRumble);
+            zoomFractionAtFullRumble = Mathf.Max(
+                0.0001f,
+                zoomFractionAtFullRumble);
+            lowFrequencyMotorMultiplier = Mathf.Clamp(
+                lowFrequencyMotorMultiplier,
+                0f,
+                2f);
+            highFrequencyMotorMultiplier = Mathf.Clamp(
+                highFrequencyMotorMultiplier,
+                0f,
+                2f);
+            positionToHighFrequencyMotor = Mathf.Clamp01(
+                positionToHighFrequencyMotor);
+            rumbleResponseExponent = Mathf.Clamp(
+                rumbleResponseExponent,
+                0.5f,
+                3f);
+            fullImbalanceRumbleMultiplier = Mathf.Clamp(
+                fullImbalanceRumbleMultiplier,
+                1f,
+                5f);
+            imbalanceRumbleExponent = Mathf.Clamp(
+                imbalanceRumbleExponent,
+                0.5f,
+                4f);
+            severeImbalanceRumbleThreshold = Mathf.Clamp01(
+                severeImbalanceRumbleThreshold);
+            severeImbalanceLowFrequencyStrength = Mathf.Clamp01(
+                severeImbalanceLowFrequencyStrength);
+            severeImbalanceHighFrequencyStrength = Mathf.Clamp01(
+                severeImbalanceHighFrequencyStrength);
+            landingRumbleMultiplier = Mathf.Clamp(
+                landingRumbleMultiplier,
+                1f,
+                4f);
+            landingRumbleBoostDuration = Mathf.Max(
+                0.01f,
+                landingRumbleBoostDuration);
+            rumbleAttackSpeed = Mathf.Max(0.1f, rumbleAttackSpeed);
+            rumbleReleaseSpeed = Mathf.Max(0.1f, rumbleReleaseSpeed);
+            minimumRumbleOutput = Mathf.Clamp(
+                minimumRumbleOutput,
+                0f,
+                0.2f);
             fullVibrationSpeed = Mathf.Max(0.1f, fullVibrationSpeed);
             minimumMovingVibrationStrength = Mathf.Clamp01(
                 minimumMovingVibrationStrength);
@@ -701,6 +998,131 @@ namespace AnimalGame.RobotMap
             fullHeightImpactAcceleration = Mathf.Max(
                 minimumHeightImpactAcceleration + 0.1f,
                 fullHeightImpactAcceleration);
+        }
+    }
+
+    internal static class WindowsXInputRumble
+    {
+        private const uint Success = 0;
+
+        private enum Backend
+        {
+            Unknown,
+            XInput14,
+            XInput13,
+            XInput910,
+            Unavailable
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XInputVibration
+        {
+            public ushort LeftMotorSpeed;
+            public ushort RightMotorSpeed;
+        }
+
+        private static Backend backend;
+
+#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
+        [DllImport("xinput1_4.dll", EntryPoint = "XInputSetState")]
+        private static extern uint XInputSetState14(
+            uint userIndex,
+            ref XInputVibration vibration);
+
+        [DllImport("xinput1_3.dll", EntryPoint = "XInputSetState")]
+        private static extern uint XInputSetState13(
+            uint userIndex,
+            ref XInputVibration vibration);
+
+        [DllImport("xinput9_1_0.dll", EntryPoint = "XInputSetState")]
+        private static extern uint XInputSetState910(
+            uint userIndex,
+            ref XInputVibration vibration);
+#endif
+
+        public static bool SetMotorSpeeds(
+            int gamepadIndex,
+            float lowFrequency,
+            float highFrequency)
+        {
+#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
+            XInputVibration vibration = new()
+            {
+                LeftMotorSpeed = ToMotorSpeed(lowFrequency),
+                RightMotorSpeed = ToMotorSpeed(highFrequency)
+            };
+            uint index = (uint)Mathf.Clamp(gamepadIndex, 0, 3);
+            try
+            {
+                return SetState(index, ref vibration) == Success;
+            }
+            catch (DllNotFoundException)
+            {
+                backend = Backend.Unavailable;
+                return false;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                backend = Backend.Unavailable;
+                return false;
+            }
+#else
+            return false;
+#endif
+        }
+
+#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
+        private static uint SetState(
+            uint index,
+            ref XInputVibration vibration)
+        {
+            switch (backend)
+            {
+                case Backend.XInput14:
+                    return XInputSetState14(index, ref vibration);
+                case Backend.XInput13:
+                    return XInputSetState13(index, ref vibration);
+                case Backend.XInput910:
+                    return XInputSetState910(index, ref vibration);
+                case Backend.Unavailable:
+                    return 1;
+            }
+
+            try
+            {
+                backend = Backend.XInput14;
+                return XInputSetState14(index, ref vibration);
+            }
+            catch (DllNotFoundException)
+            {
+                // Older Windows/Unity installations may only include another
+                // XInput redistributable, so try each known ABI once.
+            }
+            catch (EntryPointNotFoundException)
+            {
+            }
+
+            try
+            {
+                backend = Backend.XInput13;
+                return XInputSetState13(index, ref vibration);
+            }
+            catch (DllNotFoundException)
+            {
+            }
+            catch (EntryPointNotFoundException)
+            {
+            }
+
+            backend = Backend.XInput910;
+            return XInputSetState910(index, ref vibration);
+        }
+#endif
+
+        private static ushort ToMotorSpeed(float strength)
+        {
+            return (ushort)Mathf.RoundToInt(
+                Mathf.Clamp01(strength) * ushort.MaxValue);
         }
     }
 }
