@@ -246,7 +246,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 21300000, guid: 3119694949c27754f99e30c7692967da, type: 3}
+  m_Sprite: {fileID: 21300000, guid: 496d2691785c3334baae77a2a1335203, type: 3}
   m_Type: 0
   m_PreserveAspect: 1
   m_FillCenter: 1
@@ -264,7 +264,7 @@ CanvasGroup:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 100000002}
   m_Enabled: 1
-  m_Alpha: 0.72
+  m_Alpha: 1
   m_Interactable: 0
   m_BlocksRaycasts: 0
   m_IgnoreParentGroups: 0
@@ -302,18 +302,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   animator: {fileID: 950000002}
-  markerLayer: {fileID: 224000002}
-  markerCanvasGroup: {fileID: 225000002}
   keyboardScanKey: 101
   gamepadScanButton: 335
   maximumChargeDuration: 0.7
-  idleAlpha: 0.72
-  fullyChargedAlpha: 1
-  fullyChargedScale: 0.9
-  idlePulseAmplitude: 0.0025
-  idlePulseFrequency: 0.55
-  chargedPulseAmplitude: 0.006
-  chargedPulseFrequency: 3.5
-  releaseDuration: 0.42
-  releaseOvershootScale: 1.045
-  releaseFlashAlpha: 0.48
