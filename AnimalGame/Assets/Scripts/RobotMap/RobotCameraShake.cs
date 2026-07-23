@@ -218,12 +218,14 @@ namespace AnimalGame.RobotMap
         public Vector2 CurrentLocalPositionOffset { get; private set; }
         public float CurrentRotationOffsetDegrees { get; private set; }
         public float CurrentZoomOffsetFraction { get; private set; }
+        public float BaseOrthographicSize => Mathf.Max(0.01f, baseOrthographicSize);
 
         private Camera attachedCamera;
         private RobotMover mover;
         private RobotBalanceController balance;
         private RobotHeightMotionDetector heightMotion;
         private float baseOrthographicSize;
+        private float scanZoomMultiplier = 1f;
         private Vector2 springPosition;
         private Vector2 springPositionVelocity;
         private float springRotation;
@@ -261,6 +263,11 @@ namespace AnimalGame.RobotMap
             noiseSeedRotation = Random.Range(10f, 1000f);
         }
 
+        public void SetScanZoomMultiplier(float multiplier)
+        {
+            scanZoomMultiplier = Mathf.Clamp(multiplier, 0.05f, 4f);
+        }
+
         public void Initialize(
             RobotMover robotMover,
             RobotBalanceController balanceController,
@@ -289,7 +296,7 @@ namespace AnimalGame.RobotMap
             {
                 ResetShakeState();
                 StopGamepadRumble();
-                attachedCamera.orthographicSize = baseOrthographicSize;
+                attachedCamera.orthographicSize = GetComposedBaseOrthographicSize();
                 StorePreviousMotionState();
                 return;
             }
@@ -673,7 +680,14 @@ namespace AnimalGame.RobotMap
                                  * Quaternion.Euler(0f, 0f, rotationOffset);
             attachedCamera.orthographicSize = Mathf.Max(
                 0.01f,
-                baseOrthographicSize * (1f + zoomOffset));
+                GetComposedBaseOrthographicSize() * (1f + zoomOffset));
+        }
+
+        private float GetComposedBaseOrthographicSize()
+        {
+            return Mathf.Max(
+                0.01f,
+                baseOrthographicSize * scanZoomMultiplier);
         }
 
         private void UpdateGamepadRumble(float deltaTime)
@@ -938,6 +952,7 @@ namespace AnimalGame.RobotMap
         {
             ResetShakeState();
             StopGamepadRumble();
+            scanZoomMultiplier = 1f;
             if (attachedCamera != null)
                 attachedCamera.orthographicSize = baseOrthographicSize;
         }

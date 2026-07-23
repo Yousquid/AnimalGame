@@ -8,7 +8,7 @@ namespace AnimalGame.RobotMap
 {
     /// <summary>
     /// Drives the authored Scan_Idle, Scan_Hold, and Scan_Release sprite clips,
-    /// plus a screen-space scan ring centred on the robot.
+    /// plus an outward release ring centred on the robot.
     /// </summary>
     // Camera follow and camera shake finish in LateUpdate at orders 200/250.
     // Projecting the robot after them prevents the scan ring lagging by one frame.
@@ -28,10 +28,17 @@ namespace AnimalGame.RobotMap
         private enum ScanRingPhase
         {
             Hidden,
-            Contracting,
-            Charged,
             Expanding,
             ExpansionComplete
+        }
+
+        private enum ScanCameraZoomPhase
+        {
+            Base,
+            Charging,
+            Charged,
+            Releasing,
+            Cancelling
         }
 
         private const string IdleClipName = "Scan_Idle";
@@ -53,12 +60,12 @@ namespace AnimalGame.RobotMap
         [Tooltip("Keyboard key held to charge a scan.")]
         [SerializeField] private KeyCode keyboardScanKey = KeyCode.E;
 
-        [Tooltip("Legacy Input Manager fallback for RB/R1. JoystickButton5 is the right shoulder button on the supported Xbox and Sony layouts.")]
+        [Tooltip("Legacy Input Manager fallback for Xbox LB and Sony L1. JoystickButton4 is the left shoulder button on both supported layouts.")]
         [SerializeField] private KeyCode gamepadScanButton =
-            KeyCode.JoystickButton5;
+            KeyCode.JoystickButton4;
 
         [Header("Animation Timing")]
-        [Tooltip("Seconds required to play from the first through the last frame of Scan_Hold. The contraction ring uses this same progress.")]
+        [Tooltip("Seconds required to play from the first through the last frame of Scan_Hold.")]
         [SerializeField, Min(0.05f)] private float maximumChargeDuration = 1.5f;
 
         [Tooltip("Seconds required to play the complete authored Scan_Release clip. Lower values make the activation-key animation finish faster.")]
@@ -67,14 +74,33 @@ namespace AnimalGame.RobotMap
         [Tooltip("Independent duration of the outward scan ring. This starts with Scan_Release but may finish before or after the activation-key animation.")]
         [SerializeField, Min(0.05f)] private float releaseRingExpansionDuration = 0.65f;
 
+        [Header("Scan Camera Zoom")]
+        [Tooltip("Enables the camera-size animation during Scan_Hold and Scan_Release.")]
+        [SerializeField] private bool enableScanCameraZoom = true;
+
+        [Tooltip("Orthographic Size reached at full charge. This should be smaller than the camera base size (currently 9) to zoom in.")]
+        [SerializeField, Min(0.01f)] private float holdTargetOrthographicSize = 7.5f;
+
+        [Tooltip("Largest Orthographic Size reached during the first part of Scan_Release. This should be larger than the camera base size to zoom out.")]
+        [SerializeField, Min(0.01f)] private float releasePeakOrthographicSize = 11f;
+
+        [Tooltip("Independent seconds used to move from the charged close view to the large release view. Increase this for a softer Hold-to-Release transition.")]
+        [SerializeField, Min(0.05f)] private float releaseZoomOutDuration = 0.45f;
+
+        [Tooltip("Independent seconds used to move from the large release view back to the normal camera size.")]
+        [SerializeField, Min(0.05f)] private float releaseZoomReturnDuration = 0.55f;
+
+        [Tooltip("Seconds used to return to the original size when charging is cancelled before completion.")]
+        [SerializeField, Min(0.01f)] private float cancelledChargeZoomReturnDuration = 0.2f;
+
         [Header("Scan Ring")]
-        [Tooltip("Shows the contraction and outward-release scan ring.")]
+        [Tooltip("Shows the outward-release scan ring.")]
         [SerializeField] private bool showScanRing = true;
 
-        [Tooltip("Ring radius at the main UI boundary, in reference-canvas pixels.")]
+        [Tooltip("Final release-ring radius at the main UI boundary, in reference-canvas pixels.")]
         [SerializeField, Min(8f)] private float uiRingRadiusPixels = 430f;
 
-        [Tooltip("Ring radius when it has contracted onto the robot body, in reference-canvas pixels.")]
+        [Tooltip("Initial release-ring radius around the robot body, in reference-canvas pixels.")]
         [SerializeField, Min(1f)] private float robotRingRadiusPixels = 43f;
 
         [Tooltip("Thickness of the scan ring in reference-canvas pixels.")]
@@ -82,10 +108,6 @@ namespace AnimalGame.RobotMap
 
         [Tooltip("Number of segments used for the procedural circle. Higher values make a smoother circle.")]
         [SerializeField, Range(24, 256)] private int scanRingSegments = 128;
-
-        [Tooltip("Colour and opacity used while the ring contracts during Scan_Hold.")]
-        [SerializeField] private Color holdRingColor =
-            new Color(0.92f, 0.98f, 1f, 0.78f);
 
         [Tooltip("Colour and opacity used while the released scan ring expands.")]
         [SerializeField] private Color releaseRingColor =
@@ -96,6 +118,17 @@ namespace AnimalGame.RobotMap
         private float chargeElapsed;
         private float releaseElapsed;
         private float releaseRingElapsed;
+        private float releaseCameraZoomElapsed;
+
+        private ScanCameraZoomPhase cameraZoomPhase;
+        private RobotCameraShake cameraShake;
+        private bool cameraZoomInitialized;
+        private float baseCameraOrthographicSize = 9f;
+        private float currentScanOrthographicSize = 9f;
+        private float chargeZoomStartSize = 9f;
+        private float releaseZoomStartSize = 9f;
+        private float cancelledZoomStartSize = 9f;
+        private float cancelledZoomElapsed;
 
         private Camera mapCamera;
         private Transform robotTarget;
@@ -122,6 +155,7 @@ namespace AnimalGame.RobotMap
         private void OnEnable()
         {
             EnterIdle(false);
+            ResetScanCameraZoomImmediate();
         }
 
         private void Update()
@@ -145,7 +179,7 @@ namespace AnimalGame.RobotMap
                     if (!scanHeld)
                     {
                         // Releasing before maximum charge cancels the scan.
-                        EnterIdle(false);
+                        CancelCharge();
                         break;
                     }
 
@@ -154,18 +188,15 @@ namespace AnimalGame.RobotMap
                         chargeElapsed + deltaTime);
                     float charge01 = Charge01;
                     SampleAuthoredState(HoldStateHash, charge01);
-                    UpdateContractionRing(charge01);
                     if (charge01 >= 1f)
                     {
                         state = ScanVisualState.Charged;
-                        ringPhase = ScanRingPhase.Charged;
-                        ShowRingAt(robotRingRadiusPixels, holdRingColor);
+                        cameraZoomPhase = ScanCameraZoomPhase.Charged;
                     }
                     break;
 
                 case ScanVisualState.Charged:
-                    // Keep both the final Hold sprite and contracted circle
-                    // on the robot until the completed charge is released.
+                    // Keep the final Hold sprite visible until the completed charge is released.
                     if (!scanHeld)
                         BeginRelease();
                     break;
@@ -179,12 +210,15 @@ namespace AnimalGame.RobotMap
                     SampleAuthoredState(ReleaseStateHash, release01);
                     if (release01 >= 1f)
                     {
-                        // The ring has its own duration and is allowed to keep
-                        // expanding after the authored release clip has ended.
+                        // The ring and camera zoom have independent durations
+                        // and may continue after the authored release clip ends.
                         EnterIdle(true);
                     }
                     break;
             }
+
+            UpdateScanCameraZoom(deltaTime);
+            ApplyScanCameraZoom();
         }
 
         private void LateUpdate()
@@ -194,12 +228,22 @@ namespace AnimalGame.RobotMap
 
         private void BeginCharge()
         {
+            ResolveTrackingReferences();
             state = ScanVisualState.Charging;
             chargeElapsed = 0f;
             releaseElapsed = 0f;
-            ringPhase = ScanRingPhase.Contracting;
+            chargeZoomStartSize = currentScanOrthographicSize;
+            cameraZoomPhase = ScanCameraZoomPhase.Charging;
+            HideScanRing();
             SampleAuthoredState(HoldStateHash, 0f);
-            ShowRingAt(uiRingRadiusPixels, holdRingColor);
+        }
+
+        private void CancelCharge()
+        {
+            cancelledZoomStartSize = currentScanOrthographicSize;
+            cancelledZoomElapsed = 0f;
+            cameraZoomPhase = ScanCameraZoomPhase.Cancelling;
+            EnterIdle(false);
         }
 
         private void BeginRelease()
@@ -207,6 +251,9 @@ namespace AnimalGame.RobotMap
             state = ScanVisualState.Releasing;
             releaseElapsed = 0f;
             releaseRingElapsed = 0f;
+            releaseCameraZoomElapsed = 0f;
+            releaseZoomStartSize = currentScanOrthographicSize;
+            cameraZoomPhase = ScanCameraZoomPhase.Releasing;
             ringPhase = ScanRingPhase.Expanding;
             SampleAuthoredState(ReleaseStateHash, 0f);
             ShowRingAt(robotRingRadiusPixels, releaseRingColor);
@@ -227,21 +274,116 @@ namespace AnimalGame.RobotMap
             }
         }
 
-        private void UpdateContractionRing(float charge01)
+        private void UpdateScanCameraZoom(float deltaTime)
         {
-            if (!showScanRing)
+            ResolveTrackingReferences();
+            if (!cameraZoomInitialized)
+                return;
+
+            if (!enableScanCameraZoom)
             {
-                HideScanRing();
+                cameraZoomPhase = ScanCameraZoomPhase.Base;
+                currentScanOrthographicSize = baseCameraOrthographicSize;
                 return;
             }
 
-            ringPhase = ScanRingPhase.Contracting;
-            float eased = Mathf.SmoothStep(0f, 1f, charge01);
-            float radius = Mathf.Lerp(
-                uiRingRadiusPixels,
-                robotRingRadiusPixels,
-                eased);
-            ShowRingAt(radius, holdRingColor);
+            switch (cameraZoomPhase)
+            {
+                case ScanCameraZoomPhase.Charging:
+                    currentScanOrthographicSize = Mathf.Lerp(
+                        chargeZoomStartSize,
+                        holdTargetOrthographicSize,
+                        Mathf.SmoothStep(0f, 1f, Charge01));
+                    break;
+
+                case ScanCameraZoomPhase.Charged:
+                    currentScanOrthographicSize = holdTargetOrthographicSize;
+                    break;
+
+                case ScanCameraZoomPhase.Releasing:
+                    releaseCameraZoomElapsed += deltaTime;
+                    float outwardDuration = Mathf.Max(
+                        0.05f,
+                        releaseZoomOutDuration);
+                    float returnDuration = Mathf.Max(
+                        0.05f,
+                        releaseZoomReturnDuration);
+                    if (releaseCameraZoomElapsed <= outwardDuration)
+                    {
+                        float outward01 = Mathf.Clamp01(
+                            releaseCameraZoomElapsed / outwardDuration);
+                        currentScanOrthographicSize = Mathf.Lerp(
+                            releaseZoomStartSize,
+                            releasePeakOrthographicSize,
+                            Mathf.SmoothStep(0f, 1f, outward01));
+                    }
+                    else
+                    {
+                        float returnElapsed =
+                            releaseCameraZoomElapsed - outwardDuration;
+                        float return01 = Mathf.Clamp01(
+                            returnElapsed / returnDuration);
+                        currentScanOrthographicSize = Mathf.Lerp(
+                            releasePeakOrthographicSize,
+                            baseCameraOrthographicSize,
+                            Mathf.SmoothStep(0f, 1f, return01));
+                        if (return01 >= 1f)
+                            cameraZoomPhase = ScanCameraZoomPhase.Base;
+                    }
+                    break;
+
+                case ScanCameraZoomPhase.Cancelling:
+                    cancelledZoomElapsed = Mathf.Min(
+                        cancelledChargeZoomReturnDuration,
+                        cancelledZoomElapsed + deltaTime);
+                    float cancel01 = Mathf.Clamp01(
+                        cancelledZoomElapsed
+                        / Mathf.Max(0.01f, cancelledChargeZoomReturnDuration));
+                    currentScanOrthographicSize = Mathf.Lerp(
+                        cancelledZoomStartSize,
+                        baseCameraOrthographicSize,
+                        Mathf.SmoothStep(0f, 1f, cancel01));
+                    if (cancel01 >= 1f)
+                        cameraZoomPhase = ScanCameraZoomPhase.Base;
+                    break;
+
+                default:
+                    currentScanOrthographicSize = baseCameraOrthographicSize;
+                    break;
+            }
+        }
+
+        private void ApplyScanCameraZoom()
+        {
+            ResolveTrackingReferences();
+            if (!cameraZoomInitialized || mapCamera == null)
+                return;
+
+            float desiredSize = enableScanCameraZoom
+                ? currentScanOrthographicSize
+                : baseCameraOrthographicSize;
+            desiredSize = Mathf.Max(0.01f, desiredSize);
+
+            if (cameraShake != null && cameraShake.isActiveAndEnabled)
+            {
+                cameraShake.SetScanZoomMultiplier(
+                    desiredSize / Mathf.Max(0.01f, baseCameraOrthographicSize));
+            }
+            else
+            {
+                mapCamera.orthographicSize = desiredSize;
+            }
+        }
+
+        private void ResetScanCameraZoomImmediate()
+        {
+            ResolveTrackingReferences();
+            cameraZoomPhase = ScanCameraZoomPhase.Base;
+            releaseCameraZoomElapsed = 0f;
+            cancelledZoomElapsed = 0f;
+            if (cameraZoomInitialized)
+                currentScanOrthographicSize = baseCameraOrthographicSize;
+            ApplyScanCameraZoom();
         }
 
         private void UpdateReleaseRing(float deltaTime)
@@ -307,7 +449,7 @@ namespace AnimalGame.RobotMap
                 return;
 
             var ringObject = new GameObject(
-                "Scan Contraction and Release Ring",
+                "Scan Release Ring",
                 typeof(RectTransform),
                 typeof(CanvasRenderer));
             ringObject.layer = gameObject.layer;
@@ -367,7 +509,30 @@ namespace AnimalGame.RobotMap
         private void ResolveTrackingReferences()
         {
             if (mapCamera == null || !mapCamera.isActiveAndEnabled)
-                mapCamera = Camera.main;
+            {
+                Camera resolvedCamera = Camera.main;
+                if (resolvedCamera != mapCamera)
+                {
+                    if (cameraShake != null)
+                        cameraShake.SetScanZoomMultiplier(1f);
+                    mapCamera = resolvedCamera;
+                    cameraShake = null;
+                    cameraZoomInitialized = false;
+                }
+            }
+
+            if (!cameraZoomInitialized && mapCamera != null)
+            {
+                cameraShake = mapCamera.GetComponent<RobotCameraShake>();
+                baseCameraOrthographicSize = cameraShake != null
+                    ? cameraShake.BaseOrthographicSize
+                    : Mathf.Max(0.01f, mapCamera.orthographicSize);
+                currentScanOrthographicSize = baseCameraOrthographicSize;
+                chargeZoomStartSize = baseCameraOrthographicSize;
+                releaseZoomStartSize = baseCameraOrthographicSize;
+                cancelledZoomStartSize = baseCameraOrthographicSize;
+                cameraZoomInitialized = true;
+            }
 
             if (robotTarget != null)
                 return;
@@ -432,7 +597,8 @@ namespace AnimalGame.RobotMap
             {
                 if (gamepad != null
                     && gamepad.added
-                    && gamepad.rightShoulder.isPressed)
+                    // The Input System maps Xbox LB and Sony L1 to leftShoulder.
+                    && gamepad.leftShoulder.isPressed)
                 {
                     return true;
                 }
@@ -446,6 +612,7 @@ namespace AnimalGame.RobotMap
             if (animator != null)
                 animator.speed = 0f;
             HideScanRing();
+            ResetScanCameraZoomImmediate();
         }
 
         private void OnValidate()
@@ -455,6 +622,21 @@ namespace AnimalGame.RobotMap
             releaseRingExpansionDuration = Mathf.Max(
                 0.05f,
                 releaseRingExpansionDuration);
+            holdTargetOrthographicSize = Mathf.Max(
+                0.01f,
+                holdTargetOrthographicSize);
+            releasePeakOrthographicSize = Mathf.Max(
+                0.01f,
+                releasePeakOrthographicSize);
+            releaseZoomOutDuration = Mathf.Max(
+                0.05f,
+                releaseZoomOutDuration);
+            releaseZoomReturnDuration = Mathf.Max(
+                0.05f,
+                releaseZoomReturnDuration);
+            cancelledChargeZoomReturnDuration = Mathf.Max(
+                0.01f,
+                cancelledChargeZoomReturnDuration);
             uiRingRadiusPixels = Mathf.Max(8f, uiRingRadiusPixels);
             robotRingRadiusPixels = Mathf.Clamp(
                 robotRingRadiusPixels,

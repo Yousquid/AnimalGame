@@ -303,14 +303,19 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   animator: {fileID: 950000002}
   keyboardScanKey: 101
-  gamepadScanButton: 335
+  gamepadScanButton: 334
   maximumChargeDuration: 0.2
   releaseDuration: 0.25
   releaseRingExpansionDuration: 0.65
+  enableScanCameraZoom: 1
+  holdTargetOrthographicSize: 8.5
+  releasePeakOrthographicSize: 9.5
+  releaseZoomOutDuration: 0.45
+  releaseZoomReturnDuration: 0.55
+  cancelledChargeZoomReturnDuration: 0.2
   showScanRing: 1
   uiRingRadiusPixels: 430
   robotRingRadiusPixels: 43
   scanRingThicknessPixels: 2
   scanRingSegments: 128
-  holdRingColor: {r: 0.83137256, g: 0.72156864, b: 0.32941177, a: 0.78}
   releaseRingColor: {r: 0.83137256, g: 0.72156864, b: 0.32941177, a: 0.92}
