@@ -48,10 +48,12 @@ namespace AnimalGame.RobotMap
         [Tooltip("Seconds required to play from the first through the last frame of Scan_Hold. The final frame remains visible while the button stays held.")]
         [SerializeField, Min(0.05f)] private float maximumChargeDuration = 1.5f;
 
+        [Tooltip("Seconds required to play the complete authored Scan_Release clip. Lower values make the release animation finish faster.")]
+        [SerializeField, Min(0.05f)] private float releaseDuration = 0.3f;
+
         private ScanVisualState state;
         private float chargeElapsed;
         private float releaseElapsed;
-        private float releaseClipDuration = 0.42f;
 
         public float Charge01 => Mathf.Clamp01(
             chargeElapsed / Mathf.Max(0.05f, maximumChargeDuration));
@@ -64,7 +66,7 @@ namespace AnimalGame.RobotMap
             if (animator == null)
                 animator = GetComponent<Animator>();
 
-            CacheAuthoredClipDurations();
+            ValidateAuthoredClips();
         }
 
         private void OnEnable()
@@ -109,10 +111,10 @@ namespace AnimalGame.RobotMap
 
                 case ScanVisualState.Releasing:
                     releaseElapsed = Mathf.Min(
-                        releaseClipDuration,
+                        releaseDuration,
                         releaseElapsed + deltaTime);
                     float release01 = Mathf.Clamp01(
-                        releaseElapsed / releaseClipDuration);
+                        releaseElapsed / releaseDuration);
                     SampleAuthoredState(ReleaseStateHash, release01);
                     if (release01 >= 1f)
                         EnterIdle();
@@ -155,23 +157,12 @@ namespace AnimalGame.RobotMap
             animator.Update(0f);
         }
 
-        private void CacheAuthoredClipDurations()
+        private void ValidateAuthoredClips()
         {
             RuntimeAnimatorController controller =
                 animator != null ? animator.runtimeAnimatorController : null;
             if (controller == null)
                 return;
-
-            foreach (AnimationClip clip in controller.animationClips)
-            {
-                if (clip != null
-                    && clip.name == ReleaseClipName
-                    && clip.length > 0f)
-                {
-                    releaseClipDuration = clip.length;
-                    break;
-                }
-            }
 
             Debug.Assert(HasClip(controller, IdleClipName),
                 "Scan UI controller is missing Scan_Idle.", this);
@@ -225,6 +216,7 @@ namespace AnimalGame.RobotMap
         private void OnValidate()
         {
             maximumChargeDuration = Mathf.Max(0.05f, maximumChargeDuration);
+            releaseDuration = Mathf.Max(0.05f, releaseDuration);
         }
     }
 }
