@@ -61,6 +61,19 @@ namespace AnimalGame.RobotMap
         [Tooltip("Shapes when the imbalance boost becomes prominent. Values above one reserve most of the boost for severe imbalance.")]
         [SerializeField, Range(0.5f, 4f)] private float imbalanceRumbleExponent = 1.6f;
 
+        [Header("Severe Imbalance Rumble")]
+        [Tooltip("Enables a continuous controller warning once centre-of-mass displacement exceeds the severe threshold.")]
+        [SerializeField] private bool enableSevereImbalanceRumble = true;
+
+        [Tooltip("Normalized centre-of-mass displacement at which continuous warning vibration begins. 0.65 means sixty-five percent of the balance radius.")]
+        [SerializeField, Range(0f, 1f)] private float severeImbalanceRumbleThreshold = 0.65f;
+
+        [Tooltip("Low-frequency motor strength reserved for the severe-imbalance warning at maximum displacement.")]
+        [SerializeField, Range(0f, 1f)] private float severeImbalanceLowFrequencyStrength = 0.72f;
+
+        [Tooltip("High-frequency motor strength reserved for the severe-imbalance warning at maximum displacement.")]
+        [SerializeField, Range(0f, 1f)] private float severeImbalanceHighFrequencyStrength = 0.46f;
+
         [Tooltip("Temporary controller-vibration multiplier applied at the moment of a detected airborne landing.")]
         [SerializeField, Range(1f, 4f)] private float landingRumbleMultiplier = 1.8f;
 
@@ -694,6 +707,27 @@ namespace AnimalGame.RobotMap
                 * highFrequencyMotorMultiplier
                 * imbalanceBoost
                 * landingBoost);
+            if (enableSevereImbalanceRumble
+                && balanceMagnitude >= severeImbalanceRumbleThreshold)
+            {
+                float severeProgress = Mathf.InverseLerp(
+                    severeImbalanceRumbleThreshold,
+                    1f,
+                    balanceMagnitude);
+                // Start with a clearly perceptible warning at the threshold,
+                // then increase toward the configured full-displacement level.
+                float warningStrength = Mathf.Lerp(
+                    0.65f,
+                    1f,
+                    severeProgress);
+                targetLow = Mathf.Max(
+                    targetLow,
+                    severeImbalanceLowFrequencyStrength * warningStrength);
+                targetHigh = Mathf.Max(
+                    targetHigh,
+                    severeImbalanceHighFrequencyStrength * warningStrength);
+            }
+
             currentLowFrequencyRumble = MoveRumbleTowards(
                 currentLowFrequencyRumble,
                 targetLow,
@@ -921,6 +955,12 @@ namespace AnimalGame.RobotMap
                 imbalanceRumbleExponent,
                 0.5f,
                 4f);
+            severeImbalanceRumbleThreshold = Mathf.Clamp01(
+                severeImbalanceRumbleThreshold);
+            severeImbalanceLowFrequencyStrength = Mathf.Clamp01(
+                severeImbalanceLowFrequencyStrength);
+            severeImbalanceHighFrequencyStrength = Mathf.Clamp01(
+                severeImbalanceHighFrequencyStrength);
             landingRumbleMultiplier = Mathf.Clamp(
                 landingRumbleMultiplier,
                 1f,

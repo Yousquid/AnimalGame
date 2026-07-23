@@ -138,6 +138,10 @@ MonoBehaviour:
   rumbleResponseExponent: 1.45
   fullImbalanceRumbleMultiplier: 2.6
   imbalanceRumbleExponent: 1.6
+  enableSevereImbalanceRumble: 1
+  severeImbalanceRumbleThreshold: 0.65
+  severeImbalanceLowFrequencyStrength: 0.72
+  severeImbalanceHighFrequencyStrength: 0.46
   landingRumbleMultiplier: 1.8
   landingRumbleBoostDuration: 0.45
   rumbleAttackSpeed: 12
