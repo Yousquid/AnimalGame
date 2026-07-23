@@ -147,6 +147,13 @@ MonoBehaviour:
   rumbleAttackSpeed: 12
   rumbleReleaseSpeed: 6
   minimumRumbleOutput: 0.025
+  enableSonyRumbleCalibration: 1
+  sonyLowFrequencyMultiplier: 0.3
+  sonyHighFrequencyMultiplier: 0.2
+  sonyRumbleResponseExponent: 1.35
+  sonyMaximumLowFrequencyStrength: 0.42
+  sonyMaximumHighFrequencyStrength: 0.28
+  sonyMinimumRumbleOutput: 0.01
   fullVibrationSpeed: 4
   minimumMovingVibrationStrength: 0.35
   stationaryBalanceVibrationStrength: 0.28
