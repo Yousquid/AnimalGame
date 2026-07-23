@@ -59,10 +59,13 @@ namespace AnimalGame.RobotMap
 
         [Header("Landing Impact Scale")]
         [Tooltip("Relative landing speed that begins producing a camera landing impact.")]
-        [SerializeField, Min(0f)] private float minimumLandingImpactSpeed = 0.7f;
+        [SerializeField, Min(0f)] private float minimumLandingImpactSpeed = 0.45f;
 
         [Tooltip("Relative landing speed mapped to a full-strength camera landing impact.")]
-        [SerializeField, Min(0.01f)] private float fullLandingImpactSpeed = 5.5f;
+        [SerializeField, Min(0.01f)] private float fullLandingImpactSpeed = 3.6f;
+
+        [Tooltip("Shapes landing strength after speed normalization. Values below one make medium landings stronger while preserving zero and full-strength endpoints.")]
+        [SerializeField, Range(0.1f, 3f)] private float landingImpactStrengthExponent = 0.7f;
 
         [Header("Signal Filtering")]
         [Tooltip("Smoothing time applied to sampled ground vertical speed. This affects telemetry while takeoff still reacts to the unfiltered ground change.")]
@@ -258,11 +261,14 @@ namespace AnimalGame.RobotMap
                 return;
 
             float impactSpeed = Mathf.Max(0f, relativeApproachSpeed);
-            float strength = Mathf.InverseLerp(
+            float linearStrength = Mathf.InverseLerp(
                 minimumLandingImpactSpeed,
                 Mathf.Max(minimumLandingImpactSpeed + 0.01f,
                     fullLandingImpactSpeed),
                 impactSpeed);
+            float strength = Mathf.Pow(
+                linearStrength,
+                landingImpactStrengthExponent);
             LastLandingImpact = new RobotLandingImpact(
                 impactSpeed,
                 strength,
@@ -320,6 +326,10 @@ namespace AnimalGame.RobotMap
             fullLandingImpactSpeed = Mathf.Max(
                 minimumLandingImpactSpeed + 0.01f,
                 fullLandingImpactSpeed);
+            landingImpactStrengthExponent = Mathf.Clamp(
+                landingImpactStrengthExponent,
+                0.1f,
+                3f);
             groundVerticalSpeedSmoothingTime = Mathf.Max(
                 0.001f,
                 groundVerticalSpeedSmoothingTime);
