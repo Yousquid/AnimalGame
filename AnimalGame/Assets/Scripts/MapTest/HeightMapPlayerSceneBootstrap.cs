@@ -10,6 +10,7 @@ namespace AnimalGame.MapTest
         private const string CameraResourcePath = "Camera/RobotCamera";
         private const string TraversalResourcePath = "Traversal/HeightMapTraversalEvaluator";
         private const string OverlayResourcePath = "Traversal/TraversalOverlay";
+        private const string ScanOverlayResourcePath = "Traversal/TraversalScanOverlay";
         private const string MainUiResourcePath = "UI/MainUI";
 
         [Header("Player Spawn")]
@@ -40,12 +41,16 @@ namespace AnimalGame.MapTest
                 "Height Map Traversal Evaluator");
             GameObject overlayObject = InstantiateResource(
                 OverlayResourcePath,
-                "Traversal Overlay");
+                "Debug Traversal Overlay");
+            GameObject scanOverlayObject = InstantiateResource(
+                ScanOverlayResourcePath,
+                "Scanned Traversal Overlay");
             GameObject mainUiObject = InstantiateResource(
                 MainUiResourcePath,
                 "Main UI");
             if (mapObject == null || robotObject == null || cameraObject == null
-                || traversalObject == null || overlayObject == null || mainUiObject == null)
+                || traversalObject == null || overlayObject == null
+                || scanOverlayObject == null || mainUiObject == null)
             {
                 enabled = false;
                 return;
@@ -71,9 +76,15 @@ namespace AnimalGame.MapTest
                 cameraShake = cameraObject.AddComponent<RobotCameraShake>();
             traversalEvaluator = traversalObject.GetComponent<HeightMapTraversalEvaluator>();
             TraversalOverlayUI traversalOverlay = overlayObject.GetComponent<TraversalOverlayUI>();
+            TraversalScanOverlayUI scanOverlay =
+                scanOverlayObject.GetComponent<TraversalScanOverlayUI>();
+            ScanChargeUI scanChargeUi =
+                mainUiObject.GetComponentInChildren<ScanChargeUI>(true);
 
             if (map == null || robot == null || camera == null || cameraFollow == null
-                || traversalEvaluator == null || traversalOverlay == null || !map.HasGeneratedMap)
+                || traversalEvaluator == null || traversalOverlay == null
+                || scanOverlay == null || scanChargeUi == null
+                || !map.HasGeneratedMap)
             {
                 Debug.LogError(
                     "HeightMapPlayerScene is missing a required prefab component or generated map.",
@@ -91,6 +102,12 @@ namespace AnimalGame.MapTest
             heightMotion.Initialize(map);
             cameraShake.Initialize(robot, balance, heightMotion);
             traversalOverlay.Initialize(map, traversalEvaluator, camera, robot);
+            scanOverlay.Initialize(
+                map,
+                traversalEvaluator,
+                camera,
+                robot,
+                scanChargeUi);
             UpdatePlayerHeight();
         }
 

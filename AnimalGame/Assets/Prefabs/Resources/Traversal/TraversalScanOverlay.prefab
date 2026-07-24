@@ -1,0 +1,60 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &150000000
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 450000000}
+  - component: {fileID: 114500000}
+  m_Layer: 0
+  m_Name: TraversalScanOverlay
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &450000000
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 150000000}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &114500000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 150000000}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e71c9b0a54ab48e5887c7e6a4d81c3fe, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  passableSign: {fileID: 21300000, guid: 09afb4a9ddcfe754a9842e74d23fabc1, type: 3}
+  unpassableSign: {fileID: 21300000, guid: 5b377b0df7e4966488a1c33711fe4ed8, type: 3}
+  sampleGridSpacingPixels: 32
+  contourBoundaryHalfWidthMeters: 3
+  terrainGradientProbeMeters: 1.5
+  centerExclusionRadiusPixels: 40
+  maximumScannedSigns: 700
+  unpassableNeighborhoodRadiusMeters: 8
+  markerLifetimeSeconds: 8
+  stateRefreshIntervalSeconds: 0.75
+  refreshCalculationsPerFrame: 96
+  scanCalculationsPerFrame: 128
+  iconSizePixels: 8
+  canvasSortingOrder: 21

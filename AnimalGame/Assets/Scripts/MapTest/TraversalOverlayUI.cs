@@ -5,6 +5,10 @@ using UnityEngine.UI;
 
 namespace AnimalGame.MapTest
 {
+    /// <summary>
+    /// Q-toggleable full-grid debug visualization. Production scan markers are
+    /// intentionally owned by TraversalScanOverlayUI and never read this state.
+    /// </summary>
     [DefaultExecutionOrder(100)]
     [DisallowMultipleComponent]
     public sealed class TraversalOverlayUI : MonoBehaviour
@@ -44,7 +48,9 @@ namespace AnimalGame.MapTest
         private RobotMover playerRobot;
         private GameObject overlayRoot;
         private float nextRefreshTime;
-        private bool isOverlayVisible = true;
+        // Debug visualization starts hidden so it cannot visually obscure the
+        // production scan snapshot. Q still toggles the complete legacy grid.
+        private bool isOverlayVisible;
         private int cachedScreenWidth = -1;
         private int cachedScreenHeight = -1;
         private float cachedGridSpacingPixels = float.NaN;
@@ -259,7 +265,7 @@ namespace AnimalGame.MapTest
 
             pooledImages.Clear();
             overlayRoot = new GameObject(
-                "Traversal Reachability Overlay",
+                "Debug Traversal Reachability Overlay",
                 typeof(RectTransform),
                 typeof(Canvas),
                 typeof(CanvasScaler),

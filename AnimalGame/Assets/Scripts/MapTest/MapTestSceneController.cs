@@ -96,6 +96,7 @@ namespace AnimalGame.MapTest
         public float VisibleMaximumContourHeight { get; private set; }
         public Vector2 MapSizeMeters => new Vector2(mapWidthMeters, mapHeightMeters);
         public BakedHeightField HeightField => heightField;
+        public float ContourIntervalMeters => contourIntervalMeters;
 
         public bool HasGeneratedMap => mapRenderer != null && heightField != null;
 

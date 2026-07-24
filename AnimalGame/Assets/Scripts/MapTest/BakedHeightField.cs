@@ -149,6 +149,18 @@ namespace AnimalGame.MapTest
             return SampleBilinear(detailHeightsMeters, uv);
         }
 
+        /// <summary>
+        /// Reads one sample from the same smoothed physical height field used by
+        /// contour rendering and traversal. This is intended for one-time spatial
+        /// indexing; normal gameplay queries should continue to use bilinear samples.
+        /// </summary>
+        public float GetSurfaceHeightSample(int x, int y)
+        {
+            int clampedX = Mathf.Clamp(x, 0, Width - 1);
+            int clampedY = Mathf.Clamp(y, 0, Height - 1);
+            return surfaceHeightsMeters[clampedY * Width + clampedX];
+        }
+
         public void Dispose()
         {
             if (SurfaceTexture != null)

@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using UnityEngine.UI;
 #if ENABLE_INPUT_SYSTEM
@@ -154,6 +155,20 @@ namespace AnimalGame.RobotMap
         public bool IsFullyCharged => state == ScanVisualState.Charged;
         public bool IsCharging => state == ScanVisualState.Charging
                                   || state == ScanVisualState.Charged;
+        public float ReleaseRingExpansionDuration => releaseRingExpansionDuration;
+        public float UiRingRadiusPixels => uiRingRadiusPixels;
+
+        /// <summary>
+        /// Raised only after a full charge is released. Gameplay scan systems use
+        /// this event and remain independent from the authored scan animation.
+        /// </summary>
+        public event Action FullyChargedScanReleased;
+
+        public float GetUiRingScreenRadiusPixels()
+        {
+            Canvas canvas = GetComponentInParent<Canvas>();
+            return uiRingRadiusPixels * (canvas != null ? canvas.scaleFactor : 1f);
+        }
 
         private void Awake()
         {
@@ -274,6 +289,7 @@ namespace AnimalGame.RobotMap
             ringPhase = ScanRingPhase.Expanding;
             SampleAuthoredState(ReleaseStateHash, 0f);
             ShowRingAt(robotRingRadiusPixels, releaseRingColor);
+            FullyChargedScanReleased?.Invoke();
         }
 
         private void EnterIdle(bool preserveReleaseRing)
