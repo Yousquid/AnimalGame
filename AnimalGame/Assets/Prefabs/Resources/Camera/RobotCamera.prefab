@@ -107,7 +107,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e8035d5bea34f264a9970a9c4925c8f4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  positionDamping: 0.18
+  positionDamping: 0
   rotationDamping: 0.28
   followTargetRotation: 1
 --- !u!114 &114250000
@@ -120,8 +120,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: c45dd5e9f8d84d43aacd14f6a63f526b, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
   enableCameraShake: 1
   globalIntensity: 1
   maximumPositionOffset: 0.28
