@@ -313,6 +313,11 @@ MonoBehaviour:
   releaseZoomOutDuration: 0.45
   releaseZoomReturnDuration: 0.55
   cancelledChargeZoomReturnDuration: 0.2
+  enableFullyChargedCameraShake: 1
+  fullyChargedShakeBuildUpDuration: 0.4
+  fullyChargedShakePositionAmplitude: 0.065
+  fullyChargedShakeRotationAmplitude: 0.45
+  fullyChargedShakeFrequency: 4.5
   showScanRing: 1
   uiRingRadiusPixels: 430
   robotRingRadiusPixels: 43

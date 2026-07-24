@@ -226,6 +226,10 @@ namespace AnimalGame.RobotMap
         private RobotHeightMotionDetector heightMotion;
         private float baseOrthographicSize;
         private float scanZoomMultiplier = 1f;
+        private float scanChargeShakeStrength;
+        private float scanChargePositionAmplitude;
+        private float scanChargeRotationAmplitude;
+        private float scanChargeFrequency = 1f;
         private Vector2 springPosition;
         private Vector2 springPositionVelocity;
         private float springRotation;
@@ -266,6 +270,20 @@ namespace AnimalGame.RobotMap
         public void SetScanZoomMultiplier(float multiplier)
         {
             scanZoomMultiplier = Mathf.Clamp(multiplier, 0.05f, 4f);
+        }
+
+        public void SetScanChargeShake(
+            float strength,
+            float positionAmplitude,
+            float rotationAmplitudeDegrees,
+            float frequency)
+        {
+            scanChargeShakeStrength = Mathf.Clamp01(strength);
+            scanChargePositionAmplitude = Mathf.Max(0f, positionAmplitude);
+            scanChargeRotationAmplitude = Mathf.Max(
+                0f,
+                rotationAmplitudeDegrees);
+            scanChargeFrequency = Mathf.Max(0.1f, frequency);
         }
 
         public void Initialize(
@@ -474,7 +492,10 @@ namespace AnimalGame.RobotMap
             continuousPosition = Vector2.zero;
             continuousRotation = 0f;
             if (mover == null)
+            {
+                AddScanChargeVibration();
                 return;
+            }
 
             Vector2 velocity = GetCurrentWorldVelocity();
             float speed = velocity.magnitude;
@@ -499,7 +520,10 @@ namespace AnimalGame.RobotMap
                 speedProgress,
                 balanceMagnitude * stationaryBalanceVibrationStrength);
             if (baseStrength <= 0f)
+            {
+                AddScanChargeVibration();
                 return;
+            }
 
             SlopeTraversalResult traversal = mover.CurrentTraversalResult;
             float slopeMultiplier = 1f;
@@ -553,6 +577,28 @@ namespace AnimalGame.RobotMap
             continuousRotation = noiseRotation
                                  * driveRotationAmplitude
                                  * amplitude;
+            AddScanChargeVibration();
+        }
+
+        private void AddScanChargeVibration()
+        {
+            if (scanChargeShakeStrength <= 0f)
+                return;
+
+            float time = Time.time * scanChargeFrequency;
+            float noiseX = SignedPerlin(noiseSeedX + 173.4f, time);
+            float noiseY = SignedPerlin(
+                noiseSeedY + 291.7f,
+                time * 0.87f);
+            float noiseRotation = SignedPerlin(
+                noiseSeedRotation + 419.2f,
+                time * 0.71f);
+            continuousPosition += new Vector2(noiseX, noiseY)
+                                  * scanChargePositionAmplitude
+                                  * scanChargeShakeStrength;
+            continuousRotation += noiseRotation
+                                  * scanChargeRotationAmplitude
+                                  * scanChargeShakeStrength;
         }
 
         private void AddDirectionalImpact(
@@ -953,6 +999,7 @@ namespace AnimalGame.RobotMap
             ResetShakeState();
             StopGamepadRumble();
             scanZoomMultiplier = 1f;
+            SetScanChargeShake(0f, 0f, 0f, 1f);
             if (attachedCamera != null)
                 attachedCamera.orthographicSize = baseOrthographicSize;
         }

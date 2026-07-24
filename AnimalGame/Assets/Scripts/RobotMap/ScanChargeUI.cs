@@ -8,10 +8,8 @@ namespace AnimalGame.RobotMap
 {
     /// <summary>
     /// Drives the authored Scan_Idle, Scan_Hold, and Scan_Release sprite clips,
-    /// plus an outward release ring centred on the robot.
+    /// plus an outward release ring centred on the fixed player UI.
     /// </summary>
-    // Camera follow and camera shake finish in LateUpdate at orders 200/250.
-    // Projecting the robot after them prevents the scan ring lagging by one frame.
     [DefaultExecutionOrder(300)]
     [DisallowMultipleComponent]
     [RequireComponent(typeof(Animator))]
@@ -93,6 +91,22 @@ namespace AnimalGame.RobotMap
         [Tooltip("Seconds used to return to the original size when charging is cancelled before completion.")]
         [SerializeField, Min(0.01f)] private float cancelledChargeZoomReturnDuration = 0.2f;
 
+        [Header("Fully Charged Camera Shake")]
+        [Tooltip("Adds a continuous camera vibration while a fully charged scan is still being held.")]
+        [SerializeField] private bool enableFullyChargedCameraShake = true;
+
+        [Tooltip("Seconds for the fully charged vibration to build from zero to full strength.")]
+        [SerializeField, Min(0.01f)] private float fullyChargedShakeBuildUpDuration = 0.4f;
+
+        [Tooltip("Maximum camera position vibration caused by holding a fully charged scan, in world units.")]
+        [SerializeField, Min(0f)] private float fullyChargedShakePositionAmplitude = 0.035f;
+
+        [Tooltip("Maximum camera rotation vibration caused by holding a fully charged scan, in degrees.")]
+        [SerializeField, Min(0f)] private float fullyChargedShakeRotationAmplitude = 0.45f;
+
+        [Tooltip("Frequency of the fully charged scan vibration.")]
+        [SerializeField, Min(0.1f)] private float fullyChargedShakeFrequency = 4.5f;
+
         [Header("Scan Ring")]
         [Tooltip("Shows the outward-release scan ring.")]
         [SerializeField] private bool showScanRing = true;
@@ -100,7 +114,7 @@ namespace AnimalGame.RobotMap
         [Tooltip("Final release-ring radius at the main UI boundary, in reference-canvas pixels.")]
         [SerializeField, Min(8f)] private float uiRingRadiusPixels = 430f;
 
-        [Tooltip("Initial release-ring radius around the robot body, in reference-canvas pixels.")]
+        [Tooltip("Initial release-ring radius at the fixed player UI centre, in reference-canvas pixels.")]
         [SerializeField, Min(1f)] private float robotRingRadiusPixels = 43f;
 
         [Tooltip("Thickness of the scan ring in reference-canvas pixels.")]
@@ -129,9 +143,9 @@ namespace AnimalGame.RobotMap
         private float releaseZoomStartSize = 9f;
         private float cancelledZoomStartSize = 9f;
         private float cancelledZoomElapsed;
+        private float fullyChargedShakeElapsed;
 
         private Camera mapCamera;
-        private Transform robotTarget;
         private RectTransform ringCoordinateSpace;
         private ScanPulseRingGraphic ringGraphic;
 
@@ -219,11 +233,12 @@ namespace AnimalGame.RobotMap
 
             UpdateScanCameraZoom(deltaTime);
             ApplyScanCameraZoom();
+            UpdateFullyChargedCameraShake(scanHeld, deltaTime);
         }
 
         private void LateUpdate()
         {
-            UpdateRingScreenPosition();
+            PinRingToPlayerUiCenter();
         }
 
         private void BeginCharge()
@@ -232,6 +247,7 @@ namespace AnimalGame.RobotMap
             state = ScanVisualState.Charging;
             chargeElapsed = 0f;
             releaseElapsed = 0f;
+            fullyChargedShakeElapsed = 0f;
             chargeZoomStartSize = currentScanOrthographicSize;
             cameraZoomPhase = ScanCameraZoomPhase.Charging;
             HideScanRing();
@@ -248,6 +264,7 @@ namespace AnimalGame.RobotMap
 
         private void BeginRelease()
         {
+            ClearFullyChargedCameraShake();
             state = ScanVisualState.Releasing;
             releaseElapsed = 0f;
             releaseRingElapsed = 0f;
@@ -386,6 +403,42 @@ namespace AnimalGame.RobotMap
             ApplyScanCameraZoom();
         }
 
+        private void UpdateFullyChargedCameraShake(
+            bool scanHeld,
+            float deltaTime)
+        {
+            ResolveTrackingReferences();
+            bool shouldShake = enableFullyChargedCameraShake
+                               && scanHeld
+                               && state == ScanVisualState.Charged;
+            if (!shouldShake)
+            {
+                ClearFullyChargedCameraShake();
+                return;
+            }
+
+            fullyChargedShakeElapsed += Mathf.Max(0f, deltaTime);
+            float buildUp01 = Mathf.Clamp01(
+                fullyChargedShakeElapsed
+                / Mathf.Max(0.01f, fullyChargedShakeBuildUpDuration));
+            float strength = Mathf.SmoothStep(0f, 1f, buildUp01);
+            if (cameraShake != null)
+            {
+                cameraShake.SetScanChargeShake(
+                    strength,
+                    fullyChargedShakePositionAmplitude,
+                    fullyChargedShakeRotationAmplitude,
+                    fullyChargedShakeFrequency);
+            }
+        }
+
+        private void ClearFullyChargedCameraShake()
+        {
+            fullyChargedShakeElapsed = 0f;
+            if (cameraShake != null)
+                cameraShake.SetScanChargeShake(0f, 0f, 0f, 1f);
+        }
+
         private void UpdateReleaseRing(float deltaTime)
         {
             if (ringPhase == ScanRingPhase.ExpansionComplete)
@@ -467,43 +520,15 @@ namespace AnimalGame.RobotMap
             ringObject.SetActive(false);
         }
 
-        private void UpdateRingScreenPosition()
+        private void PinRingToPlayerUiCenter()
         {
             if (ringGraphic == null || !ringGraphic.gameObject.activeSelf)
                 return;
 
-            ResolveTrackingReferences();
-            if (mapCamera == null
-                || robotTarget == null
-                || ringCoordinateSpace == null)
-            {
-                ringGraphic.rectTransform.anchoredPosition = Vector2.zero;
-                return;
-            }
-
-            Vector3 screenPosition = mapCamera.WorldToScreenPoint(
-                robotTarget.position);
-            if (screenPosition.z <= 0f)
-            {
-                ringGraphic.enabled = false;
-                return;
-            }
-
+            // Scan Activation Controls stretches across the canvas with a
+            // centred pivot, so zero is the stable centre of the player UI.
             ringGraphic.enabled = true;
-            Canvas parentCanvas = GetComponentInParent<Canvas>();
-            Camera uiCamera = parentCanvas != null
-                              && parentCanvas.renderMode
-                              != RenderMode.ScreenSpaceOverlay
-                ? parentCanvas.worldCamera
-                : null;
-            if (RectTransformUtility.ScreenPointToLocalPointInRectangle(
-                    ringCoordinateSpace,
-                    screenPosition,
-                    uiCamera,
-                    out Vector2 localPosition))
-            {
-                ringGraphic.rectTransform.anchoredPosition = localPosition;
-            }
+            ringGraphic.rectTransform.anchoredPosition = Vector2.zero;
         }
 
         private void ResolveTrackingReferences()
@@ -514,7 +539,10 @@ namespace AnimalGame.RobotMap
                 if (resolvedCamera != mapCamera)
                 {
                     if (cameraShake != null)
+                    {
                         cameraShake.SetScanZoomMultiplier(1f);
+                        cameraShake.SetScanChargeShake(0f, 0f, 0f, 1f);
+                    }
                     mapCamera = resolvedCamera;
                     cameraShake = null;
                     cameraZoomInitialized = false;
@@ -534,14 +562,6 @@ namespace AnimalGame.RobotMap
                 cameraZoomInitialized = true;
             }
 
-            if (robotTarget != null)
-                return;
-
-#pragma warning disable CS0618
-            RobotMover robot = FindObjectOfType<RobotMover>();
-#pragma warning restore CS0618
-            if (robot != null)
-                robotTarget = robot.transform;
         }
 
         private void SampleAuthoredState(int stateHash, float normalizedTime)
@@ -612,6 +632,7 @@ namespace AnimalGame.RobotMap
             if (animator != null)
                 animator.speed = 0f;
             HideScanRing();
+            ClearFullyChargedCameraShake();
             ResetScanCameraZoomImmediate();
         }
 
@@ -637,6 +658,18 @@ namespace AnimalGame.RobotMap
             cancelledChargeZoomReturnDuration = Mathf.Max(
                 0.01f,
                 cancelledChargeZoomReturnDuration);
+            fullyChargedShakeBuildUpDuration = Mathf.Max(
+                0.01f,
+                fullyChargedShakeBuildUpDuration);
+            fullyChargedShakePositionAmplitude = Mathf.Max(
+                0f,
+                fullyChargedShakePositionAmplitude);
+            fullyChargedShakeRotationAmplitude = Mathf.Max(
+                0f,
+                fullyChargedShakeRotationAmplitude);
+            fullyChargedShakeFrequency = Mathf.Max(
+                0.1f,
+                fullyChargedShakeFrequency);
             uiRingRadiusPixels = Mathf.Max(8f, uiRingRadiusPixels);
             robotRingRadiusPixels = Mathf.Clamp(
                 robotRingRadiusPixels,
