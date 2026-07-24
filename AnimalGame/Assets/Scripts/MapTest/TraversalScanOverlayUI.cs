@@ -15,6 +15,14 @@ namespace AnimalGame.MapTest
     [DisallowMultipleComponent]
     public sealed class TraversalScanOverlayUI : MonoBehaviour
     {
+        private enum PeriodicRefreshVisualPhase
+        {
+            None,
+            FadingOut,
+            WaitingForEvaluation,
+            FadingIn
+        }
+
         [Header("Sign Assets")]
         [SerializeField] private Sprite passableSign;
         [SerializeField] private Sprite unpassableSign;
@@ -49,6 +57,32 @@ namespace AnimalGame.MapTest
         [Tooltip("Maximum marker states re-evaluated in one frame when a refresh is due.")]
         [SerializeField, Range(1, 512)] private int refreshCalculationsPerFrame = 96;
 
+        [Header("Refresh Breathing Visual")]
+        [Tooltip("Seconds used to breathe all signs down toward the map background before a scheduled refresh is committed.")]
+        [SerializeField, Min(0.02f)] private float periodicFadeOutSeconds = 0.28f;
+
+        [Tooltip("Seconds used to breathe all signs back into view after a scheduled refresh.")]
+        [SerializeField, Min(0.02f)] private float periodicFadeInSeconds = 0.38f;
+
+        [Tooltip("Opacity retained at the weakest point of a refresh breath.")]
+        [SerializeField, Range(0f, 1f)] private float refreshMinimumAlpha = 0.04f;
+
+        [Tooltip("Fade-out time for one sign whose state changes because the robot moved.")]
+        [SerializeField, Min(0.02f)] private float changedStateFadeOutSeconds = 0.14f;
+
+        [Tooltip("Fade-in time for one sign after its passable/unpassable sprite changes.")]
+        [SerializeField, Min(0.02f)] private float changedStateFadeInSeconds = 0.24f;
+
+        [Header("Real-time Robot-relative Recheck")]
+        [Tooltip("Robot map distance that requests an immediate passability recheck. Unpassable signs are processed first.")]
+        [SerializeField, Min(0.01f)] private float realtimeMoveThresholdMeters = 0.35f;
+
+        [Tooltip("Minimum time between movement-triggered recheck passes.")]
+        [SerializeField, Min(0.02f)] private float realtimeRecheckMinimumInterval = 0.08f;
+
+        [Tooltip("Maximum robot-relative path checks performed per frame. Higher values react sooner but cost more CPU time.")]
+        [SerializeField, Range(1, 512)] private int realtimeRechecksPerFrame = 64;
+
         [Tooltip("Maximum new terrain samples evaluated in one frame while the release wave expands.")]
         [SerializeField, Range(1, 512)] private int scanCalculationsPerFrame = 128;
 
@@ -76,6 +110,10 @@ namespace AnimalGame.MapTest
             public Vector2 MapPosition;
             public Vector2 EvaluationDirection;
             public bool IsPassable;
+            public bool PendingIsPassable;
+            public bool IndividualRefreshActive;
+            public bool IndividualSpriteCommitted;
+            public float IndividualRefreshStartedAt;
         }
 
         private readonly List<PendingScreenSample> pendingSamples =
@@ -86,6 +124,7 @@ namespace AnimalGame.MapTest
         private readonly List<PersistentMarker> markers =
             new List<PersistentMarker>();
         private readonly List<Image> pooledImages = new List<Image>();
+        private readonly List<int> realtimeRecheckOrder = new List<int>();
 
         private MapTestSceneController map;
         private HeightMapTraversalEvaluator evaluator;
@@ -104,6 +143,14 @@ namespace AnimalGame.MapTest
         private float nextStateRefreshAt;
         private bool scanIsRevealing;
         private bool refreshInProgress;
+        private PeriodicRefreshVisualPhase periodicRefreshPhase;
+        private float periodicRefreshPhaseStartedAt;
+        private int nextRealtimeRecheck;
+        private float nextRealtimeRecheckAllowedAt;
+        private Vector2 lastRealtimeRobotMapPosition;
+        private bool hasRealtimeRobotPosition;
+        private bool realtimeRecheckInProgress;
+        private bool realtimeRecheckRequested;
 
         public int VisibleMarkerCount => markers.Count;
         public bool HasActiveSnapshot => scanIsRevealing || markers.Count > 0;
@@ -147,12 +194,18 @@ namespace AnimalGame.MapTest
                 return;
 
             if (scanIsRevealing)
+            {
                 RevealScanWave();
-            else
-                UpdatePersistentSnapshot();
+                return;
+            }
+
+            UpdatePersistentSnapshot();
 
             if (refreshInProgress)
                 ProcessRefreshBatch();
+
+            UpdatePeriodicRefreshVisual();
+            UpdateRealtimeRechecks();
         }
 
         private void LateUpdate()
@@ -253,6 +306,10 @@ namespace AnimalGame.MapTest
                                 + Mathf.Max(0.1f, markerLifetimeSeconds);
             nextStateRefreshAt = Time.unscaledTime
                                  + Mathf.Max(0.05f, stateRefreshIntervalSeconds);
+            if (TryGetRobotMapPosition(out Vector2 currentRobotMapPosition))
+                BeginRealtimeRecheck(currentRobotMapPosition);
+            else
+                CaptureRealtimeRobotPosition();
         }
 
         private void SampleScreenCandidate(PendingScreenSample pending)
@@ -348,11 +405,17 @@ namespace AnimalGame.MapTest
                 return;
 
             candidate.IsSelected = true;
+            SlopeTraversalResult robotRelativeResult =
+                EvaluateFromRobot(candidate.MapPosition);
+            bool displayedPassability = robotRelativeResult.HasData
+                ? robotRelativeResult.IsPassable
+                : candidate.IsPassable;
             markers.Add(new PersistentMarker
             {
                 MapPosition = candidate.MapPosition,
                 EvaluationDirection = candidate.EvaluationDirection,
-                IsPassable = candidate.IsPassable
+                IsPassable = displayedPassability,
+                PendingIsPassable = displayedPassability
             });
             EnsureImagePool(markers.Count);
         }
@@ -434,11 +497,24 @@ namespace AnimalGame.MapTest
                 return;
             }
 
-            if (!refreshInProgress
+            if (periodicRefreshPhase == PeriodicRefreshVisualPhase.None
                 && Time.unscaledTime >= nextStateRefreshAt)
+                BeginPeriodicRefresh();
+        }
+
+        private void BeginPeriodicRefresh()
+        {
+            realtimeRecheckInProgress = false;
+            realtimeRecheckRequested = false;
+            realtimeRecheckOrder.Clear();
+            refreshInProgress = true;
+            nextRefreshMarker = 0;
+            periodicRefreshPhase = PeriodicRefreshVisualPhase.FadingOut;
+            periodicRefreshPhaseStartedAt = Time.unscaledTime;
+            for (int index = 0; index < markers.Count; index++)
             {
-                refreshInProgress = true;
-                nextRefreshMarker = 0;
+                markers[index].PendingIsPassable = markers[index].IsPassable;
+                markers[index].IndividualRefreshActive = false;
             }
         }
 
@@ -449,11 +525,9 @@ namespace AnimalGame.MapTest
                    && processed < refreshCalculationsPerFrame)
             {
                 PersistentMarker marker = markers[nextRefreshMarker++];
-                SlopeTraversalResult result = EvaluateAt(
-                    marker.MapPosition,
-                    marker.EvaluationDirection);
+                SlopeTraversalResult result = EvaluateFromRobot(marker.MapPosition);
                 if (result.HasData)
-                    marker.IsPassable = result.IsPassable;
+                    marker.PendingIsPassable = result.IsPassable;
                 processed++;
             }
 
@@ -461,10 +535,229 @@ namespace AnimalGame.MapTest
                 return;
 
             refreshInProgress = false;
-            nextStateRefreshAt = Time.unscaledTime
-                                 + Mathf.Max(0.05f, stateRefreshIntervalSeconds);
+            if (periodicRefreshPhase
+                == PeriodicRefreshVisualPhase.WaitingForEvaluation)
+            {
+                CommitPeriodicRefreshAtTrough();
+            }
         }
 
+        private void UpdatePeriodicRefreshVisual()
+        {
+            switch (periodicRefreshPhase)
+            {
+                case PeriodicRefreshVisualPhase.FadingOut:
+                    if (Time.unscaledTime - periodicRefreshPhaseStartedAt
+                        < periodicFadeOutSeconds)
+                    {
+                        return;
+                    }
+
+                    if (refreshInProgress)
+                    {
+                        periodicRefreshPhase =
+                            PeriodicRefreshVisualPhase.WaitingForEvaluation;
+                    }
+                    else
+                    {
+                        CommitPeriodicRefreshAtTrough();
+                    }
+                    break;
+
+                case PeriodicRefreshVisualPhase.WaitingForEvaluation:
+                    if (!refreshInProgress)
+                        CommitPeriodicRefreshAtTrough();
+                    break;
+
+                case PeriodicRefreshVisualPhase.FadingIn:
+                    if (Time.unscaledTime - periodicRefreshPhaseStartedAt
+                        >= periodicFadeInSeconds)
+                    {
+                        periodicRefreshPhase = PeriodicRefreshVisualPhase.None;
+                        nextStateRefreshAt = Time.unscaledTime
+                                             + Mathf.Max(
+                                                 0.05f,
+                                                 stateRefreshIntervalSeconds);
+                        CaptureRealtimeRobotPosition();
+                    }
+                    break;
+            }
+        }
+
+        private void CommitPeriodicRefreshAtTrough()
+        {
+            for (int index = 0; index < markers.Count; index++)
+            {
+                PersistentMarker marker = markers[index];
+                marker.IsPassable = marker.PendingIsPassable;
+                marker.IndividualRefreshActive = false;
+            }
+
+            periodicRefreshPhase = PeriodicRefreshVisualPhase.FadingIn;
+            periodicRefreshPhaseStartedAt = Time.unscaledTime;
+        }
+
+        private SlopeTraversalResult EvaluateFromRobot(Vector2 targetMapPosition)
+        {
+            return TryGetRobotMapPosition(out Vector2 robotMapPosition)
+                ? evaluator.EvaluateMapPath(robotMapPosition, targetMapPosition)
+                : SlopeTraversalResult.NoData;
+        }
+
+        private bool TryGetRobotMapPosition(out Vector2 robotMapPosition)
+        {
+            robotMapPosition = default;
+            return robot != null
+                   && map.TrySampleWorldPosition(
+                       robot.transform.position,
+                       out robotMapPosition,
+                       out _);
+        }
+
+        private void CaptureRealtimeRobotPosition()
+        {
+            if (!TryGetRobotMapPosition(out lastRealtimeRobotMapPosition))
+            {
+                hasRealtimeRobotPosition = false;
+                return;
+            }
+
+            hasRealtimeRobotPosition = true;
+        }
+
+        private void UpdateRealtimeRechecks()
+        {
+            if (markers.Count == 0
+                || periodicRefreshPhase != PeriodicRefreshVisualPhase.None
+                || refreshInProgress
+                || !TryGetRobotMapPosition(out Vector2 currentRobotMapPosition))
+            {
+                return;
+            }
+
+            if (!hasRealtimeRobotPosition)
+            {
+                lastRealtimeRobotMapPosition = currentRobotMapPosition;
+                hasRealtimeRobotPosition = true;
+            }
+
+            float movementThresholdSquared = realtimeMoveThresholdMeters
+                                             * realtimeMoveThresholdMeters;
+            if ((currentRobotMapPosition - lastRealtimeRobotMapPosition).sqrMagnitude
+                >= movementThresholdSquared)
+            {
+                if (realtimeRecheckInProgress
+                    || Time.unscaledTime < nextRealtimeRecheckAllowedAt)
+                {
+                    realtimeRecheckRequested = true;
+                }
+                else
+                {
+                    BeginRealtimeRecheck(currentRobotMapPosition);
+                }
+            }
+
+            if (!realtimeRecheckInProgress
+                && realtimeRecheckRequested
+                && Time.unscaledTime >= nextRealtimeRecheckAllowedAt)
+            {
+                BeginRealtimeRecheck(currentRobotMapPosition);
+            }
+
+            if (!realtimeRecheckInProgress)
+                return;
+
+            int processed = 0;
+            while (nextRealtimeRecheck < realtimeRecheckOrder.Count
+                   && processed < realtimeRechecksPerFrame)
+            {
+                PersistentMarker marker =
+                    markers[realtimeRecheckOrder[nextRealtimeRecheck++]];
+                SlopeTraversalResult result = evaluator.EvaluateMapPath(
+                    currentRobotMapPosition,
+                    marker.MapPosition);
+                if (result.HasData)
+                    ApplyRealtimeResult(marker, result.IsPassable);
+                processed++;
+            }
+
+            if (nextRealtimeRecheck < realtimeRecheckOrder.Count)
+                return;
+
+            realtimeRecheckInProgress = false;
+            realtimeRecheckOrder.Clear();
+        }
+
+        private void BeginRealtimeRecheck(Vector2 currentRobotMapPosition)
+        {
+            realtimeRecheckOrder.Clear();
+            for (int index = 0; index < markers.Count; index++)
+                realtimeRecheckOrder.Add(index);
+
+            // Previously unpassable signs are checked first so a route that became
+            // possible reacts with the shortest latency. Distance breaks ties.
+            realtimeRecheckOrder.Sort((leftIndex, rightIndex) =>
+            {
+                PersistentMarker left = markers[leftIndex];
+                PersistentMarker right = markers[rightIndex];
+                if (left.IsPassable != right.IsPassable)
+                    return left.IsPassable ? 1 : -1;
+
+                float leftDistance =
+                    (left.MapPosition - currentRobotMapPosition).sqrMagnitude;
+                float rightDistance =
+                    (right.MapPosition - currentRobotMapPosition).sqrMagnitude;
+                return leftDistance.CompareTo(rightDistance);
+            });
+
+            nextRealtimeRecheck = 0;
+            realtimeRecheckInProgress = realtimeRecheckOrder.Count > 0;
+            realtimeRecheckRequested = false;
+            lastRealtimeRobotMapPosition = currentRobotMapPosition;
+            hasRealtimeRobotPosition = true;
+            nextRealtimeRecheckAllowedAt = Time.unscaledTime
+                                           + Mathf.Max(
+                                               0.02f,
+                                               realtimeRecheckMinimumInterval);
+        }
+
+        private void BeginIndividualStateRefresh(
+            PersistentMarker marker,
+            bool newPassability)
+        {
+            if (marker.IndividualRefreshActive
+                && marker.PendingIsPassable == newPassability)
+            {
+                return;
+            }
+
+            marker.PendingIsPassable = newPassability;
+            marker.IndividualRefreshActive = true;
+            marker.IndividualSpriteCommitted = false;
+            marker.IndividualRefreshStartedAt = Time.unscaledTime;
+        }
+        private void ApplyRealtimeResult(
+            PersistentMarker marker,
+            bool newPassability)
+        {
+            if (!marker.IndividualRefreshActive)
+            {
+                if (newPassability != marker.IsPassable)
+                    BeginIndividualStateRefresh(marker, newPassability);
+                return;
+            }
+
+            if (!marker.IndividualSpriteCommitted
+                && newPassability == marker.IsPassable)
+            {
+                marker.PendingIsPassable = marker.IsPassable;
+                marker.IndividualRefreshActive = false;
+                return;
+            }
+
+            if (newPassability != marker.PendingIsPassable)
+                BeginIndividualStateRefresh(marker, newPassability);
+        }
         private bool TryProjectScreenPointToMap(
             Vector2 screenPosition,
             out Vector2 mapPosition)
@@ -484,6 +777,68 @@ namespace AnimalGame.MapTest
             return map.TrySampleWorldPosition(worldPosition, out mapPosition, out _);
         }
 
+        private float GetPeriodicRefreshVisibility()
+        {
+            float elapsed = Time.unscaledTime - periodicRefreshPhaseStartedAt;
+            switch (periodicRefreshPhase)
+            {
+                case PeriodicRefreshVisualPhase.FadingOut:
+                    return 1f - Mathf.SmoothStep(
+                        0f,
+                        1f,
+                        Mathf.Clamp01(elapsed / periodicFadeOutSeconds));
+                case PeriodicRefreshVisualPhase.WaitingForEvaluation:
+                    return 0f;
+                case PeriodicRefreshVisualPhase.FadingIn:
+                    return Mathf.SmoothStep(
+                        0f,
+                        1f,
+                        Mathf.Clamp01(elapsed / periodicFadeInSeconds));
+                default:
+                    return 1f;
+            }
+        }
+
+        private float GetIndividualRefreshVisibility(PersistentMarker marker)
+        {
+            if (!marker.IndividualRefreshActive)
+                return 1f;
+
+            float elapsed = Time.unscaledTime - marker.IndividualRefreshStartedAt;
+            if (elapsed < changedStateFadeOutSeconds)
+            {
+                return 1f - Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    Mathf.Clamp01(elapsed / changedStateFadeOutSeconds));
+            }
+
+            if (!marker.IndividualSpriteCommitted)
+            {
+                marker.IsPassable = marker.PendingIsPassable;
+                marker.IndividualSpriteCommitted = true;
+            }
+
+            float fadeInElapsed = elapsed - changedStateFadeOutSeconds;
+            if (fadeInElapsed < changedStateFadeInSeconds)
+            {
+                return Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    Mathf.Clamp01(fadeInElapsed / changedStateFadeInSeconds));
+            }
+
+            marker.IndividualRefreshActive = false;
+            return 1f;
+        }
+
+        private Color GetRefreshColor(float visibility)
+        {
+            float amount = Mathf.Clamp01(visibility);
+            Color color = Color.Lerp(map.BackgroundColor, Color.white, amount);
+            color.a = Mathf.Lerp(refreshMinimumAlpha, 1f, amount);
+            return color;
+        }
         private void RenderMarkers()
         {
             if (overlayRoot == null || mapCamera == null)
@@ -500,6 +855,7 @@ namespace AnimalGame.MapTest
                                + iconSizePixels * 0.70710678f) * exclusionScale;
             float exclusionSquared = exclusion * exclusion;
             int imageIndex = 0;
+            float periodicVisibility = GetPeriodicRefreshVisibility();
 
             for (int markerIndex = 0; markerIndex < markers.Count; markerIndex++)
             {
@@ -525,6 +881,11 @@ namespace AnimalGame.MapTest
 
                 EnsureImagePool(imageIndex + 1);
                 Image image = pooledImages[imageIndex++];
+                float individualVisibility =
+                    GetIndividualRefreshVisibility(marker);
+                float visibility = Mathf.Min(
+                    periodicVisibility,
+                    individualVisibility);
                 Sprite sprite = marker.IsPassable
                     ? passableSign
                     : unpassableSign;
@@ -536,7 +897,7 @@ namespace AnimalGame.MapTest
                 rect.localRotation = Quaternion.identity;
                 rect.localScale = Vector3.one;
                 image.sprite = sprite;
-                image.color = Color.white;
+                image.color = GetRefreshColor(visibility);
                 image.enabled = sprite != null;
             }
 
@@ -600,6 +961,14 @@ namespace AnimalGame.MapTest
             nextRefreshMarker = 0;
             scanIsRevealing = false;
             refreshInProgress = false;
+            periodicRefreshPhase = PeriodicRefreshVisualPhase.None;
+            periodicRefreshPhaseStartedAt = 0f;
+            realtimeRecheckOrder.Clear();
+            nextRealtimeRecheck = 0;
+            nextRealtimeRecheckAllowedAt = 0f;
+            hasRealtimeRobotPosition = false;
+            realtimeRecheckInProgress = false;
+            realtimeRecheckRequested = false;
             snapshotExpiresAt = 0f;
             nextStateRefreshAt = 0f;
             for (int index = 0; index < pooledImages.Count; index++)
@@ -649,6 +1018,25 @@ namespace AnimalGame.MapTest
                 stateRefreshIntervalSeconds);
             refreshCalculationsPerFrame = Mathf.Clamp(
                 refreshCalculationsPerFrame,
+                1,
+                512);
+            periodicFadeOutSeconds = Mathf.Max(0.02f, periodicFadeOutSeconds);
+            periodicFadeInSeconds = Mathf.Max(0.02f, periodicFadeInSeconds);
+            refreshMinimumAlpha = Mathf.Clamp01(refreshMinimumAlpha);
+            changedStateFadeOutSeconds = Mathf.Max(
+                0.02f,
+                changedStateFadeOutSeconds);
+            changedStateFadeInSeconds = Mathf.Max(
+                0.02f,
+                changedStateFadeInSeconds);
+            realtimeMoveThresholdMeters = Mathf.Max(
+                0.01f,
+                realtimeMoveThresholdMeters);
+            realtimeRecheckMinimumInterval = Mathf.Max(
+                0.02f,
+                realtimeRecheckMinimumInterval);
+            realtimeRechecksPerFrame = Mathf.Clamp(
+                realtimeRechecksPerFrame,
                 1,
                 512);
             scanCalculationsPerFrame = Mathf.Clamp(

@@ -97,6 +97,7 @@ namespace AnimalGame.MapTest
         public Vector2 MapSizeMeters => new Vector2(mapWidthMeters, mapHeightMeters);
         public BakedHeightField HeightField => heightField;
         public float ContourIntervalMeters => contourIntervalMeters;
+        public Color BackgroundColor => backgroundColor;
 
         public bool HasGeneratedMap => mapRenderer != null && heightField != null;
 

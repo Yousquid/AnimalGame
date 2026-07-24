@@ -46,15 +46,23 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   passableSign: {fileID: 21300000, guid: 09afb4a9ddcfe754a9842e74d23fabc1, type: 3}
   unpassableSign: {fileID: 21300000, guid: 5b377b0df7e4966488a1c33711fe4ed8, type: 3}
-  sampleGridSpacingPixels: 32
-  contourBoundaryHalfWidthMeters: 3
+  sampleGridSpacingPixels: 64
+  contourBoundaryHalfWidthMeters: 6
   terrainGradientProbeMeters: 1.5
   centerExclusionRadiusPixels: 40
-  maximumScannedSigns: 700
+  maximumScannedSigns: 300
   unpassableNeighborhoodRadiusMeters: 8
-  markerLifetimeSeconds: 8
+  markerLifetimeSeconds: 3.5
   stateRefreshIntervalSeconds: 0.75
   refreshCalculationsPerFrame: 96
+  periodicFadeOutSeconds: 0.28
+  periodicFadeInSeconds: 0.38
+  refreshMinimumAlpha: 0.04
+  changedStateFadeOutSeconds: 0.14
+  changedStateFadeInSeconds: 0.24
+  realtimeMoveThresholdMeters: 0.35
+  realtimeRecheckMinimumInterval: 0.08
+  realtimeRechecksPerFrame: 64
   scanCalculationsPerFrame: 128
-  iconSizePixels: 8
+  iconSizePixels: 16
   canvasSortingOrder: 21
