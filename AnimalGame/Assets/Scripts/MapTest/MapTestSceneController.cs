@@ -44,6 +44,9 @@ namespace AnimalGame.MapTest
         [Tooltip("Generated preview pixels per Unity world unit. Together with Preview Resolution, this determines the rendered map object's world-space size, not its logical meter size.")]
         [SerializeField, Min(1f)] private float pixelsPerUnit = 16f;
 
+        [Tooltip("Direct reference to the contour shader used by standalone builds. Keep this assigned so Unity includes the shader instead of stripping a Shader.Find-only dependency.")]
+        [SerializeField] private Shader dynamicContourShader;
+
         [Header("Viewport Contours")]
         [Tooltip("Width of the lowest contour currently visible in the camera.")]
         [SerializeField, Range(0.1f, 10f)] private float minimumContourWidth = 0.75f;
@@ -376,10 +379,16 @@ namespace AnimalGame.MapTest
 
         private void CreateDynamicContourMaterial()
         {
-            Shader shader = Shader.Find("AnimalGame/Dynamic Height Contours");
+            Shader shader = dynamicContourShader != null
+                ? dynamicContourShader
+                : Shader.Find("AnimalGame/Dynamic Height Contours");
             if (shader == null)
             {
-                Debug.LogError("Missing shader: AnimalGame/Dynamic Height Contours");
+                Debug.LogError(
+                    "Missing shader: AnimalGame/Dynamic Height Contours. " +
+                    "Assign Dynamic Contour Shader on the map prefab so standalone " +
+                    "builds keep the shader.",
+                    this);
                 return;
             }
 

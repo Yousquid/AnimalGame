@@ -55,6 +55,7 @@ MonoBehaviour:
   previewResolution: 2160
   contourIntervalMeters: 8
   pixelsPerUnit: 32
+  dynamicContourShader: {fileID: 4800000, guid: 66c17e2481f6472cb3cd86fe63c9f57a, type: 3}
   minimumContourWidth: 0.7
   maximumContourWidth: 3.68
   maximumContourCoverage: 0.3

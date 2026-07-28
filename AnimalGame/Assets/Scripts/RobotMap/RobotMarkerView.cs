@@ -12,6 +12,13 @@ namespace AnimalGame.RobotMap
         [SerializeField, Min(0.1f)] private float bodyDiameter = 0.72f;
         [Tooltip("Visible ring diameter in the source robot_body sprite, excluding transparent padding.")]
         [SerializeField, Min(1f)] private float bodyArtworkVisibleDiameterPixels = 85.4f;
+
+        [Tooltip("Keeps the complete robot marker at a stable pixel size when build resolution or camera zoom changes. Disable to use Body Diameter as a fixed world-space size.")]
+        [SerializeField] private bool keepMarkerSizeConstantOnScreen = true;
+
+        [Tooltip("Visible robot body diameter in rendered screen pixels while Keep Marker Size Constant On Screen is enabled.")]
+        [SerializeField, Min(1f)] private float bodyScreenDiameterPixels = 45f;
+
         [SerializeField, Range(0.1f, 1f)] private float bodyFillDiameterRatio = 1f;
         [SerializeField] private Color bodyFillColor = new Color(0.008f, 0.011f, 0.014f, 1f);
         [Tooltip("When enabled, robot_body_fill always uses the active game camera's background color. Body Fill Color remains the fallback when no camera is active.")]
@@ -79,6 +86,7 @@ namespace AnimalGame.RobotMap
         private Texture2D generatedBodyTexture;
         private Material foregroundSpriteMaterial;
         private Camera bodyFillBackgroundCamera;
+        private Camera markerSizingCamera;
         private RobotMover mover;
         private float driveBobPhase;
         private float driveBobBlend;
@@ -125,6 +133,7 @@ namespace AnimalGame.RobotMap
 
         private void Update()
         {
+            SynchronizeMarkerScreenSize();
             SynchronizeBodyFillColor();
 
             float pulse = 1f + Mathf.Sin(Time.time * 3.2f) * 0.035f;
@@ -289,6 +298,35 @@ namespace AnimalGame.RobotMap
             visualRootObject.transform.SetParent(transform, false);
             markerVisualRoot = visualRootObject.transform;
             markerVisualRoot.localPosition = new Vector3(0f, 0f, visualDepthOffset);
+        }
+
+        private void SynchronizeMarkerScreenSize()
+        {
+            if (markerVisualRoot == null)
+                return;
+
+            if (!keepMarkerSizeConstantOnScreen)
+            {
+                markerVisualRoot.localScale = Vector3.one;
+                return;
+            }
+
+            if (markerSizingCamera == null || !markerSizingCamera.isActiveAndEnabled)
+                markerSizingCamera = Camera.main;
+
+            if (markerSizingCamera == null || !markerSizingCamera.orthographic)
+            {
+                markerVisualRoot.localScale = Vector3.one;
+                return;
+            }
+
+            float renderedHeightPixels = Mathf.Max(1f, markerSizingCamera.pixelHeight);
+            float worldUnitsPerPixel =
+                markerSizingCamera.orthographicSize * 2f / renderedHeightPixels;
+            float desiredWorldDiameter =
+                bodyScreenDiameterPixels * worldUnitsPerPixel;
+            float scale = desiredWorldDiameter / Mathf.Max(0.0001f, bodyDiameter);
+            markerVisualRoot.localScale = Vector3.one * scale;
         }
 
         private void CreateForegroundSpriteMaterial()
@@ -498,6 +536,7 @@ namespace AnimalGame.RobotMap
         {
             bodyDiameter = Mathf.Max(0.1f, bodyDiameter);
             bodyArtworkVisibleDiameterPixels = Mathf.Max(1f, bodyArtworkVisibleDiameterPixels);
+            bodyScreenDiameterPixels = Mathf.Max(1f, bodyScreenDiameterPixels);
             bodyFillDiameterRatio = Mathf.Clamp(bodyFillDiameterRatio, 0.1f, 1f);
             indicatorScale = Mathf.Max(0.1f, indicatorScale);
             driveBobAmplitude = Mathf.Max(0f, driveBobAmplitude);
