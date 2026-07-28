@@ -27,6 +27,9 @@ namespace AnimalGame.MapTest
         [SerializeField] private Sprite passableSign;
         [SerializeField] private Sprite unpassableSign;
 
+        [Tooltip("Fixed screen-space Z angle for every traversal sign. Zero displays the sprite exactly as imported and never inherits robot or camera rotation.")]
+        [SerializeField] private float fixedIconScreenAngleDegrees = 0f;
+
         [Header("Scan Sampling")]
         [Tooltip("Row/column spacing of scan candidates in reference-canvas pixels. This is a regular grid, not a radial pattern.")]
         [SerializeField, Min(4f)] private float sampleGridSpacingPixels = 32f;
@@ -58,6 +61,9 @@ namespace AnimalGame.MapTest
         [SerializeField, Range(1, 512)] private int refreshCalculationsPerFrame = 96;
 
         [Header("Refresh Breathing Visual")]
+        [Tooltip("Enables the full-snapshot breathing animation during scheduled refreshes. Disabling this does not disable the scheduled passability calculation.")]
+        [SerializeField] private bool enablePeriodicRefreshBreathing = true;
+
         [Tooltip("Seconds used to breathe all signs down toward the map background before a scheduled refresh is committed.")]
         [SerializeField, Min(0.02f)] private float periodicFadeOutSeconds = 0.28f;
 
@@ -72,6 +78,9 @@ namespace AnimalGame.MapTest
 
         [Tooltip("Fade-in time for one sign after its passable/unpassable sprite changes.")]
         [SerializeField, Min(0.02f)] private float changedStateFadeInSeconds = 0.24f;
+
+        [Tooltip("Enables the individual breathing refresh when real-time robot-relative passability changes. Disabling it swaps the sign immediately.")]
+        [SerializeField] private bool enableChangedStateBreathing = true;
 
         [Header("Real-time Robot-relative Recheck")]
         [Tooltip("Robot map distance that requests an immediate passability recheck. Unpassable signs are processed first.")]
@@ -134,6 +143,8 @@ namespace AnimalGame.MapTest
         private ContourRegionIndex contourRegions;
         private ContourRegionHandle scannedClosedRegion;
         private GameObject overlayRoot;
+        private int lastCanvasRenderFrame = -1;
+        private bool canvasRenderSubscribed;
         private int nextPendingSample;
         private int nextRefreshMarker;
         private float scanStartedAt;
@@ -208,8 +219,12 @@ namespace AnimalGame.MapTest
             UpdateRealtimeRechecks();
         }
 
-        private void LateUpdate()
+        private void HandleWillRenderCanvases()
         {
+            if (lastCanvasRenderFrame == Time.frameCount)
+                return;
+
+            lastCanvasRenderFrame = Time.frameCount;
             RenderMarkers();
         }
 
@@ -509,7 +524,9 @@ namespace AnimalGame.MapTest
             realtimeRecheckOrder.Clear();
             refreshInProgress = true;
             nextRefreshMarker = 0;
-            periodicRefreshPhase = PeriodicRefreshVisualPhase.FadingOut;
+            periodicRefreshPhase = enablePeriodicRefreshBreathing
+                ? PeriodicRefreshVisualPhase.FadingOut
+                : PeriodicRefreshVisualPhase.WaitingForEvaluation;
             periodicRefreshPhaseStartedAt = Time.unscaledTime;
             for (int index = 0; index < markers.Count; index++)
             {
@@ -593,8 +610,17 @@ namespace AnimalGame.MapTest
                 marker.IndividualRefreshActive = false;
             }
 
-            periodicRefreshPhase = PeriodicRefreshVisualPhase.FadingIn;
-            periodicRefreshPhaseStartedAt = Time.unscaledTime;
+            if (enablePeriodicRefreshBreathing)
+            {
+                periodicRefreshPhase = PeriodicRefreshVisualPhase.FadingIn;
+                periodicRefreshPhaseStartedAt = Time.unscaledTime;
+                return;
+            }
+
+            periodicRefreshPhase = PeriodicRefreshVisualPhase.None;
+            nextStateRefreshAt = Time.unscaledTime
+                                 + Mathf.Max(0.05f, stateRefreshIntervalSeconds);
+            CaptureRealtimeRobotPosition();
         }
 
         private SlopeTraversalResult EvaluateFromRobot(Vector2 targetMapPosition)
@@ -725,6 +751,15 @@ namespace AnimalGame.MapTest
             PersistentMarker marker,
             bool newPassability)
         {
+            if (!enableChangedStateBreathing)
+            {
+                marker.IsPassable = newPassability;
+                marker.PendingIsPassable = newPassability;
+                marker.IndividualRefreshActive = false;
+                marker.IndividualSpriteCommitted = true;
+                return;
+            }
+
             if (marker.IndividualRefreshActive
                 && marker.PendingIsPassable == newPassability)
             {
@@ -779,6 +814,9 @@ namespace AnimalGame.MapTest
 
         private float GetPeriodicRefreshVisibility()
         {
+            if (!enablePeriodicRefreshBreathing)
+                return 1f;
+
             float elapsed = Time.unscaledTime - periodicRefreshPhaseStartedAt;
             switch (periodicRefreshPhase)
             {
@@ -844,6 +882,9 @@ namespace AnimalGame.MapTest
             if (overlayRoot == null || mapCamera == null)
                 return;
 
+            overlayRoot.transform.SetPositionAndRotation(
+                Vector3.zero,
+                Quaternion.identity);
             Vector2 centre = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
             float currentRadius = scanChargeUi != null
                 ? scanChargeUi.GetUiRingScreenRadiusPixels()
@@ -890,11 +931,20 @@ namespace AnimalGame.MapTest
                     ? passableSign
                     : unpassableSign;
                 RectTransform rect = image.rectTransform;
-                rect.anchorMin = new Vector2(viewport.x, viewport.y);
+                Vector2 pixelPosition = new Vector2(
+                    Mathf.Round(screenPosition.x),
+                    Mathf.Round(screenPosition.y));
+                rect.anchorMin = Vector2.zero;
                 rect.anchorMax = rect.anchorMin;
-                rect.anchoredPosition = Vector2.zero;
+                rect.pivot = Vector2.one * 0.5f;
+                rect.anchoredPosition = pixelPosition;
                 rect.sizeDelta = Vector2.one * iconSizePixels;
-                rect.localRotation = Quaternion.identity;
+                Quaternion fixedScreenRotation = Quaternion.Euler(
+                    0f,
+                    0f,
+                    fixedIconScreenAngleDegrees);
+                rect.localRotation = fixedScreenRotation;
+                rect.rotation = fixedScreenRotation;
                 rect.localScale = Vector3.one;
                 image.sprite = sprite;
                 image.color = GetRefreshColor(visibility);
@@ -917,8 +967,12 @@ namespace AnimalGame.MapTest
                 typeof(CanvasScaler),
                 typeof(GraphicRaycaster));
             overlayRoot.layer = LayerMask.NameToLayer("UI");
+            overlayRoot.transform.SetPositionAndRotation(
+                Vector3.zero,
+                Quaternion.identity);
             Canvas canvas = overlayRoot.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.pixelPerfect = true;
             canvas.overrideSorting = true;
             canvas.sortingOrder = canvasSortingOrder;
             CanvasScaler scaler = overlayRoot.GetComponent<CanvasScaler>();
@@ -983,21 +1037,43 @@ namespace AnimalGame.MapTest
 
         private void OnDisable()
         {
+            UnsubscribeFromCanvasRendering();
             if (overlayRoot != null)
                 overlayRoot.SetActive(false);
         }
 
         private void OnEnable()
         {
+            SubscribeToCanvasRendering();
             if (overlayRoot != null)
                 overlayRoot.SetActive(true);
         }
 
         private void OnDestroy()
         {
+            UnsubscribeFromCanvasRendering();
             UnsubscribeFromScan();
             if (overlayRoot != null)
                 Destroy(overlayRoot);
+        }
+
+        private void SubscribeToCanvasRendering()
+        {
+            if (canvasRenderSubscribed)
+                return;
+
+            Canvas.willRenderCanvases += HandleWillRenderCanvases;
+            canvasRenderSubscribed = true;
+            lastCanvasRenderFrame = -1;
+        }
+
+        private void UnsubscribeFromCanvasRendering()
+        {
+            if (!canvasRenderSubscribed)
+                return;
+
+            Canvas.willRenderCanvases -= HandleWillRenderCanvases;
+            canvasRenderSubscribed = false;
         }
 
         private void OnValidate()

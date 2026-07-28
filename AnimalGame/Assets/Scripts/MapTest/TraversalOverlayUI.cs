@@ -9,7 +9,7 @@ namespace AnimalGame.MapTest
     /// Q-toggleable full-grid debug visualization. Production scan markers are
     /// intentionally owned by TraversalScanOverlayUI and never read this state.
     /// </summary>
-    [DefaultExecutionOrder(100)]
+    [DefaultExecutionOrder(325)]
     [DisallowMultipleComponent]
     public sealed class TraversalOverlayUI : MonoBehaviour
     {
@@ -18,6 +18,9 @@ namespace AnimalGame.MapTest
         [Header("Signs")]
         [SerializeField] private Sprite passableSign;
         [SerializeField] private Sprite unpassableSign;
+
+        [Tooltip("Fixed screen-space Z angle for every traversal sign. Zero displays the sprite exactly as imported and never inherits robot or camera rotation.")]
+        [SerializeField] private float fixedIconScreenAngleDegrees = 0f;
 
         [Header("Screen-space Grid")]
         [Tooltip("Screen-pixel spacing between neighboring rows and columns.")]
@@ -274,6 +277,7 @@ namespace AnimalGame.MapTest
 
             Canvas canvas = overlayRoot.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.pixelPerfect = true;
             canvas.overrideSorting = true;
             canvas.sortingOrder = 20;
             overlayRoot.transform.rotation = Quaternion.identity;
@@ -532,11 +536,20 @@ namespace AnimalGame.MapTest
         private void PositionImage(Image image, Vector2 viewportPosition)
         {
             RectTransform rect = image.rectTransform;
-            rect.anchorMin = viewportPosition;
-            rect.anchorMax = viewportPosition;
-            rect.anchoredPosition = Vector2.zero;
+            Vector2 pixelPosition = new Vector2(
+                Mathf.Round(viewportPosition.x * Screen.width),
+                Mathf.Round(viewportPosition.y * Screen.height));
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = rect.anchorMin;
+            rect.pivot = Vector2.one * 0.5f;
+            rect.anchoredPosition = pixelPosition;
             rect.sizeDelta = Vector2.one * iconSize;
-            rect.localRotation = Quaternion.identity;
+            Quaternion fixedScreenRotation = Quaternion.Euler(
+                0f,
+                0f,
+                fixedIconScreenAngleDegrees);
+            rect.localRotation = fixedScreenRotation;
+            rect.rotation = fixedScreenRotation;
             rect.localScale = Vector3.one;
         }
 

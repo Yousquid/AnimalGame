@@ -46,6 +46,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   passableSign: {fileID: 21300000, guid: 09afb4a9ddcfe754a9842e74d23fabc1, type: 3}
   unpassableSign: {fileID: 21300000, guid: 5b377b0df7e4966488a1c33711fe4ed8, type: 3}
+  fixedIconScreenAngleDegrees: 0
   gridSpacingPixels: 4
   centerExclusionRadiusPixels: 25
   displayRadiusMeters: 25
