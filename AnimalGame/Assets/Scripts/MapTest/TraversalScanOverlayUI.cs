@@ -57,8 +57,11 @@ namespace AnimalGame.MapTest
         [Tooltip("Seconds between passability rechecks for the absolute marker positions.")]
         [SerializeField, Min(0.05f)] private float stateRefreshIntervalSeconds = 0.75f;
 
-        [Tooltip("Maximum marker states re-evaluated in one frame when a refresh is due.")]
+        [Tooltip("Hard safety cap for marker states re-evaluated in one frame when a refresh is due.")]
         [SerializeField, Range(1, 512)] private int refreshCalculationsPerFrame = 96;
+
+        [Tooltip("CPU time budget in milliseconds used by scheduled traversal refreshes each frame.")]
+        [SerializeField, Min(0.1f)] private float refreshCalculationBudgetMilliseconds = 1.25f;
 
         [Header("Refresh Breathing Visual")]
         [Tooltip("Enables the full-snapshot breathing animation during scheduled refreshes. Disabling this does not disable the scheduled passability calculation.")]
@@ -89,23 +92,29 @@ namespace AnimalGame.MapTest
         [Tooltip("Minimum time between movement-triggered recheck passes.")]
         [SerializeField, Min(0.02f)] private float realtimeRecheckMinimumInterval = 0.08f;
 
-        [Tooltip("Maximum robot-relative path checks performed per frame. Higher values react sooner but cost more CPU time.")]
+        [Tooltip("Hard safety cap for robot-relative path checks performed per frame.")]
         [SerializeField, Range(1, 512)] private int realtimeRechecksPerFrame = 64;
 
-        [Tooltip("Maximum new terrain samples evaluated in one frame while the release wave expands.")]
+        [Tooltip("CPU time budget in milliseconds used by movement-triggered traversal rechecks each frame.")]
+        [SerializeField, Min(0.1f)] private float realtimeCalculationBudgetMilliseconds = 1f;
+
+        [Tooltip("Hard safety cap for new terrain samples evaluated in one frame while the release wave expands.")]
         [SerializeField, Range(1, 512)] private int scanCalculationsPerFrame = 128;
+
+        [Tooltip("CPU time budget in milliseconds used while revealing one scan wave each frame.")]
+        [SerializeField, Min(0.1f)] private float scanCalculationBudgetMilliseconds = 1.75f;
 
         [Header("Presentation")]
         [SerializeField, Min(1f)] private float iconSizePixels = 8f;
         [SerializeField, Range(-100, 100)] private int canvasSortingOrder = 21;
 
-        private sealed class PendingScreenSample
+        private struct PendingScreenSample
         {
             public Vector2 ScreenPosition;
             public float Radius01;
         }
 
-        private sealed class SampledCandidate
+        private struct SampledCandidate
         {
             public Vector2 MapPosition;
             public Vector2 EvaluationDirection;
@@ -126,14 +135,19 @@ namespace AnimalGame.MapTest
         }
 
         private readonly List<PendingScreenSample> pendingSamples =
-            new List<PendingScreenSample>();
+            new List<PendingScreenSample>(512);
         private readonly List<SampledCandidate> sampledCandidates =
-            new List<SampledCandidate>();
-        private readonly List<Vector2> unpassableSeeds = new List<Vector2>();
+            new List<SampledCandidate>(512);
+        private readonly List<Vector2> unpassableSeeds = new List<Vector2>(128);
         private readonly List<PersistentMarker> markers =
-            new List<PersistentMarker>();
-        private readonly List<Image> pooledImages = new List<Image>();
-        private readonly List<int> realtimeRecheckOrder = new List<int>();
+            new List<PersistentMarker>(256);
+        private readonly Stack<PersistentMarker> recycledMarkers =
+            new Stack<PersistentMarker>(256);
+        private readonly List<TraversalSignRenderData> passableRenderData =
+            new List<TraversalSignRenderData>(256);
+        private readonly List<TraversalSignRenderData> unpassableRenderData =
+            new List<TraversalSignRenderData>(256);
+        private readonly List<int> realtimeRecheckOrder = new List<int>(256);
 
         private MapTestSceneController map;
         private HeightMapTraversalEvaluator evaluator;
@@ -143,8 +157,8 @@ namespace AnimalGame.MapTest
         private ContourRegionIndex contourRegions;
         private ContourRegionHandle scannedClosedRegion;
         private GameObject overlayRoot;
-        private int lastCanvasRenderFrame = -1;
-        private bool canvasRenderSubscribed;
+        private TraversalSignsGraphic passableSignsGraphic;
+        private TraversalSignsGraphic unpassableSignsGraphic;
         private int nextPendingSample;
         private int nextRefreshMarker;
         private float scanStartedAt;
@@ -195,6 +209,7 @@ namespace AnimalGame.MapTest
                 map.HeightField,
                 map.ContourIntervalMeters);
             CreateOverlayIfNeeded();
+            PrewarmMarkerPool();
             scanChargeUi.FullyChargedScanReleased += BeginScannedSnapshot;
             ClearSnapshot();
         }
@@ -219,12 +234,8 @@ namespace AnimalGame.MapTest
             UpdateRealtimeRechecks();
         }
 
-        private void HandleWillRenderCanvases()
+        private void LateUpdate()
         {
-            if (lastCanvasRenderFrame == Time.frameCount)
-                return;
-
-            lastCanvasRenderFrame = Time.frameCount;
             RenderMarkers();
         }
 
@@ -302,12 +313,21 @@ namespace AnimalGame.MapTest
                 / Mathf.Max(0.05f, scanWaveDuration));
             float visibleRadius01 = Mathf.SmoothStep(0f, 1f, progress);
             int calculations = 0;
+            float calculationStartedAt = Time.realtimeSinceStartup;
 
             while (nextPendingSample < pendingSamples.Count
                    && calculations < scanCalculationsPerFrame
                    && pendingSamples[nextPendingSample].Radius01
                    <= visibleRadius01 + 0.0001f)
             {
+                if (calculations > 0
+                    && HasExceededCalculationBudget(
+                        calculationStartedAt,
+                        scanCalculationBudgetMilliseconds))
+                {
+                    break;
+                }
+
                 SampleScreenCandidate(pendingSamples[nextPendingSample]);
                 nextPendingSample++;
                 calculations++;
@@ -321,10 +341,9 @@ namespace AnimalGame.MapTest
                                 + Mathf.Max(0.1f, markerLifetimeSeconds);
             nextStateRefreshAt = Time.unscaledTime
                                  + Mathf.Max(0.05f, stateRefreshIntervalSeconds);
-            if (TryGetRobotMapPosition(out Vector2 currentRobotMapPosition))
-                BeginRealtimeRecheck(currentRobotMapPosition);
-            else
-                CaptureRealtimeRobotPosition();
+            // Selection already evaluated every marker against the current robot.
+            // Avoid immediately duplicating the most expensive full-path pass.
+            CaptureRealtimeRobotPosition();
         }
 
         private void SampleScreenCandidate(PendingScreenSample pending)
@@ -355,6 +374,7 @@ namespace AnimalGame.MapTest
                 IsInsideClosedRegion = insideClosedRegion,
                 IsPassable = result.IsPassable
             };
+            int candidateIndex = sampledCandidates.Count;
             sampledCandidates.Add(candidate);
 
             bool isInteriorUnpassable = insideClosedRegion
@@ -362,14 +382,14 @@ namespace AnimalGame.MapTest
             if (isInteriorUnpassable)
             {
                 unpassableSeeds.Add(mapPosition);
-                SelectCandidate(candidate);
+                SelectCandidate(candidateIndex);
                 ExpandAroundUnpassableSeed(mapPosition);
             }
 
             if (isNearContour
                 || (insideClosedRegion && IsNearAnyUnpassableSeed(mapPosition)))
             {
-                SelectCandidate(candidate);
+                SelectCandidate(candidateIndex);
             }
         }
 
@@ -391,7 +411,7 @@ namespace AnimalGame.MapTest
                     continue;
                 }
 
-                SelectCandidate(candidate);
+                SelectCandidate(index);
             }
         }
 
@@ -414,25 +434,37 @@ namespace AnimalGame.MapTest
             return false;
         }
 
-        private void SelectCandidate(SampledCandidate candidate)
+        private void SelectCandidate(int candidateIndex)
         {
-            if (candidate.IsSelected || markers.Count >= maximumScannedSigns)
+            if (candidateIndex < 0
+                || candidateIndex >= sampledCandidates.Count
+                || markers.Count >= maximumScannedSigns)
+            {
+                return;
+            }
+
+            SampledCandidate candidate = sampledCandidates[candidateIndex];
+            if (candidate.IsSelected)
                 return;
 
             candidate.IsSelected = true;
+            sampledCandidates[candidateIndex] = candidate;
             SlopeTraversalResult robotRelativeResult =
                 EvaluateFromRobot(candidate.MapPosition);
             bool displayedPassability = robotRelativeResult.HasData
                 ? robotRelativeResult.IsPassable
                 : candidate.IsPassable;
-            markers.Add(new PersistentMarker
-            {
-                MapPosition = candidate.MapPosition,
-                EvaluationDirection = candidate.EvaluationDirection,
-                IsPassable = displayedPassability,
-                PendingIsPassable = displayedPassability
-            });
-            EnsureImagePool(markers.Count);
+            PersistentMarker marker = recycledMarkers.Count > 0
+                ? recycledMarkers.Pop()
+                : new PersistentMarker();
+            marker.MapPosition = candidate.MapPosition;
+            marker.EvaluationDirection = candidate.EvaluationDirection;
+            marker.IsPassable = displayedPassability;
+            marker.PendingIsPassable = displayedPassability;
+            marker.IndividualRefreshActive = false;
+            marker.IndividualSpriteCommitted = true;
+            marker.IndividualRefreshStartedAt = 0f;
+            markers.Add(marker);
         }
 
         private bool TryAnalyzeLocalTerrain(
@@ -538,9 +570,18 @@ namespace AnimalGame.MapTest
         private void ProcessRefreshBatch()
         {
             int processed = 0;
+            float calculationStartedAt = Time.realtimeSinceStartup;
             while (nextRefreshMarker < markers.Count
                    && processed < refreshCalculationsPerFrame)
             {
+                if (processed > 0
+                    && HasExceededCalculationBudget(
+                        calculationStartedAt,
+                        refreshCalculationBudgetMilliseconds))
+                {
+                    break;
+                }
+
                 PersistentMarker marker = markers[nextRefreshMarker++];
                 SlopeTraversalResult result = EvaluateFromRobot(marker.MapPosition);
                 if (result.HasData)
@@ -694,9 +735,18 @@ namespace AnimalGame.MapTest
                 return;
 
             int processed = 0;
+            float calculationStartedAt = Time.realtimeSinceStartup;
             while (nextRealtimeRecheck < realtimeRecheckOrder.Count
                    && processed < realtimeRechecksPerFrame)
             {
+                if (processed > 0
+                    && HasExceededCalculationBudget(
+                        calculationStartedAt,
+                        realtimeCalculationBudgetMilliseconds))
+                {
+                    break;
+                }
+
                 PersistentMarker marker =
                     markers[realtimeRecheckOrder[nextRealtimeRecheck++]];
                 SlopeTraversalResult result = evaluator.EvaluateMapPath(
@@ -793,6 +843,14 @@ namespace AnimalGame.MapTest
             if (newPassability != marker.PendingIsPassable)
                 BeginIndividualStateRefresh(marker, newPassability);
         }
+        private static bool HasExceededCalculationBudget(
+            float calculationStartedAt,
+            float budgetMilliseconds)
+        {
+            return (Time.realtimeSinceStartup - calculationStartedAt) * 1000f
+                   >= Mathf.Max(0.1f, budgetMilliseconds);
+        }
+
         private bool TryProjectScreenPointToMap(
             Vector2 screenPosition,
             out Vector2 mapPosition)
@@ -885,6 +943,8 @@ namespace AnimalGame.MapTest
             overlayRoot.transform.SetPositionAndRotation(
                 Vector3.zero,
                 Quaternion.identity);
+            passableRenderData.Clear();
+            unpassableRenderData.Clear();
             Vector2 centre = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
             float currentRadius = scanChargeUi != null
                 ? scanChargeUi.GetUiRingScreenRadiusPixels()
@@ -895,7 +955,6 @@ namespace AnimalGame.MapTest
             float exclusion = (centerExclusionRadiusPixels
                                + iconSizePixels * 0.70710678f) * exclusionScale;
             float exclusionSquared = exclusion * exclusion;
-            int imageIndex = 0;
             float periodicVisibility = GetPeriodicRefreshVisibility();
 
             for (int markerIndex = 0; markerIndex < markers.Count; markerIndex++)
@@ -911,8 +970,8 @@ namespace AnimalGame.MapTest
                 }
 
                 Vector2 screenPosition = new Vector2(
-                    viewport.x * Screen.width,
-                    viewport.y * Screen.height);
+                    Mathf.Round(viewport.x * Screen.width),
+                    Mathf.Round(viewport.y * Screen.height));
                 float distanceSquared = (screenPosition - centre).sqrMagnitude;
                 if (distanceSquared > radiusSquared
                     || distanceSquared < exclusionSquared)
@@ -920,39 +979,26 @@ namespace AnimalGame.MapTest
                     continue;
                 }
 
-                EnsureImagePool(imageIndex + 1);
-                Image image = pooledImages[imageIndex++];
                 float individualVisibility =
                     GetIndividualRefreshVisibility(marker);
                 float visibility = Mathf.Min(
                     periodicVisibility,
                     individualVisibility);
-                Sprite sprite = marker.IsPassable
-                    ? passableSign
-                    : unpassableSign;
-                RectTransform rect = image.rectTransform;
-                Vector2 pixelPosition = new Vector2(
-                    Mathf.Round(screenPosition.x),
-                    Mathf.Round(screenPosition.y));
-                rect.anchorMin = Vector2.zero;
-                rect.anchorMax = rect.anchorMin;
-                rect.pivot = Vector2.one * 0.5f;
-                rect.anchoredPosition = pixelPosition;
-                rect.sizeDelta = Vector2.one * iconSizePixels;
-                Quaternion fixedScreenRotation = Quaternion.Euler(
-                    0f,
-                    0f,
-                    fixedIconScreenAngleDegrees);
-                rect.localRotation = fixedScreenRotation;
-                rect.rotation = fixedScreenRotation;
-                rect.localScale = Vector3.one;
-                image.sprite = sprite;
-                image.color = GetRefreshColor(visibility);
-                image.enabled = sprite != null;
+                var renderData = new TraversalSignRenderData(
+                    screenPosition,
+                    iconSizePixels,
+                    fixedIconScreenAngleDegrees,
+                    GetRefreshColor(visibility));
+                if (marker.IsPassable)
+                    passableRenderData.Add(renderData);
+                else
+                    unpassableRenderData.Add(renderData);
             }
 
-            for (; imageIndex < pooledImages.Count; imageIndex++)
-                pooledImages[imageIndex].enabled = false;
+            if (passableSignsGraphic != null)
+                passableSignsGraphic.SetSigns(passableRenderData);
+            if (unpassableSignsGraphic != null)
+                unpassableSignsGraphic.SetSigns(unpassableRenderData);
         }
 
         private void CreateOverlayIfNeeded()
@@ -980,28 +1026,44 @@ namespace AnimalGame.MapTest
             scaler.scaleFactor = 1f;
             scaler.referencePixelsPerUnit = 100f;
             overlayRoot.GetComponent<GraphicRaycaster>().enabled = false;
+
+            passableSignsGraphic = CreateSignsGraphic(
+                "Passable Traversal Signs",
+                passableSign);
+            unpassableSignsGraphic = CreateSignsGraphic(
+                "Unpassable Traversal Signs",
+                unpassableSign);
         }
 
-        private void EnsureImagePool(int requestedCount)
+        private TraversalSignsGraphic CreateSignsGraphic(
+            string objectName,
+            Sprite sprite)
         {
-            CreateOverlayIfNeeded();
-            int count = Mathf.Min(maximumScannedSigns, Mathf.Max(0, requestedCount));
-            int uiLayer = LayerMask.NameToLayer("UI");
-            while (pooledImages.Count < count)
-            {
-                var imageObject = new GameObject(
-                    $"Scanned Traversal Sign {pooledImages.Count + 1:0000}",
-                    typeof(RectTransform),
-                    typeof(CanvasRenderer),
-                    typeof(Image));
-                imageObject.layer = uiLayer;
-                imageObject.transform.SetParent(overlayRoot.transform, false);
-                Image image = imageObject.GetComponent<Image>();
-                image.raycastTarget = false;
-                image.preserveAspect = true;
-                image.enabled = false;
-                pooledImages.Add(image);
-            }
+            var graphicObject = new GameObject(
+                objectName,
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(TraversalSignsGraphic));
+            graphicObject.layer = LayerMask.NameToLayer("UI");
+            graphicObject.transform.SetParent(overlayRoot.transform, false);
+            RectTransform rect = graphicObject.GetComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
+            rect.pivot = Vector2.zero;
+            rect.localRotation = Quaternion.identity;
+            rect.localScale = Vector3.one;
+            TraversalSignsGraphic graphic =
+                graphicObject.GetComponent<TraversalSignsGraphic>();
+            graphic.Initialize(sprite);
+            return graphic;
+        }
+
+        private void PrewarmMarkerPool()
+        {
+            while (recycledMarkers.Count < maximumScannedSigns)
+                recycledMarkers.Push(new PersistentMarker());
         }
 
         private void ClearSnapshot()
@@ -1009,7 +1071,15 @@ namespace AnimalGame.MapTest
             pendingSamples.Clear();
             sampledCandidates.Clear();
             unpassableSeeds.Clear();
+            for (int index = 0; index < markers.Count; index++)
+                recycledMarkers.Push(markers[index]);
             markers.Clear();
+            passableRenderData.Clear();
+            unpassableRenderData.Clear();
+            if (passableSignsGraphic != null)
+                passableSignsGraphic.ClearSigns();
+            if (unpassableSignsGraphic != null)
+                unpassableSignsGraphic.ClearSigns();
             scannedClosedRegion = default;
             nextPendingSample = 0;
             nextRefreshMarker = 0;
@@ -1025,8 +1095,6 @@ namespace AnimalGame.MapTest
             realtimeRecheckRequested = false;
             snapshotExpiresAt = 0f;
             nextStateRefreshAt = 0f;
-            for (int index = 0; index < pooledImages.Count; index++)
-                pooledImages[index].enabled = false;
         }
 
         private void UnsubscribeFromScan()
@@ -1037,43 +1105,21 @@ namespace AnimalGame.MapTest
 
         private void OnDisable()
         {
-            UnsubscribeFromCanvasRendering();
             if (overlayRoot != null)
                 overlayRoot.SetActive(false);
         }
 
         private void OnEnable()
         {
-            SubscribeToCanvasRendering();
             if (overlayRoot != null)
                 overlayRoot.SetActive(true);
         }
 
         private void OnDestroy()
         {
-            UnsubscribeFromCanvasRendering();
             UnsubscribeFromScan();
             if (overlayRoot != null)
                 Destroy(overlayRoot);
-        }
-
-        private void SubscribeToCanvasRendering()
-        {
-            if (canvasRenderSubscribed)
-                return;
-
-            Canvas.willRenderCanvases += HandleWillRenderCanvases;
-            canvasRenderSubscribed = true;
-            lastCanvasRenderFrame = -1;
-        }
-
-        private void UnsubscribeFromCanvasRendering()
-        {
-            if (!canvasRenderSubscribed)
-                return;
-
-            Canvas.willRenderCanvases -= HandleWillRenderCanvases;
-            canvasRenderSubscribed = false;
         }
 
         private void OnValidate()
@@ -1096,6 +1142,9 @@ namespace AnimalGame.MapTest
                 refreshCalculationsPerFrame,
                 1,
                 512);
+            refreshCalculationBudgetMilliseconds = Mathf.Max(
+                0.1f,
+                refreshCalculationBudgetMilliseconds);
             periodicFadeOutSeconds = Mathf.Max(0.02f, periodicFadeOutSeconds);
             periodicFadeInSeconds = Mathf.Max(0.02f, periodicFadeInSeconds);
             refreshMinimumAlpha = Mathf.Clamp01(refreshMinimumAlpha);
@@ -1115,10 +1164,16 @@ namespace AnimalGame.MapTest
                 realtimeRechecksPerFrame,
                 1,
                 512);
+            realtimeCalculationBudgetMilliseconds = Mathf.Max(
+                0.1f,
+                realtimeCalculationBudgetMilliseconds);
             scanCalculationsPerFrame = Mathf.Clamp(
                 scanCalculationsPerFrame,
                 1,
                 512);
+            scanCalculationBudgetMilliseconds = Mathf.Max(
+                0.1f,
+                scanCalculationBudgetMilliseconds);
             iconSizePixels = Mathf.Max(1f, iconSizePixels);
         }
     }

@@ -55,7 +55,8 @@ MonoBehaviour:
   unpassableNeighborhoodRadiusMeters: 8
   markerLifetimeSeconds: 3.5
   stateRefreshIntervalSeconds: 0.75
-  refreshCalculationsPerFrame: 96
+  refreshCalculationsPerFrame: 16
+  refreshCalculationBudgetMilliseconds: 1.25
   enablePeriodicRefreshBreathing: 0
   periodicFadeOutSeconds: 0.28
   periodicFadeInSeconds: 0.38
@@ -65,7 +66,9 @@ MonoBehaviour:
   enableChangedStateBreathing: 1
   realtimeMoveThresholdMeters: 0.35
   realtimeRecheckMinimumInterval: 0.08
-  realtimeRechecksPerFrame: 64
-  scanCalculationsPerFrame: 128
+  realtimeRechecksPerFrame: 12
+  realtimeCalculationBudgetMilliseconds: 1
+  scanCalculationsPerFrame: 32
+  scanCalculationBudgetMilliseconds: 1.75
   iconSizePixels: 16
   canvasSortingOrder: 21
