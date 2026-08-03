@@ -227,3 +227,6 @@ MonoBehaviour:
   levelTwoDriveBobMultiplier: 1.4
   levelThreeGripDriveBobMultiplier: 1.8
   showMotionTail: 0
+  tipOverDuration: 0.35
+  tipOverAngleDegrees: 72
+  tipOverPivotDiameterRatio: 0.45

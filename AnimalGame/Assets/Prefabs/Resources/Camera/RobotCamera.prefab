@@ -175,6 +175,9 @@ MonoBehaviour:
   levelThreeSlipPositionImpact: 0.2
   levelThreeSlipRotationImpactDegrees: 2.8
   levelThreeSlipZoomImpactFraction: 0.008
+  tipOverPositionImpact: 0.28
+  tipOverRotationImpactDegrees: 4
+  tipOverZoomImpactFraction: 0.03
   landingPositionImpact: 0.36
   landingRotationImpactDegrees: 5.2
   landingZoomImpactFraction: 0.042

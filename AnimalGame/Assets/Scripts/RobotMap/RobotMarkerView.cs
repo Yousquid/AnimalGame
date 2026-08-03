@@ -76,7 +76,19 @@ namespace AnimalGame.RobotMap
         [Header("Motion Tail")]
         [SerializeField] private bool showMotionTail = true;
 
+        [Header("Tip Over Visual")]
+        [Tooltip("Seconds taken for the marker chassis to complete its one-shot tip-over animation.")]
+        [SerializeField, Min(0.01f)] private float tipOverDuration = 0.35f;
+
+        [Tooltip("Final 2.5D chassis tilt after the robot tips over. The robot root transform is never rotated.")]
+        [SerializeField, Range(0f, 89f)] private float tipOverAngleDegrees = 72f;
+
+        [Tooltip("Falling-side pivot offset expressed as a fraction of Body Diameter.")]
+        [SerializeField, Range(0f, 0.5f)] private float tipOverPivotDiameterRatio = 0.45f;
+
         private Transform markerVisualRoot;
+        private Transform tipPivot;
+        private Transform tipChassisRoot;
         private Transform bodyVisualRoot;
         private SpriteRenderer bodyFill;
         private SpriteRenderer bodyArtwork;
@@ -88,6 +100,11 @@ namespace AnimalGame.RobotMap
         private Camera bodyFillBackgroundCamera;
         private Camera markerSizingCamera;
         private RobotMover mover;
+        private RobotBalanceController balanceController;
+        private bool balanceEventsSubscribed;
+        private bool hasTippedOver;
+        private float tipOverElapsed;
+        private Vector2 tipOverLocalDirection = Vector2.up;
         private float driveBobPhase;
         private float driveBobBlend;
         private float driveBobBlendVelocity;
@@ -101,11 +118,13 @@ namespace AnimalGame.RobotMap
         private void Awake()
         {
             mover = GetComponent<RobotMover>();
+            balanceController = GetComponent<RobotBalanceController>();
             driveBobRandom = new System.Random(
                 unchecked(GetInstanceID() * 397 ^ System.Environment.TickCount));
             driveBobNoiseSeed = NextDriveBobRandom(0f, 1000f);
             RandomizeDriveBobCycle();
             CreateMarkerVisualRoot();
+            CreateTipVisualHierarchy();
             CreateForegroundSpriteMaterial();
             CreateBodySpriteRenderer();
             CreateDirectionIndicatorRenderer();
@@ -115,6 +134,23 @@ namespace AnimalGame.RobotMap
                 new Vector3(0f, -0.38f), new Vector3(0f, -0.38f)
             }, 0.05f, new Color(0.35f, 0.82f, 0.9f, 0.7f), 18);
             ApplyMotionTailVisibility();
+        }
+
+        private void OnEnable()
+        {
+            SubscribeToBalanceEvents();
+        }
+
+        private void Start()
+        {
+            // RobotMapDemo's runtime fallback creates RobotBalanceController
+            // immediately after this component, so retry after all Awakes run.
+            SubscribeToBalanceEvents();
+        }
+
+        private void OnDisable()
+        {
+            UnsubscribeFromBalanceEvents();
         }
 
         public bool ShowMotionTail => showMotionTail;
@@ -136,12 +172,18 @@ namespace AnimalGame.RobotMap
             SynchronizeMarkerScreenSize();
             SynchronizeBodyFillColor();
 
+            UpdateTipOverVisual();
+
             float pulse = 1f + Mathf.Sin(Time.time * 3.2f) * 0.035f;
             if (bodyVisualRoot != null)
-                bodyVisualRoot.localScale = Vector3.one * pulse;
+            {
+                bodyVisualRoot.localScale = hasTippedOver
+                    ? Vector3.one
+                    : Vector3.one * pulse;
+            }
 
             UpdateDriveBob();
-            if (showMotionTail && tail != null && mover != null)
+            if (!hasTippedOver && showMotionTail && tail != null && mover != null)
             {
                 float tailLength = Mathf.Clamp(Mathf.Abs(mover.CurrentSpeed) * 0.2f, 0f, 1.1f);
                 float visualOffset = markerVisualRoot != null
@@ -158,6 +200,12 @@ namespace AnimalGame.RobotMap
         {
             if (markerVisualRoot == null)
                 return;
+
+            if (hasTippedOver)
+            {
+                StopDriveBob();
+                return;
+            }
 
             float signedDriveSpeed = mover != null ? mover.CurrentSpeed : 0f;
             float absoluteDriveSpeed = Mathf.Abs(signedDriveSpeed);
@@ -289,7 +337,7 @@ namespace AnimalGame.RobotMap
         private void ApplyMotionTailVisibility()
         {
             if (tail != null)
-                tail.enabled = showMotionTail;
+                tail.enabled = showMotionTail && !hasTippedOver;
         }
 
         private void CreateMarkerVisualRoot()
@@ -298,6 +346,17 @@ namespace AnimalGame.RobotMap
             visualRootObject.transform.SetParent(transform, false);
             markerVisualRoot = visualRootObject.transform;
             markerVisualRoot.localPosition = new Vector3(0f, 0f, visualDepthOffset);
+        }
+
+        private void CreateTipVisualHierarchy()
+        {
+            var pivotObject = new GameObject("Tip Pivot");
+            pivotObject.transform.SetParent(markerVisualRoot, false);
+            tipPivot = pivotObject.transform;
+
+            var chassisObject = new GameObject("Tip Chassis Root");
+            chassisObject.transform.SetParent(tipPivot, false);
+            tipChassisRoot = chassisObject.transform;
         }
 
         private void SynchronizeMarkerScreenSize()
@@ -354,7 +413,7 @@ namespace AnimalGame.RobotMap
         private void CreateBodySpriteRenderer()
         {
             var bodyVisualObject = new GameObject("Body Visual");
-            bodyVisualObject.transform.SetParent(markerVisualRoot, false);
+            bodyVisualObject.transform.SetParent(tipChassisRoot, false);
             bodyVisualRoot = bodyVisualObject.transform;
 
             Sprite fillSprite = robotBodyFillSprite;
@@ -438,7 +497,7 @@ namespace AnimalGame.RobotMap
         private void CreateDirectionIndicatorRenderer()
         {
             var indicatorObject = new GameObject("Direction Indicator");
-            indicatorObject.transform.SetParent(markerVisualRoot, false);
+            indicatorObject.transform.SetParent(tipChassisRoot, false);
             indicatorObject.transform.localRotation = Quaternion.Euler(
                 0f,
                 0f,
@@ -520,8 +579,128 @@ namespace AnimalGame.RobotMap
             return sprite;
         }
 
+        private void SubscribeToBalanceEvents()
+        {
+            if (balanceEventsSubscribed)
+                return;
+
+            if (balanceController == null)
+                balanceController = GetComponent<RobotBalanceController>();
+
+            if (balanceController == null)
+                return;
+
+            balanceController.TippedOver += HandleTippedOver;
+            balanceEventsSubscribed = true;
+
+            if (balanceController.IsTippedOver)
+                ApplyTipOverImmediately(balanceController.CurrentTipOver);
+        }
+
+        private void UnsubscribeFromBalanceEvents()
+        {
+            if (!balanceEventsSubscribed)
+                return;
+
+            if (balanceController != null)
+                balanceController.TippedOver -= HandleTippedOver;
+
+            balanceEventsSubscribed = false;
+        }
+
+        private void HandleTippedOver(RobotTipOverInfo tipOverInfo)
+        {
+            if (hasTippedOver)
+                return;
+
+            BeginTipOver(tipOverInfo.LocalDirection, false);
+        }
+
+        private void ApplyTipOverImmediately(RobotTipOverInfo tipOverInfo)
+        {
+            BeginTipOver(tipOverInfo.LocalDirection, true);
+        }
+
+        private void BeginTipOver(Vector2 localDirection, bool applyImmediately)
+        {
+            if (tipPivot == null || tipChassisRoot == null)
+                return;
+
+            tipOverLocalDirection = localDirection.sqrMagnitude > 0.0001f
+                ? localDirection.normalized
+                : Vector2.up;
+            hasTippedOver = true;
+            tipOverElapsed = applyImmediately
+                ? Mathf.Max(0.01f, tipOverDuration)
+                : 0f;
+
+            Vector2 pivotOffset = tipOverLocalDirection
+                                  * bodyDiameter
+                                  * tipOverPivotDiameterRatio;
+            tipPivot.localPosition = new Vector3(
+                pivotOffset.x,
+                pivotOffset.y,
+                0f);
+            tipChassisRoot.localPosition = new Vector3(
+                -pivotOffset.x,
+                -pivotOffset.y,
+                0f);
+
+            StopDriveBob();
+            if (bodyVisualRoot != null)
+                bodyVisualRoot.localScale = Vector3.one;
+            ApplyMotionTailVisibility();
+            ApplyTipOverRotation(applyImmediately ? 1f : 0f);
+        }
+
+        private void UpdateTipOverVisual()
+        {
+            if (!hasTippedOver || tipPivot == null)
+                return;
+
+            float duration = Mathf.Max(0.01f, tipOverDuration);
+            if (tipOverElapsed >= duration)
+                return;
+
+            tipOverElapsed = Mathf.Min(
+                duration,
+                tipOverElapsed + Time.deltaTime);
+            ApplyTipOverRotation(tipOverElapsed / duration);
+        }
+
+        private void ApplyTipOverRotation(float progress)
+        {
+            float clampedProgress = Mathf.Clamp01(progress);
+            float acceleratingProgress = clampedProgress * clampedProgress;
+            Vector3 hingeAxis = new Vector3(
+                -tipOverLocalDirection.y,
+                tipOverLocalDirection.x,
+                0f);
+            tipPivot.localRotation = Quaternion.AngleAxis(
+                tipOverAngleDegrees * acceleratingProgress,
+                hingeAxis);
+        }
+
+        private void StopDriveBob()
+        {
+            driveBobBlend = 0f;
+            driveBobBlendVelocity = 0f;
+            driveBobOffset = 0f;
+            driveBobOffsetVelocity = 0f;
+
+            if (markerVisualRoot != null)
+            {
+                markerVisualRoot.localPosition = new Vector3(
+                    0f,
+                    0f,
+                    visualDepthOffset);
+            }
+        }
+
         private void OnDestroy()
         {
+            UnsubscribeFromBalanceEvents();
+
             if (generatedBodySprite != null)
                 Destroy(generatedBodySprite);
 
@@ -560,6 +739,12 @@ namespace AnimalGame.RobotMap
             levelThreeGripDriveBobMultiplier = Mathf.Max(
                 0f,
                 levelThreeGripDriveBobMultiplier);
+            tipOverDuration = Mathf.Max(0.01f, tipOverDuration);
+            tipOverAngleDegrees = Mathf.Clamp(tipOverAngleDegrees, 0f, 89f);
+            tipOverPivotDiameterRatio = Mathf.Clamp(
+                tipOverPivotDiameterRatio,
+                0f,
+                0.5f);
             if (!showDriveBob && markerVisualRoot != null)
                 markerVisualRoot.localPosition = new Vector3(0f, 0f, visualDepthOffset);
             ApplyMotionTailVisibility();

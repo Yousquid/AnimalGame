@@ -175,6 +175,7 @@ namespace AnimalGame.RobotMap
         public bool IsLevelThreeUnstable { get; private set; }
         public bool IsAutoAligningDownhill { get; private set; }
         public bool IsDownhillBoosted { get; private set; }
+        public bool IsMovementLocked { get; private set; }
         public LevelThreeClimbFailurePhase CurrentLevelThreeClimbPhase
         {
             get;
@@ -219,6 +220,12 @@ namespace AnimalGame.RobotMap
 
         private void Update()
         {
+            if (IsMovementLocked)
+            {
+                ClearMotionForPermanentLock();
+                return;
+            }
+
             float keyboardThrottle = ReadKeyboardAxis(
                 KeyCode.S,
                 KeyCode.None,
@@ -384,6 +391,34 @@ namespace AnimalGame.RobotMap
                 0f,
                 -CurrentTerrainTurnSpeed * Time.deltaTime);
             ApplyDownhillHeadingRecovery();
+        }
+
+        internal void LockMovementPermanently()
+        {
+            if (IsMovementLocked)
+                return;
+
+            IsMovementLocked = true;
+            ClearMotionForPermanentLock();
+        }
+
+        private void ClearMotionForPermanentLock()
+        {
+            CurrentSpeed = 0f;
+            CurrentTurnSpeed = 0f;
+            CurrentTerrainTurnSpeed = 0f;
+            CurrentTerrainVelocity = Vector2.zero;
+            IsLevelThreeUnstable = false;
+            IsAutoAligningDownhill = false;
+            IsDownhillBoosted = false;
+            ResetLevelThreeClimbFailureSequence();
+            unstableLateralTarget = 0f;
+            unstableLateralBlend = 0f;
+            unstableLateralBlendVelocity = 0f;
+            nextUnstableDirectionChangeTime = 0f;
+            downhillHeadingRecoveryEndTime = 0f;
+            downhillHeadingRecoveryDirection = Vector2.zero;
+            pendingDownhillRecoveryFromLevelThreeSlip = false;
         }
 
         private void UpdateTurning(

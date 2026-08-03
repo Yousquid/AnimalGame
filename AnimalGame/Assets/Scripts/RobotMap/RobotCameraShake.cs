@@ -166,6 +166,16 @@ namespace AnimalGame.RobotMap
         [SerializeField, Min(0f)] private float levelThreeSlipRotationImpactDegrees = 2.8f;
         [SerializeField, Range(0f, 0.1f)] private float levelThreeSlipZoomImpactFraction = 0.008f;
 
+        [Header("Tip Over Impact")]
+        [Tooltip("One-time camera displacement applied when the centre of mass first leaves the support area.")]
+        [SerializeField, Min(0f)] private float tipOverPositionImpact = 0.28f;
+
+        [Tooltip("One-time camera roll applied when the robot tips over.")]
+        [SerializeField, Min(0f)] private float tipOverRotationImpactDegrees = 4f;
+
+        [Tooltip("One-time orthographic zoom impulse applied when the robot tips over.")]
+        [SerializeField, Range(0f, 0.1f)] private float tipOverZoomImpactFraction = 0.03f;
+
         [Header("Landing Impact")]
         [SerializeField, Min(0f)] private float landingPositionImpact = 0.36f;
         [SerializeField, Min(0f)] private float landingRotationImpactDegrees = 5.2f;
@@ -243,6 +253,8 @@ namespace AnimalGame.RobotMap
         private bool previousBlocked;
         private TraversalBlockReason previousBlockReason;
         private LevelThreeClimbFailurePhase previousLevelThreePhase;
+        private bool balanceEventsSubscribed;
+        private bool tipOverStateActive;
         private float nextDiscreteImpactTime;
         private float noiseSeedX;
         private float noiseSeedY;
@@ -291,9 +303,14 @@ namespace AnimalGame.RobotMap
             RobotBalanceController balanceController,
             RobotHeightMotionDetector heightMotionDetector)
         {
+            UnsubscribeFromBalanceEvents();
+
             mover = robotMover;
             balance = balanceController;
             heightMotion = heightMotionDetector;
+            tipOverStateActive = balance != null && balance.IsTippedOver;
+            SubscribeToBalanceEvents();
+
             previousMotionInitialized = false;
             previousBlocked = mover != null && mover.IsSlopeBlocked;
             previousBlockReason = mover != null
@@ -302,6 +319,48 @@ namespace AnimalGame.RobotMap
             previousLevelThreePhase = mover != null
                 ? mover.CurrentLevelThreeClimbPhase
                 : LevelThreeClimbFailurePhase.None;
+        }
+
+        private void SubscribeToBalanceEvents()
+        {
+            if (balanceEventsSubscribed
+                || balance == null
+                || !isActiveAndEnabled)
+            {
+                return;
+            }
+
+            balance.TippedOver += HandleTippedOver;
+            balanceEventsSubscribed = true;
+            tipOverStateActive = balance.IsTippedOver;
+        }
+
+        private void UnsubscribeFromBalanceEvents()
+        {
+            if (!balanceEventsSubscribed)
+                return;
+
+            if (balance != null)
+                balance.TippedOver -= HandleTippedOver;
+
+            balanceEventsSubscribed = false;
+        }
+
+        private void HandleTippedOver(RobotTipOverInfo tipOver)
+        {
+            if (tipOverStateActive)
+                return;
+
+            tipOverStateActive = true;
+            continuousPosition = Vector2.zero;
+            continuousRotation = 0f;
+            AddDirectionalImpact(
+                tipOver.WorldDirection,
+                1f,
+                tipOverPositionImpact,
+                tipOverRotationImpactDegrees,
+                tipOverZoomImpactFraction);
+            nextDiscreteImpactTime = Time.time + impactCooldownSeconds;
         }
 
         private void LateUpdate()
@@ -329,7 +388,7 @@ namespace AnimalGame.RobotMap
 
         private void DetectDiscreteImpacts(float deltaTime)
         {
-            if (mover == null)
+            if (mover == null || tipOverStateActive)
                 return;
 
             Vector2 currentVelocity = GetCurrentWorldVelocity();
@@ -491,6 +550,14 @@ namespace AnimalGame.RobotMap
         {
             continuousPosition = Vector2.zero;
             continuousRotation = 0f;
+            if (tipOverStateActive)
+            {
+                // A fallen robot receives only explicit effects such as scan charge.
+                // The latched outside-support balance state must not shake forever.
+                AddScanChargeVibration();
+                return;
+            }
+
             if (mover == null)
             {
                 AddScanChargeVibration();
@@ -792,7 +859,8 @@ namespace AnimalGame.RobotMap
                 * highFrequencyMotorMultiplier
                 * imbalanceBoost
                 * landingBoost);
-            if (enableSevereImbalanceRumble
+            if (!tipOverStateActive
+                && enableSevereImbalanceRumble
                 && balanceMagnitude >= severeImbalanceRumbleThreshold)
             {
                 float severeProgress = Mathf.InverseLerp(
@@ -996,12 +1064,18 @@ namespace AnimalGame.RobotMap
 
         private void OnDisable()
         {
+            UnsubscribeFromBalanceEvents();
             ResetShakeState();
             StopGamepadRumble();
             scanZoomMultiplier = 1f;
             SetScanChargeShake(0f, 0f, 0f, 1f);
             if (attachedCamera != null)
                 attachedCamera.orthographicSize = baseOrthographicSize;
+        }
+
+        private void OnEnable()
+        {
+            SubscribeToBalanceEvents();
         }
 
         private void OnApplicationFocus(bool hasFocus)
@@ -1018,6 +1092,7 @@ namespace AnimalGame.RobotMap
 
         private void OnDestroy()
         {
+            UnsubscribeFromBalanceEvents();
             StopGamepadRumble();
         }
 
@@ -1027,6 +1102,14 @@ namespace AnimalGame.RobotMap
             maximumPositionOffset = Mathf.Max(0f, maximumPositionOffset);
             maximumRotationDegrees = Mathf.Clamp(maximumRotationDegrees, 0f, 12f);
             maximumZoomFraction = Mathf.Clamp(maximumZoomFraction, 0f, 0.1f);
+            tipOverPositionImpact = Mathf.Max(0f, tipOverPositionImpact);
+            tipOverRotationImpactDegrees = Mathf.Max(
+                0f,
+                tipOverRotationImpactDegrees);
+            tipOverZoomImpactFraction = Mathf.Clamp(
+                tipOverZoomImpactFraction,
+                0f,
+                0.1f);
             gamepadIndex = Mathf.Clamp(gamepadIndex, 0, 3);
             positionOffsetAtFullRumble = Mathf.Max(
                 0.001f,

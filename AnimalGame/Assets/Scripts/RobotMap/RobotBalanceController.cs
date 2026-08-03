@@ -1,3 +1,4 @@
+using System;
 using AnimalGame.MapTest;
 using UnityEngine;
 
@@ -34,6 +35,23 @@ namespace AnimalGame.RobotMap
             Magnitude = magnitude;
             Risk01 = risk01;
             Level = level;
+        }
+    }
+
+    public readonly struct RobotTipOverInfo
+    {
+        public RobotBalanceState TriggerState { get; }
+        public Vector2 LocalDirection { get; }
+        public Vector2 WorldDirection { get; }
+
+        public RobotTipOverInfo(
+            RobotBalanceState triggerState,
+            Vector2 localDirection,
+            Vector2 worldDirection)
+        {
+            TriggerState = triggerState;
+            LocalDirection = localDirection;
+            WorldDirection = worldDirection;
         }
     }
 
@@ -115,6 +133,11 @@ namespace AnimalGame.RobotMap
         [SerializeField, Min(0f)] private float cameraFollowOffsetAtRing = 1.25f;
 
         public RobotBalanceState CurrentState { get; private set; }
+        public bool IsTippedOver { get; private set; }
+        public RobotTipOverInfo CurrentTipOver { get; private set; }
+
+        public event Action<RobotTipOverInfo> TippedOver;
+
         public Transform CameraFollowTarget
         {
             get
@@ -124,19 +147,23 @@ namespace AnimalGame.RobotMap
             }
         }
 
-        public float DriveAuthority => influenceMovement
-            ? Mathf.Lerp(
-                1f,
-                minimumDriveAuthority,
-                CurrentState.Risk01)
-            : 1f;
+        public float DriveAuthority => IsTippedOver
+            ? 0f
+            : influenceMovement
+                ? Mathf.Lerp(
+                    1f,
+                    minimumDriveAuthority,
+                    CurrentState.Risk01)
+                : 1f;
 
-        public float SteeringAuthority => influenceMovement
-            ? Mathf.Lerp(
-                1f,
-                minimumSteeringAuthority,
-                CurrentState.Risk01)
-            : 1f;
+        public float SteeringAuthority => IsTippedOver
+            ? 0f
+            : influenceMovement
+                ? Mathf.Lerp(
+                    1f,
+                    minimumSteeringAuthority,
+                    CurrentState.Risk01)
+                : 1f;
 
         private RobotMover mover;
         private HeightMapTraversalEvaluator traversalEvaluator;
@@ -165,6 +192,12 @@ namespace AnimalGame.RobotMap
             if (mover == null)
                 return;
 
+            if (IsTippedOver)
+            {
+                CenterCameraFollowTarget();
+                return;
+            }
+
             float deltaTime = Mathf.Min(Time.deltaTime, 0.05f);
             if (deltaTime <= 0f)
                 return;
@@ -181,6 +214,47 @@ namespace AnimalGame.RobotMap
             IntegrateBalanceSpring(targetBalanceLocal, deltaTime);
             UpdateCameraFollowTarget();
             PublishState();
+            TryTipOver();
+        }
+
+        private void TryTipOver()
+        {
+            if (IsTippedOver
+                || CurrentState.Level != RobotBalanceLevel.OutsideSupport)
+            {
+                return;
+            }
+
+            Vector2 localDirection = CurrentState.NormalizedLocalOffset;
+            if (localDirection.sqrMagnitude > 0.000001f)
+                localDirection.Normalize();
+            else
+                localDirection = Vector2.right;
+
+            Vector2 worldDirection = CurrentState.NormalizedWorldOffset;
+            if (worldDirection.sqrMagnitude > 0.000001f)
+            {
+                worldDirection.Normalize();
+            }
+            else
+            {
+                worldDirection = ((Vector2)transform.right * localDirection.x
+                                  + (Vector2)transform.up * localDirection.y)
+                    .normalized;
+            }
+
+            CurrentTipOver = new RobotTipOverInfo(
+                CurrentState,
+                localDirection,
+                worldDirection);
+            IsTippedOver = true;
+            balanceVelocityLocal = Vector2.zero;
+            counterbalanceVelocityLocal = Vector2.zero;
+            filteredWorldAcceleration = Vector2.zero;
+
+            mover.LockMovementPermanently();
+            CenterCameraFollowTarget();
+            TippedOver?.Invoke(CurrentTipOver);
         }
 
         private Vector2 ApplyEdgeResistance(Vector2 target)
@@ -366,6 +440,16 @@ namespace AnimalGame.RobotMap
                 currentBalanceLocal.x,
                 currentBalanceLocal.y,
                 0f) * cameraFollowOffsetAtRing;
+            cameraFollowTarget.localRotation = Quaternion.identity;
+        }
+
+        private void CenterCameraFollowTarget()
+        {
+            EnsureCameraFollowTarget();
+            if (cameraFollowTarget == null)
+                return;
+
+            cameraFollowTarget.localPosition = Vector3.zero;
             cameraFollowTarget.localRotation = Quaternion.identity;
         }
 
