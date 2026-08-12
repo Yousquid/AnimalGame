@@ -252,7 +252,6 @@ namespace AnimalGame.RobotMap
             counterbalanceVelocityLocal = Vector2.zero;
             filteredWorldAcceleration = Vector2.zero;
 
-            mover.LockMovementPermanently();
             CenterCameraFollowTarget();
             TippedOver?.Invoke(CurrentTipOver);
         }

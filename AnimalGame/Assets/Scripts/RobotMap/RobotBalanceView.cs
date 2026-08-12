@@ -81,7 +81,10 @@ namespace AnimalGame.RobotMap
 
         private void LateUpdate()
         {
-            if (!showBalanceDisplay || balance == null || graphic == null)
+            if (!showBalanceDisplay
+                || balance == null
+                || balance.IsTippedOver
+                || graphic == null)
             {
                 if (canvasObject != null)
                     canvasObject.SetActive(false);

@@ -3,6 +3,13 @@ using UnityEngine;
 
 namespace AnimalGame.RobotMap
 {
+    public enum RobotMovementMode
+    {
+        Driven,
+        ExternalTumble,
+        Fallen
+    }
+
     public enum LevelThreeClimbFailurePhase
     {
         None,
@@ -175,7 +182,11 @@ namespace AnimalGame.RobotMap
         public bool IsLevelThreeUnstable { get; private set; }
         public bool IsAutoAligningDownhill { get; private set; }
         public bool IsDownhillBoosted { get; private set; }
-        public bool IsMovementLocked { get; private set; }
+        public RobotMovementMode MovementMode { get; private set; }
+        public bool IsMovementLocked => MovementMode != RobotMovementMode.Driven;
+        public bool IsExternallyTumbling =>
+            MovementMode == RobotMovementMode.ExternalTumble;
+        public bool IsPermanentlyFallen => MovementMode == RobotMovementMode.Fallen;
         public LevelThreeClimbFailurePhase CurrentLevelThreeClimbPhase
         {
             get;
@@ -205,6 +216,9 @@ namespace AnimalGame.RobotMap
             if (balanceController == null)
                 balanceController = GetComponent<RobotBalanceController>();
             balanceController?.SetTraversalEvaluator(evaluator);
+            RobotTumbleController tumbleController =
+                GetComponent<RobotTumbleController>();
+            tumbleController?.Initialize(evaluator);
             IsSlopeBlocked = false;
             IsLevelThreeUnstable = false;
             IsAutoAligningDownhill = false;
@@ -220,9 +234,9 @@ namespace AnimalGame.RobotMap
 
         private void Update()
         {
-            if (IsMovementLocked)
+            if (MovementMode != RobotMovementMode.Driven)
             {
-                ClearMotionForPermanentLock();
+                ClearMotionForExternalControl();
                 return;
             }
 
@@ -393,21 +407,31 @@ namespace AnimalGame.RobotMap
             ApplyDownhillHeadingRecovery();
         }
 
-        internal void LockMovementPermanently()
+        internal Vector2 BeginExternalTumble()
         {
-            if (IsMovementLocked)
-                return;
+            Vector2 capturedWorldVelocity = (Vector2)transform.up * CurrentSpeed
+                                            + CurrentTerrainVelocity;
+            if (MovementMode != RobotMovementMode.Driven)
+                return Vector2.zero;
 
-            IsMovementLocked = true;
-            ClearMotionForPermanentLock();
+            MovementMode = RobotMovementMode.ExternalTumble;
+            ClearMotionForExternalControl();
+            return capturedWorldVelocity;
         }
 
-        private void ClearMotionForPermanentLock()
+        internal void MarkFallenPermanently()
+        {
+            MovementMode = RobotMovementMode.Fallen;
+            ClearMotionForExternalControl();
+        }
+
+        private void ClearMotionForExternalControl()
         {
             CurrentSpeed = 0f;
             CurrentTurnSpeed = 0f;
             CurrentTerrainTurnSpeed = 0f;
             CurrentTerrainVelocity = Vector2.zero;
+            IsSlopeBlocked = false;
             IsLevelThreeUnstable = false;
             IsAutoAligningDownhill = false;
             IsDownhillBoosted = false;
@@ -419,6 +443,7 @@ namespace AnimalGame.RobotMap
             downhillHeadingRecoveryEndTime = 0f;
             downhillHeadingRecoveryDirection = Vector2.zero;
             pendingDownhillRecoveryFromLevelThreeSlip = false;
+            CurrentTraversalResult = SlopeTraversalResult.NoData;
         }
 
         private void UpdateTurning(

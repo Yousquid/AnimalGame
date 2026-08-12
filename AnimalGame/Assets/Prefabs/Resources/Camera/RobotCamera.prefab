@@ -175,9 +175,14 @@ MonoBehaviour:
   levelThreeSlipPositionImpact: 0.2
   levelThreeSlipRotationImpactDegrees: 2.8
   levelThreeSlipZoomImpactFraction: 0.008
-  tipOverPositionImpact: 0.28
-  tipOverRotationImpactDegrees: 4
-  tipOverZoomImpactFraction: 0.03
+  tumbleStartPositionImpact: 0.16
+  tumbleStartRotationImpactDegrees: 1.8
+  tumbleStartZoomImpactFraction: 0.01
+  tumbleImpactEnergyAtFullStrength: 8
+  tumbleStepMinimumImpactStrength: 0.3
+  tumbleStepPositionImpact: 0.28
+  tumbleStepRotationImpactDegrees: 4
+  tumbleStepZoomImpactFraction: 0.03
   landingPositionImpact: 0.36
   landingRotationImpactDegrees: 5.2
   landingZoomImpactFraction: 0.042

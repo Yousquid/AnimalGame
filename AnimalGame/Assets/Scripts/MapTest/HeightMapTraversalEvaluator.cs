@@ -98,6 +98,79 @@ namespace AnimalGame.MapTest
                 TraversalBlockReason.Boundary);
     }
 
+    /// <summary>
+    /// Pure geometric terrain profile for one requested tumble displacement.
+    /// Distances and heights are expressed in logical map metres. This result
+    /// intentionally does not apply normal driving slope or downhill rules.
+    /// </summary>
+    public readonly struct TumbleTerrainSegment
+    {
+        public bool HasData { get; }
+        public bool IsComplete { get; }
+        public bool HitBoundary { get; }
+        public bool HasUpwardObstacle { get; }
+        public Vector2 StartMapPosition { get; }
+        public Vector2 RequestedEndMapPosition { get; }
+        public Vector2 EndMapPosition { get; }
+        public Vector2 LastValidMapPosition { get; }
+        public Vector2 StartWorldPosition { get; }
+        public Vector2 RequestedEndWorldPosition { get; }
+        public Vector2 EndWorldPosition { get; }
+        public Vector2 LastValidWorldPosition { get; }
+        public float StartSurfaceHeightMeters { get; }
+        public float EndSurfaceHeightMeters { get; }
+        public float MaximumPositiveRiseMeters { get; }
+        public float MaximumDownwardDropMeters { get; }
+        public float MaximumUpwardDetailStepMeters { get; }
+        public float MaximumDownwardDetailStepMeters { get; }
+        public float RequestedDistanceMeters { get; }
+        public float TraversedDistanceMeters { get; }
+
+        public TumbleTerrainSegment(
+            bool hasData,
+            bool isComplete,
+            bool hitBoundary,
+            bool hasUpwardObstacle,
+            Vector2 startMapPosition,
+            Vector2 requestedEndMapPosition,
+            Vector2 endMapPosition,
+            Vector2 lastValidMapPosition,
+            Vector2 startWorldPosition,
+            Vector2 requestedEndWorldPosition,
+            Vector2 endWorldPosition,
+            Vector2 lastValidWorldPosition,
+            float startSurfaceHeightMeters,
+            float endSurfaceHeightMeters,
+            float maximumPositiveRiseMeters,
+            float maximumDownwardDropMeters,
+            float maximumUpwardDetailStepMeters,
+            float maximumDownwardDetailStepMeters,
+            float requestedDistanceMeters,
+            float traversedDistanceMeters)
+        {
+            HasData = hasData;
+            IsComplete = isComplete;
+            HitBoundary = hitBoundary;
+            HasUpwardObstacle = hasUpwardObstacle;
+            StartMapPosition = startMapPosition;
+            RequestedEndMapPosition = requestedEndMapPosition;
+            EndMapPosition = endMapPosition;
+            LastValidMapPosition = lastValidMapPosition;
+            StartWorldPosition = startWorldPosition;
+            RequestedEndWorldPosition = requestedEndWorldPosition;
+            EndWorldPosition = endWorldPosition;
+            LastValidWorldPosition = lastValidWorldPosition;
+            StartSurfaceHeightMeters = startSurfaceHeightMeters;
+            EndSurfaceHeightMeters = endSurfaceHeightMeters;
+            MaximumPositiveRiseMeters = maximumPositiveRiseMeters;
+            MaximumDownwardDropMeters = maximumDownwardDropMeters;
+            MaximumUpwardDetailStepMeters = maximumUpwardDetailStepMeters;
+            MaximumDownwardDetailStepMeters = maximumDownwardDetailStepMeters;
+            RequestedDistanceMeters = requestedDistanceMeters;
+            TraversedDistanceMeters = traversedDistanceMeters;
+        }
+    }
+
     public sealed class HeightMapTraversalEvaluator : MonoBehaviour
     {
         [Header("Robot Physical Contact Area")]
@@ -151,6 +224,12 @@ namespace AnimalGame.MapTest
         private MapTestSceneController map;
         private readonly float[] stepPreviousHeightScratch = new float[9];
         private readonly float[] stepResidualScratch = new float[9];
+        private readonly float[] tumbleStartSurfaceScratch = new float[9];
+        private readonly float[] tumblePreviousSurfaceScratch = new float[9];
+        private readonly float[] tumblePreviousDetailScratch = new float[9];
+        private readonly float[] tumbleCurrentSurfaceScratch = new float[9];
+        private readonly float[] tumbleCurrentDetailScratch = new float[9];
+        private readonly float[] tumbleDetailResidualScratch = new float[9];
 
         public float LevelOneMaximumUphillAngle => levelOneMaximumUphillAngle;
         public float LevelThreeUphillAngle => levelThreeUphillAngle;
@@ -190,6 +269,389 @@ namespace AnimalGame.MapTest
         public void SetMaximumDownhillSlopeAngle(float maximumSlopeAngle)
         {
             maximumDownhillSlopeAngle = Mathf.Clamp(maximumSlopeAngle, 0f, 89f);
+        }
+
+        /// <summary>
+        /// Converts a planar Unity-world velocity to logical map metres per
+        /// second while respecting a potentially anisotropic map transform.
+        /// Returns zero until the evaluator has been initialized.
+        /// </summary>
+        public float WorldSpeedToMapSpeed(Vector2 worldVelocity)
+        {
+            if (!IsInitialized || worldVelocity.sqrMagnitude < 0.000001f)
+                return 0f;
+
+            float worldUnitsPerMapMeter = map.MapMetersToWorldDistance(
+                worldVelocity.normalized,
+                1f);
+            return worldUnitsPerMapMeter > 0.000001f
+                ? worldVelocity.magnitude / worldUnitsPerMapMeter
+                : 0f;
+        }
+
+        /// <summary>
+        /// Samples the swept terrain profile for an externally driven tumble.
+        /// Normal traversal passability, slope levels and unsafe-downhill hard
+        /// stops are deliberately ignored. A true return value means the start
+        /// point had usable terrain data; inspect IsComplete and HitBoundary to
+        /// determine whether the complete requested displacement is available.
+        /// </summary>
+        public bool TryEvaluateTumbleSegment(
+            Vector2 startWorldPosition,
+            Vector2 worldDirection,
+            float distanceMeters,
+            float sweepWidthMeters,
+            out TumbleTerrainSegment result)
+        {
+            result = default;
+            if (!IsInitialized
+                || worldDirection.sqrMagnitude < 0.000001f
+                || distanceMeters < 0f
+                || !map.TrySampleWorldPosition(
+                    startWorldPosition,
+                    out Vector2 startMapPosition,
+                    out float startSurfaceHeight))
+            {
+                return false;
+            }
+
+            Vector2 normalizedWorldDirection = worldDirection.normalized;
+            Vector2 mapDirection = map.WorldDirectionToMapDirection(
+                normalizedWorldDirection);
+            if (mapDirection.sqrMagnitude < 0.000001f)
+                return false;
+
+            float requestedDistance = Mathf.Max(0f, distanceMeters);
+            float sweepWidth = Mathf.Max(0f, sweepWidthMeters);
+            Vector2 requestedEndMapPosition = startMapPosition
+                                              + mapDirection
+                                              * requestedDistance;
+            float requestedWorldDistance = map.MapMetersToWorldDistance(
+                normalizedWorldDirection,
+                requestedDistance);
+            Vector2 requestedEndWorldPosition = startWorldPosition
+                                                + normalizedWorldDirection
+                                                * requestedWorldDistance;
+            Vector2 mapRight = new Vector2(mapDirection.y, -mapDirection.x);
+            int lateralSampleCount = CalculateTumbleLateralSampleCount(
+                sweepWidth);
+
+            if (!TrySampleTumbleSlice(
+                    startMapPosition,
+                    mapRight,
+                    sweepWidth,
+                    lateralSampleCount,
+                    out _))
+            {
+                result = CreateTumbleTerrainSegment(
+                    false,
+                    true,
+                    startMapPosition,
+                    requestedEndMapPosition,
+                    startMapPosition,
+                    startWorldPosition,
+                    requestedEndWorldPosition,
+                    startWorldPosition,
+                    startSurfaceHeight,
+                    startSurfaceHeight,
+                    0f,
+                    0f,
+                    0f,
+                    0f,
+                    requestedDistance,
+                    0f);
+                return true;
+            }
+
+            for (int lateralIndex = 0;
+                 lateralIndex < lateralSampleCount;
+                 lateralIndex++)
+            {
+                float surfaceHeight = tumbleCurrentSurfaceScratch[lateralIndex];
+                tumbleStartSurfaceScratch[lateralIndex] = surfaceHeight;
+                tumblePreviousSurfaceScratch[lateralIndex] = surfaceHeight;
+                tumblePreviousDetailScratch[lateralIndex] =
+                    tumbleCurrentDetailScratch[lateralIndex];
+            }
+
+            float endSurfaceHeight =
+                tumbleCurrentSurfaceScratch[lateralSampleCount / 2];
+            float maximumPositiveRise = 0f;
+            float maximumDownwardDrop = 0f;
+            float maximumUpwardDetailStep = 0f;
+            float maximumDownwardDetailStep = 0f;
+            float traversedDistance = 0f;
+            Vector2 lastValidMapPosition = startMapPosition;
+            bool hitBoundary = false;
+
+            float maximumSpacing = Mathf.Clamp(
+                stepProbeSpacingMeters,
+                0.1f,
+                0.5f);
+            int longitudinalSegmentCount = requestedDistance > 0.000001f
+                ? Mathf.Max(
+                    1,
+                    Mathf.CeilToInt(requestedDistance / maximumSpacing))
+                : 0;
+            float segmentSpacing = longitudinalSegmentCount > 0
+                ? requestedDistance / longitudinalSegmentCount
+                : 0f;
+
+            for (int segmentIndex = 1;
+                 segmentIndex <= longitudinalSegmentCount;
+                 segmentIndex++)
+            {
+                float sampleDistance = segmentIndex * segmentSpacing;
+                Vector2 sampleCenter = startMapPosition
+                                       + mapDirection * sampleDistance;
+                if (!TrySampleTumbleSlice(
+                        sampleCenter,
+                        mapRight,
+                        sweepWidth,
+                        lateralSampleCount,
+                        out float sampledCenterSurface))
+                {
+                    hitBoundary = true;
+                    float refinedDistance = RefineLastValidTumbleDistance(
+                        startMapPosition,
+                        mapDirection,
+                        mapRight,
+                        sweepWidth,
+                        lateralSampleCount,
+                        traversedDistance,
+                        sampleDistance);
+                    if (refinedDistance > traversedDistance + 0.00001f)
+                    {
+                        Vector2 refinedCenter = startMapPosition
+                                                + mapDirection
+                                                * refinedDistance;
+                        if (TrySampleTumbleSlice(
+                                refinedCenter,
+                                mapRight,
+                                sweepWidth,
+                                lateralSampleCount,
+                                out sampledCenterSurface))
+                        {
+                            AccumulateTumbleSlice(
+                                lateralSampleCount,
+                                ref maximumPositiveRise,
+                                ref maximumDownwardDrop,
+                                ref maximumUpwardDetailStep,
+                                ref maximumDownwardDetailStep);
+                            traversedDistance = refinedDistance;
+                            lastValidMapPosition = refinedCenter;
+                            endSurfaceHeight = sampledCenterSurface;
+                        }
+                    }
+                    break;
+                }
+
+                AccumulateTumbleSlice(
+                    lateralSampleCount,
+                    ref maximumPositiveRise,
+                    ref maximumDownwardDrop,
+                    ref maximumUpwardDetailStep,
+                    ref maximumDownwardDetailStep);
+                traversedDistance = sampleDistance;
+                lastValidMapPosition = sampleCenter;
+                endSurfaceHeight = sampledCenterSurface;
+            }
+
+            bool isComplete = !hitBoundary
+                              && traversedDistance
+                              >= requestedDistance - 0.00001f;
+            Vector2 lastValidWorldPosition =
+                map.MapPositionToWorld(lastValidMapPosition);
+            result = CreateTumbleTerrainSegment(
+                isComplete,
+                hitBoundary,
+                startMapPosition,
+                requestedEndMapPosition,
+                lastValidMapPosition,
+                startWorldPosition,
+                requestedEndWorldPosition,
+                lastValidWorldPosition,
+                startSurfaceHeight,
+                endSurfaceHeight,
+                maximumPositiveRise,
+                maximumDownwardDrop,
+                maximumUpwardDetailStep,
+                maximumDownwardDetailStep,
+                requestedDistance,
+                traversedDistance);
+            return true;
+        }
+
+        private int CalculateTumbleLateralSampleCount(float sweepWidthMeters)
+        {
+            if (sweepWidthMeters <= 0.0001f)
+                return 1;
+
+            float spacing = Mathf.Clamp(stepProbeSpacingMeters, 0.1f, 0.5f);
+            int count = Mathf.CeilToInt(sweepWidthMeters / spacing) + 1;
+            return EnsureOdd(count, 3, 9);
+        }
+
+        private bool TrySampleTumbleSlice(
+            Vector2 centerMapPosition,
+            Vector2 mapRight,
+            float sweepWidthMeters,
+            int lateralSampleCount,
+            out float centerSurfaceHeightMeters)
+        {
+            centerSurfaceHeightMeters = 0f;
+            float halfWidth = sweepWidthMeters * 0.5f;
+            for (int lateralIndex = 0;
+                 lateralIndex < lateralSampleCount;
+                 lateralIndex++)
+            {
+                float lateralOffset = lateralSampleCount == 1
+                    ? 0f
+                    : Mathf.Lerp(
+                        -halfWidth,
+                        halfWidth,
+                        lateralIndex / (float)(lateralSampleCount - 1));
+                Vector2 samplePosition = centerMapPosition
+                                         + mapRight * lateralOffset;
+                if (!map.TrySampleMapPosition(
+                        samplePosition,
+                        out float surfaceHeight)
+                    || !map.TrySampleDetailMapPosition(
+                        samplePosition,
+                        out float detailHeight))
+                {
+                    return false;
+                }
+
+                tumbleCurrentSurfaceScratch[lateralIndex] = surfaceHeight;
+                tumbleCurrentDetailScratch[lateralIndex] = detailHeight;
+            }
+
+            centerSurfaceHeightMeters =
+                tumbleCurrentSurfaceScratch[lateralSampleCount / 2];
+            return true;
+        }
+
+        private void AccumulateTumbleSlice(
+            int lateralSampleCount,
+            ref float maximumPositiveRiseMeters,
+            ref float maximumDownwardDropMeters,
+            ref float maximumUpwardDetailStepMeters,
+            ref float maximumDownwardDetailStepMeters)
+        {
+            for (int lateralIndex = 0;
+                 lateralIndex < lateralSampleCount;
+                 lateralIndex++)
+            {
+                float surfaceHeight = tumbleCurrentSurfaceScratch[lateralIndex];
+                float relativeSurfaceHeight = surfaceHeight
+                                              - tumbleStartSurfaceScratch[lateralIndex];
+                maximumPositiveRiseMeters = Mathf.Max(
+                    maximumPositiveRiseMeters,
+                    relativeSurfaceHeight);
+                maximumDownwardDropMeters = Mathf.Max(
+                    maximumDownwardDropMeters,
+                    -relativeSurfaceHeight);
+
+                float surfaceChange = surfaceHeight
+                                      - tumblePreviousSurfaceScratch[lateralIndex];
+                float detailChange = tumbleCurrentDetailScratch[lateralIndex]
+                                     - tumblePreviousDetailScratch[lateralIndex];
+                float detailResidual = detailChange - surfaceChange;
+                tumbleDetailResidualScratch[lateralIndex] = detailResidual;
+
+                tumblePreviousSurfaceScratch[lateralIndex] = surfaceHeight;
+                tumblePreviousDetailScratch[lateralIndex] =
+                    tumbleCurrentDetailScratch[lateralIndex];
+            }
+
+            // Use the median swept-lane residual, matching normal step detection.
+            // This still respects the requested body width while rejecting one
+            // isolated source-height pixel at either edge of the footprint.
+            SortAscending(tumbleDetailResidualScratch, lateralSampleCount);
+            float medianResidual =
+                tumbleDetailResidualScratch[lateralSampleCount / 2];
+            maximumUpwardDetailStepMeters = Mathf.Max(
+                maximumUpwardDetailStepMeters,
+                medianResidual);
+            maximumDownwardDetailStepMeters = Mathf.Max(
+                maximumDownwardDetailStepMeters,
+                -medianResidual);
+        }
+
+        private float RefineLastValidTumbleDistance(
+            Vector2 startMapPosition,
+            Vector2 mapDirection,
+            Vector2 mapRight,
+            float sweepWidthMeters,
+            int lateralSampleCount,
+            float knownValidDistance,
+            float knownInvalidDistance)
+        {
+            float validDistance = knownValidDistance;
+            float invalidDistance = knownInvalidDistance;
+            for (int iteration = 0; iteration < 10; iteration++)
+            {
+                float candidateDistance = (validDistance + invalidDistance) * 0.5f;
+                Vector2 candidateCenter = startMapPosition
+                                          + mapDirection * candidateDistance;
+                if (TrySampleTumbleSlice(
+                        candidateCenter,
+                        mapRight,
+                        sweepWidthMeters,
+                        lateralSampleCount,
+                        out _))
+                {
+                    validDistance = candidateDistance;
+                }
+                else
+                {
+                    invalidDistance = candidateDistance;
+                }
+            }
+
+            return validDistance;
+        }
+
+        private TumbleTerrainSegment CreateTumbleTerrainSegment(
+            bool isComplete,
+            bool hitBoundary,
+            Vector2 startMapPosition,
+            Vector2 requestedEndMapPosition,
+            Vector2 lastValidMapPosition,
+            Vector2 startWorldPosition,
+            Vector2 requestedEndWorldPosition,
+            Vector2 lastValidWorldPosition,
+            float startSurfaceHeightMeters,
+            float endSurfaceHeightMeters,
+            float maximumPositiveRiseMeters,
+            float maximumDownwardDropMeters,
+            float maximumUpwardDetailStepMeters,
+            float maximumDownwardDetailStepMeters,
+            float requestedDistanceMeters,
+            float traversedDistanceMeters)
+        {
+            return new TumbleTerrainSegment(
+                true,
+                isComplete,
+                hitBoundary,
+                maximumUpwardDetailStepMeters > maximumStepHeightMeters,
+                startMapPosition,
+                requestedEndMapPosition,
+                lastValidMapPosition,
+                lastValidMapPosition,
+                startWorldPosition,
+                requestedEndWorldPosition,
+                lastValidWorldPosition,
+                lastValidWorldPosition,
+                startSurfaceHeightMeters,
+                endSurfaceHeightMeters,
+                maximumPositiveRiseMeters,
+                maximumDownwardDropMeters,
+                maximumUpwardDetailStepMeters,
+                maximumDownwardDetailStepMeters,
+                requestedDistanceMeters,
+                traversedDistanceMeters);
         }
 
         public SlopeTraversalResult EvaluateMovement(

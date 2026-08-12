@@ -166,15 +166,25 @@ namespace AnimalGame.RobotMap
         [SerializeField, Min(0f)] private float levelThreeSlipRotationImpactDegrees = 2.8f;
         [SerializeField, Range(0f, 0.1f)] private float levelThreeSlipZoomImpactFraction = 0.008f;
 
-        [Header("Tip Over Impact")]
-        [Tooltip("One-time camera displacement applied when the centre of mass first leaves the support area.")]
-        [SerializeField, Min(0f)] private float tipOverPositionImpact = 0.28f;
+        [Header("Tumble Impacts")]
+        [Tooltip("Moderate camera displacement applied when an authoritative tumble begins.")]
+        [SerializeField, Min(0f)] private float tumbleStartPositionImpact = 0.16f;
 
-        [Tooltip("One-time camera roll applied when the robot tips over.")]
-        [SerializeField, Min(0f)] private float tipOverRotationImpactDegrees = 4f;
+        [Tooltip("Moderate camera roll applied when an authoritative tumble begins.")]
+        [SerializeField, Min(0f)] private float tumbleStartRotationImpactDegrees = 1.8f;
 
-        [Tooltip("One-time orthographic zoom impulse applied when the robot tips over.")]
-        [SerializeField, Range(0f, 0.1f)] private float tipOverZoomImpactFraction = 0.03f;
+        [Tooltip("Moderate orthographic zoom impulse applied when an authoritative tumble begins.")]
+        [SerializeField, Range(0f, 0.1f)] private float tumbleStartZoomImpactFraction = 0.01f;
+
+        [Tooltip("Lost specific energy that maps a completed tumble step to full impact strength.")]
+        [SerializeField, Min(0.01f)] private float tumbleImpactEnergyAtFullStrength = 8f;
+
+        [Tooltip("Smallest impact strength retained for a completed quarter-turn landing.")]
+        [SerializeField, Range(0f, 1f)] private float tumbleStepMinimumImpactStrength = 0.3f;
+
+        [SerializeField, Min(0f)] private float tumbleStepPositionImpact = 0.28f;
+        [SerializeField, Min(0f)] private float tumbleStepRotationImpactDegrees = 4f;
+        [SerializeField, Range(0f, 0.1f)] private float tumbleStepZoomImpactFraction = 0.03f;
 
         [Header("Landing Impact")]
         [SerializeField, Min(0f)] private float landingPositionImpact = 0.36f;
@@ -233,6 +243,7 @@ namespace AnimalGame.RobotMap
         private Camera attachedCamera;
         private RobotMover mover;
         private RobotBalanceController balance;
+        private RobotTumbleController tumble;
         private RobotHeightMotionDetector heightMotion;
         private float baseOrthographicSize;
         private float scanZoomMultiplier = 1f;
@@ -253,8 +264,8 @@ namespace AnimalGame.RobotMap
         private bool previousBlocked;
         private TraversalBlockReason previousBlockReason;
         private LevelThreeClimbFailurePhase previousLevelThreePhase;
-        private bool balanceEventsSubscribed;
-        private bool tipOverStateActive;
+        private bool tumbleEventsSubscribed;
+        private RobotTumbleState observedTumbleState = RobotTumbleState.Upright;
         private float nextDiscreteImpactTime;
         private float noiseSeedX;
         private float noiseSeedY;
@@ -303,13 +314,18 @@ namespace AnimalGame.RobotMap
             RobotBalanceController balanceController,
             RobotHeightMotionDetector heightMotionDetector)
         {
-            UnsubscribeFromBalanceEvents();
+            UnsubscribeFromTumbleEvents();
 
             mover = robotMover;
             balance = balanceController;
+            tumble = mover != null
+                ? mover.GetComponent<RobotTumbleController>()
+                : null;
             heightMotion = heightMotionDetector;
-            tipOverStateActive = balance != null && balance.IsTippedOver;
-            SubscribeToBalanceEvents();
+            observedTumbleState = tumble != null
+                ? tumble.State
+                : RobotTumbleState.Upright;
+            SubscribeToTumbleEvents();
 
             previousMotionInitialized = false;
             previousBlocked = mover != null && mover.IsSlopeBlocked;
@@ -321,46 +337,81 @@ namespace AnimalGame.RobotMap
                 : LevelThreeClimbFailurePhase.None;
         }
 
-        private void SubscribeToBalanceEvents()
+        private bool IsTumbleFeedbackSuppressed =>
+            observedTumbleState != RobotTumbleState.Upright
+            || (tumble != null && tumble.State != RobotTumbleState.Upright);
+
+        private void SubscribeToTumbleEvents()
         {
-            if (balanceEventsSubscribed
-                || balance == null
+            if (tumbleEventsSubscribed
+                || tumble == null
                 || !isActiveAndEnabled)
             {
                 return;
             }
 
-            balance.TippedOver += HandleTippedOver;
-            balanceEventsSubscribed = true;
-            tipOverStateActive = balance.IsTippedOver;
+            tumble.Started += HandleTumbleStarted;
+            tumble.StepCompleted += HandleTumbleStepCompleted;
+            tumble.Settled += HandleTumbleSettled;
+            tumbleEventsSubscribed = true;
+            observedTumbleState = tumble.State;
         }
 
-        private void UnsubscribeFromBalanceEvents()
+        private void UnsubscribeFromTumbleEvents()
         {
-            if (!balanceEventsSubscribed)
+            if (!tumbleEventsSubscribed)
                 return;
 
-            if (balance != null)
-                balance.TippedOver -= HandleTippedOver;
+            if (tumble != null)
+            {
+                tumble.Started -= HandleTumbleStarted;
+                tumble.StepCompleted -= HandleTumbleStepCompleted;
+                tumble.Settled -= HandleTumbleSettled;
+            }
 
-            balanceEventsSubscribed = false;
+            tumbleEventsSubscribed = false;
         }
 
-        private void HandleTippedOver(RobotTipOverInfo tipOver)
+        private void HandleTumbleStarted(RobotTumbleStartedInfo started)
         {
-            if (tipOverStateActive)
-                return;
+            observedTumbleState = RobotTumbleState.Tumbling;
+            // Discard any ordinary drive/collision spring already in flight so
+            // the tumble phase contains only explicit tumble and scan feedback.
+            ResetShakeState();
+            AddDirectionalImpact(
+                started.WorldDirection,
+                1f,
+                tumbleStartPositionImpact,
+                tumbleStartRotationImpactDegrees,
+                tumbleStartZoomImpactFraction);
+        }
 
-            tipOverStateActive = true;
+        private void HandleTumbleStepCompleted(RobotTumbleStepInfo step)
+        {
+            observedTumbleState = RobotTumbleState.Tumbling;
+            float normalizedEnergy = Mathf.Clamp01(
+                step.ImpactLostSpecificEnergy
+                / Mathf.Max(0.01f, tumbleImpactEnergyAtFullStrength));
+            float impactStrength = Mathf.Lerp(
+                tumbleStepMinimumImpactStrength,
+                1f,
+                Mathf.Sqrt(normalizedEnergy));
+
+            // Tumble landings are authoritative events and deliberately bypass
+            // the ordinary collision/deceleration impact cooldown.
+            AddDirectionalImpact(
+                tumble != null ? tumble.DirectionWorld : Vector2.up,
+                impactStrength,
+                tumbleStepPositionImpact,
+                tumbleStepRotationImpactDegrees,
+                tumbleStepZoomImpactFraction);
+        }
+
+        private void HandleTumbleSettled(RobotTumbleSettledInfo settled)
+        {
+            observedTumbleState = RobotTumbleState.Fallen;
             continuousPosition = Vector2.zero;
             continuousRotation = 0f;
-            AddDirectionalImpact(
-                tipOver.WorldDirection,
-                1f,
-                tipOverPositionImpact,
-                tipOverRotationImpactDegrees,
-                tipOverZoomImpactFraction);
-            nextDiscreteImpactTime = Time.time + impactCooldownSeconds;
         }
 
         private void LateUpdate()
@@ -388,7 +439,7 @@ namespace AnimalGame.RobotMap
 
         private void DetectDiscreteImpacts(float deltaTime)
         {
-            if (mover == null || tipOverStateActive)
+            if (mover == null || IsTumbleFeedbackSuppressed)
                 return;
 
             Vector2 currentVelocity = GetCurrentWorldVelocity();
@@ -550,10 +601,10 @@ namespace AnimalGame.RobotMap
         {
             continuousPosition = Vector2.zero;
             continuousRotation = 0f;
-            if (tipOverStateActive)
+            if (IsTumbleFeedbackSuppressed)
             {
-                // A fallen robot receives only explicit effects such as scan charge.
-                // The latched outside-support balance state must not shake forever.
+                // Tumbling and fallen robots receive only explicit tumble impacts
+                // plus scan charge. Frozen drive/balance state must not shake forever.
                 AddScanChargeVibration();
                 return;
             }
@@ -581,6 +632,7 @@ namespace AnimalGame.RobotMap
                                 speedProgress);
 
             float balanceMagnitude = balance != null
+                                     && !IsTumbleFeedbackSuppressed
                 ? Mathf.Clamp01(balance.CurrentState.Magnitude)
                 : 0f;
             float baseStrength = Mathf.Max(
@@ -684,7 +736,8 @@ namespace AnimalGame.RobotMap
                 localDirection = Vector2.up;
 
             float balanceRoll = 0f;
-            if (balance != null
+            if (!IsTumbleFeedbackSuppressed
+                && balance != null
                 && balance.CurrentState.NormalizedWorldOffset.sqrMagnitude
                 > 0.000001f)
             {
@@ -833,6 +886,7 @@ namespace AnimalGame.RobotMap
                 rumbleResponseExponent);
 
             float balanceMagnitude = balance != null
+                                     && !IsTumbleFeedbackSuppressed
                 ? Mathf.Clamp01(balance.CurrentState.Magnitude)
                 : 0f;
             float imbalanceBoost = Mathf.Lerp(
@@ -859,7 +913,7 @@ namespace AnimalGame.RobotMap
                 * highFrequencyMotorMultiplier
                 * imbalanceBoost
                 * landingBoost);
-            if (!tipOverStateActive
+            if (!IsTumbleFeedbackSuppressed
                 && enableSevereImbalanceRumble
                 && balanceMagnitude >= severeImbalanceRumbleThreshold)
             {
@@ -1064,7 +1118,7 @@ namespace AnimalGame.RobotMap
 
         private void OnDisable()
         {
-            UnsubscribeFromBalanceEvents();
+            UnsubscribeFromTumbleEvents();
             ResetShakeState();
             StopGamepadRumble();
             scanZoomMultiplier = 1f;
@@ -1075,7 +1129,7 @@ namespace AnimalGame.RobotMap
 
         private void OnEnable()
         {
-            SubscribeToBalanceEvents();
+            SubscribeToTumbleEvents();
         }
 
         private void OnApplicationFocus(bool hasFocus)
@@ -1092,7 +1146,7 @@ namespace AnimalGame.RobotMap
 
         private void OnDestroy()
         {
-            UnsubscribeFromBalanceEvents();
+            UnsubscribeFromTumbleEvents();
             StopGamepadRumble();
         }
 
@@ -1102,12 +1156,29 @@ namespace AnimalGame.RobotMap
             maximumPositionOffset = Mathf.Max(0f, maximumPositionOffset);
             maximumRotationDegrees = Mathf.Clamp(maximumRotationDegrees, 0f, 12f);
             maximumZoomFraction = Mathf.Clamp(maximumZoomFraction, 0f, 0.1f);
-            tipOverPositionImpact = Mathf.Max(0f, tipOverPositionImpact);
-            tipOverRotationImpactDegrees = Mathf.Max(
+            tumbleStartPositionImpact = Mathf.Max(
                 0f,
-                tipOverRotationImpactDegrees);
-            tipOverZoomImpactFraction = Mathf.Clamp(
-                tipOverZoomImpactFraction,
+                tumbleStartPositionImpact);
+            tumbleStartRotationImpactDegrees = Mathf.Max(
+                0f,
+                tumbleStartRotationImpactDegrees);
+            tumbleStartZoomImpactFraction = Mathf.Clamp(
+                tumbleStartZoomImpactFraction,
+                0f,
+                0.1f);
+            tumbleImpactEnergyAtFullStrength = Mathf.Max(
+                0.01f,
+                tumbleImpactEnergyAtFullStrength);
+            tumbleStepMinimumImpactStrength = Mathf.Clamp01(
+                tumbleStepMinimumImpactStrength);
+            tumbleStepPositionImpact = Mathf.Max(
+                0f,
+                tumbleStepPositionImpact);
+            tumbleStepRotationImpactDegrees = Mathf.Max(
+                0f,
+                tumbleStepRotationImpactDegrees);
+            tumbleStepZoomImpactFraction = Mathf.Clamp(
+                tumbleStepZoomImpactFraction,
                 0f,
                 0.1f);
             gamepadIndex = Mathf.Clamp(gamepadIndex, 0, 3);

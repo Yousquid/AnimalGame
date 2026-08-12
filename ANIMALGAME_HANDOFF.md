@@ -1,8 +1,8 @@
 # AnimalGame 项目交接文档
 
-> 更新日期：2026-08-03  
-> Git 仓库根目录：`C:\Users\andsonyou\Documents\GitHub\AnimalGame`  
-> Unity 工程目录：`C:\Users\andsonyou\Documents\GitHub\AnimalGame\AnimalGame`  
+> 更新日期：2026-08-12
+> Git 仓库根目录：以当前工作区的 Git 根目录为准
+> Unity 工程目录：仓库根目录下的 `AnimalGame`
 > Unity 版本：`2022.3.16f1c1`
 
 ## 1. 这份文档怎么用
@@ -41,7 +41,7 @@ AnimalGame 是一个以“无传统视觉的生态调查机器人”为玩家视
 6. **扫描可通行性标记是绝对地图位置的短期调查结果。** Debug 网格与正式扫描显示是两个独立系统。
 7. **通行性标志在屏幕中保持固定角度。** 它们不随机器人或相机旋转。
 8. **构建版必须与编辑器一致。** 动态等高线 Shader 必须有序列化直接引用，玩家 UI 尺寸按屏幕像素保持稳定。
-9. **侧翻只由重心越界触发。** 只有 `RobotBalanceController` 发布 `OutsideSupport` 才进入侧翻；Level 3 坡度本身不直接触发侧翻，侧翻视觉也不得旋转权威机器人根 `Transform`。
+9. **侧翻只由重心越界触发。** 只有 `RobotBalanceController` 发布 `OutsideSupport` 才进入侧翻；Level 3 坡度本身不直接触发侧翻。翻滚会移动权威机器人根节点的 XY 位置，但绝不旋转根节点；朝向、扫描和地图坐标始终读取同一个真实根位置。
 
 ## 4. 仓库和工程结构
 
@@ -322,7 +322,13 @@ Grip（抓地）0.35s
 
 ### 8.6 侧翻后的最高优先级运动锁定
 
-首次进入 `OutsideSupport` 后，`RobotBalanceController` 会锁存当前侧翻状态，并要求 `RobotMover` 永久清空本场景实例的行驶、转向、坡面滑动、Level 3 失控、自动下坡、漂移与恢复状态。它不是坡度阻挡，也不会修改通行性判定；当前基础版只能通过重新加载场景恢复。扫描输入和 `Q` Debug 网格仍可使用，便于测试侧翻后的画面与地图信息。
+首次进入 `OutsideSupport` 后，`RobotBalanceController` 只锁存触发快照并发布事件；`RobotTumbleController` 随即把 `RobotMover` 切换到 `ExternalTumble`，在清空行驶、转向、坡面滑动、Level 3 失控和恢复状态前先捕获总平面速度。翻滚结束后切换为永久 `Fallen`，当前版本仍只能通过重新加载场景恢复。
+
+每一次 90° 翻滚都会真实移动机器人根节点。第 1、3、5 次使用整机高度 `H=1.8m`，第 2、4、6 次使用当前翻滚轴对应的长度或宽度（前后翻取 `L=2m`，左右翻取 `W=1.5m`）。轴只决定几何尺寸，实际位移方向始终保留触发瞬间的完整重心世界方向。
+
+续滚采用地图米制的单位质量能量：触发前沿倾覆方向的速度、地形起终高度差、姿态质心高度差、滚动阻力与每次撞击损耗共同决定是否能跨过下一条棱。第一次完整翻滚是强制提交；地图边界、向上细节障碍或突发悬崖边缘是例外，会原地进入 `Fallen`。后续能量不足也会进入 `Fallen`。设有最多 12 次和 10 秒的保护上限。
+
+翻滚地形剖面由 `HeightMapTraversalEvaluator.TryEvaluateTumbleSegment` 独立采样。它不调用普通 `EvaluateMapPath`，不读取 Level 1/2/3 或 `UnsafeDownhill`，因此朝坡下翻滚时会完全忽略普通下坡坡度硬停；只保留地图边界、向上细节障碍和突发悬崖边缘保护。扫描输入和 `Q` Debug 网格仍可使用。
 
 ## 9. 输入与手柄适配
 
@@ -414,7 +420,7 @@ Assets/Scripts/RobotMap/RobotBalanceView.cs
 
 严重失衡会降低移动控制权：最小 Drive Authority 0.68、最小 Steering Authority 0.45。
 
-手动按 1–6 制造左右失衡的旧实验已经取消，不要恢复。当前基础侧翻已实装：首次 `CurrentState.Level == OutsideSupport`（归一化偏移 `Magnitude >= 1`）时立即触发，并沿重心越界的局部方向侧翻。状态在当前场景实例中永久锁存，没有起身方法；触发时的失衡状态与方向会保留供 UI/视觉读取，但镜头跟随目标会回到机器人中心。
+手动按 1–6 制造左右失衡的旧实验已经取消，不要恢复。当前连续侧翻第一阶段已实装：首次 `CurrentState.Level == OutsideSupport`（归一化偏移 `Magnitude >= 1`）时沿重心越界的真实世界方向开始翻滚，并根据速度与地形高度差尝试后续翻滚。状态最终在当前场景实例中永久锁存，没有起身方法；触发快照会保留，镜头跟随目标会回到机器人中心并跟随真实根位移。
 
 ### 10.2 视觉
 
@@ -445,7 +451,7 @@ Assets/Scripts/RobotMap/RobotBalanceView.cs
 
 `keepMarkerSizeConstantOnScreen` 为关闭时才退回固定世界尺寸。当前移动前后视觉晃动（Drive Bob）已通过 bool 关闭，移动拖尾也关闭。
 
-侧翻使用独立的 2.5D 视觉枢轴：沿重心越界方向选取机身边缘作为支点，在约 0.35 秒内转到 72° 并永久保持。只有 `Marker` 的视觉子层级旋转，负责地图位置、方向和扫描逻辑的机器人根节点保持不变。
+旧的 `Tip Pivot / Tip Chassis Root`、0.35 秒 72° 倾斜动画和三个对应 Prefab 参数已经完全删除。当前第一阶段不表现机身旋转，只平滑移动权威根节点；翻滚/倒地期间会停止 pulse、Drive Bob 与拖尾。后续若增加姿态视觉，应读取 `RobotTumbleController` 的逻辑 quarter-turn 状态，不能旋转权威根节点。
 
 ## 12. 高度变化、腾空与镜头冲击
 
@@ -480,11 +486,11 @@ Full Landing Impact 3.6
 - 高台阶、危险下坡和 Level 3 滑落；
 - 腾空与落地；
 - 急减速；
-- 侧翻瞬间。
+- 起翻瞬间与每次落棱撞击。
 
 Prefab 当前全局上限约为位置 0.28、旋转 4°、Zoom 0.03。落地冲击和严重重心偏移应明显强于普通行驶。
 
-侧翻会立即施加一次达到当前全局上限的方向性镜头冲击。进入侧翻状态后会停止重心失衡等持续性镜头抖动与手柄震动，避免玩家倒地后画面永久震动；扫描蓄力反馈仍保留。
+起翻时会先清除残留的普通弹簧反馈，再施加一次中等方向性冲击；每次 `TumbleStepCompleted` 会按照撞击损失的单位质量能量追加一次方向性冲击，而且不受普通碰撞 cooldown 吞掉。进入翻滚状态后会停止普通移动、重心失衡、落地等持续/离散反馈，避免倒地后永久震动；显式翻滚冲击和扫描蓄力反馈仍保留。
 
 ### 12.3 手柄震动
 
@@ -640,6 +646,7 @@ Windows 构建日志通常位于：
 | 正式扫描通行 UI | `Assets/Scripts/MapTest/TraversalScanOverlayUI.cs` |
 | 批量标志 Mesh | `Assets/Scripts/MapTest/TraversalSignsGraphic.cs` |
 | 玩家移动 | `Assets/Scripts/RobotMap/RobotMover.cs` |
+| 连续侧翻状态/能量/根位移 | `Assets/Scripts/RobotMap/RobotTumbleController.cs` |
 | 玩家视觉 | `Assets/Scripts/RobotMap/RobotMarkerView.cs` |
 | 重心逻辑 | `Assets/Scripts/RobotMap/RobotBalanceController.cs` |
 | 重心 UI | `Assets/Scripts/RobotMap/RobotBalanceView.cs` |
@@ -665,7 +672,7 @@ Assets/Resources/UI/MainUI.prefab
 
 ## 18. 当前未完成或需要继续验证的内容
 
-- 侧翻基础测试版已实装，但触发严厉程度、动画节奏、撞地时机、起身/重生流程和失败 UI 仍待后续扩展；
+- 连续侧翻第一阶段已实装，但机器人尺寸、能量保留、阻力、下坡势能、撞击强度与每段时长仍需 Play Mode 实测调参；当前没有机身姿态视觉、空中翻滚、起身/重生流程或失败 UI；
 - 动物追踪、拍照、上传和奖励循环尚未成为当前 Demo 主系统；
 - 太空垃圾、清理与生态恢复尚待系统化接入；
 - 钩锁、爬墙、喷气背包仍属于长期移动能力方向；
@@ -696,7 +703,8 @@ Assets/Resources/UI/MainUI.prefab
 [ ] 高台阶与危险下坡仍能硬停止
 [ ] 镜头跟随重心目标
 [ ] 右摇杆/方向键可修正重心
-[ ] 重心越界后沿偏移方向侧翻、立即停机并永久保持，镜头只剧烈冲击一次
+[ ] 重心越界后首翻移动 H，后续按 H/L 或 H/W 交替，沿真实偏移方向移动并最终永久倒地
+[ ] 朝连续坡下翻滚不会被普通坡度或 UnsafeDownhill 截停，且每次落棱都有独立镜头冲击
 [ ] E/LB 蓄满释放扫描
 [ ] 扫描图标角度固定并能实时改变通行状态
 [ ] Q 只开关独立 Debug 网格
@@ -724,7 +732,7 @@ Assets/Resources/UI/MainUI.prefab
 - 让扫描标志继承机器人或相机旋转；
 - 把正式扫描和 Q Debug 网格重新混在同一个生命周期中；
 - 用坡度等级直接触发侧翻，而不是读取重心的 `OutsideSupport` 状态；
-- 为侧翻旋转权威机器人根 `Transform`，导致朝向、扫描或地图逻辑被污染；
+- 为侧翻旋转权威机器人根 `Transform`，导致朝向、扫描或地图逻辑被污染（允许且必须平移根节点 XY）；
 - 删除动态等高线 Shader 的直接 Prefab 引用；
 - 只改场景实例而忘记 Apply 到 `Resources` Prefab；
 - 用 Xbox 震动数值直接驱动 Sony 手柄。

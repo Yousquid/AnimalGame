@@ -126,6 +126,12 @@ namespace AnimalGame.RobotMap
             if (!enableHeightMotionDetection || map == null || mover == null)
                 return;
 
+            if (mover.IsMovementLocked)
+            {
+                SynchronizeToCurrentGround();
+                return;
+            }
+
             if (!map.TrySampleWorldPosition(
                     transform.position,
                     out _,
@@ -187,6 +193,26 @@ namespace AnimalGame.RobotMap
                 maximumVerticalAcceleration);
             previousGroundHeight = sampledGroundHeight;
             HasData = true;
+        }
+
+        private void SynchronizeToCurrentGround()
+        {
+            if (map == null
+                || !map.TrySampleWorldPosition(
+                    transform.position,
+                    out _,
+                    out float sampledGroundHeight))
+            {
+                ResetDetectorState();
+                return;
+            }
+
+            InitializeAtHeight(sampledGroundHeight);
+            IsAirborne = false;
+            LandedThisFrame = false;
+            AirborneDurationSeconds = 0f;
+            lastAirborneTime = float.NegativeInfinity;
+            LastLandingImpact = default;
         }
 
         private void UpdateSupportedMotion(
