@@ -33,6 +33,16 @@ namespace AnimalGame.RobotMap
         [SerializeField] private float indicatorRotationOffsetDegrees;
         [SerializeField] private Color indicatorColor = new Color(0.92f, 0.98f, 1f, 1f);
 
+        [Header("Direction Indicator Tumble Projection")]
+        [Tooltip("How far the direction arrow moves toward the falling edge while its top surface turns away, relative to the visible body diameter.")]
+        [SerializeField, Range(0f, 0.5f)] private float indicatorTumbleEdgeOffsetRatio = 0.18f;
+
+        [Tooltip("Small residual scale retained along the projected tumble axis before the arrow becomes fully hidden.")]
+        [SerializeField, Range(0f, 0.25f)] private float indicatorMinimumProjectedScale = 0.04f;
+
+        [Tooltip("Shapes how quickly the top-surface arrow fades as it turns edge-on. Values below one retain readability longer.")]
+        [SerializeField, Range(0.25f, 3f)] private float indicatorTumbleFadeExponent = 0.72f;
+
         [Header("Fallen Rollover Sign")]
         [Tooltip("Arts/rollover_sign displayed over the robot only after tumbling has completely settled.")]
         [SerializeField] private Sprite rolloverSignSprite;
@@ -148,6 +158,7 @@ namespace AnimalGame.RobotMap
         {
             SynchronizeMarkerScreenSize();
             SynchronizeBodyFillColor();
+            UpdateDirectionIndicatorSurfaceProjection();
             SynchronizeRolloverSignVisibility();
 
             bool movementLocked = mover != null && mover.IsMovementLocked;
@@ -567,6 +578,87 @@ namespace AnimalGame.RobotMap
             }
         }
 
+        private void UpdateDirectionIndicatorSurfaceProjection()
+        {
+            if (directionIndicator == null)
+                return;
+
+            if (tumble == null)
+                tumble = GetComponent<RobotTumbleController>();
+            if (tumble == null || tumble.State == RobotTumbleState.Upright)
+            {
+                ApplyDirectionIndicatorProjection(1f, 0f, Vector2.zero);
+                return;
+            }
+
+            float quarterTurnProgress = tumble.CompletedStepCount;
+            if (tumble.State == RobotTumbleState.Tumbling)
+            {
+                float stepProgress = Mathf.Clamp01(tumble.StepProgress01);
+                float easedStepProgress = stepProgress * stepProgress
+                                          * (3f - 2f * stepProgress);
+                quarterTurnProgress += easedStepProgress;
+            }
+
+            float surfaceAngleRadians = tumble.QuarterTurnSign
+                                        * quarterTurnProgress
+                                        * Mathf.PI
+                                        * 0.5f;
+            float topFacing = Mathf.Max(0f, Mathf.Cos(surfaceAngleRadians));
+            float visibility = Mathf.Pow(
+                topFacing,
+                indicatorTumbleFadeExponent);
+            float signedEdgeProjection = Mathf.Sin(surfaceAngleRadians)
+                                         * tumble.QuarterTurnSign;
+
+            Vector2 localTumbleDirection = new Vector2(
+                Vector2.Dot(tumble.DirectionWorld, transform.right),
+                Vector2.Dot(tumble.DirectionWorld, transform.up));
+            if (localTumbleDirection.sqrMagnitude > 0.000001f)
+                localTumbleDirection.Normalize();
+
+            ApplyDirectionIndicatorProjection(
+                visibility,
+                signedEdgeProjection,
+                localTumbleDirection);
+        }
+
+        private void ApplyDirectionIndicatorProjection(
+            float visibility,
+            float edgeProjection,
+            Vector2 localTumbleDirection)
+        {
+            float safeVisibility = Mathf.Clamp01(visibility);
+            float projectedScale = Mathf.Lerp(
+                indicatorMinimumProjectedScale,
+                1f,
+                safeVisibility);
+            Vector3 scale = Vector3.one * indicatorScale;
+            if (tumble != null
+                && tumble.State != RobotTumbleState.Upright
+                && tumble.Axis == RobotTumbleAxis.ForwardBack)
+            {
+                scale.y *= projectedScale;
+            }
+            else if (tumble != null
+                     && tumble.State != RobotTumbleState.Upright)
+            {
+                scale.x *= projectedScale;
+            }
+
+            directionIndicator.transform.localScale = scale;
+            directionIndicator.transform.localPosition =
+                (Vector3)(localTumbleDirection
+                          * bodyDiameter
+                          * indicatorTumbleEdgeOffsetRatio
+                          * Mathf.Clamp(edgeProjection, -1f, 1f));
+            Color projectedColor = indicatorColor;
+            projectedColor.a *= safeVisibility;
+            directionIndicator.color = projectedColor;
+            directionIndicator.enabled = directionIndicator.sprite != null
+                                         && safeVisibility > 0.001f;
+        }
+
         private void CreateRolloverSignRenderer()
         {
             var rolloverObject = new GameObject("Fallen Rollover Sign");
@@ -632,6 +724,18 @@ namespace AnimalGame.RobotMap
             bodyScreenDiameterPixels = Mathf.Max(1f, bodyScreenDiameterPixels);
             bodyFillDiameterRatio = Mathf.Clamp(bodyFillDiameterRatio, 0.1f, 1f);
             indicatorScale = Mathf.Max(0.1f, indicatorScale);
+            indicatorTumbleEdgeOffsetRatio = Mathf.Clamp(
+                indicatorTumbleEdgeOffsetRatio,
+                0f,
+                0.5f);
+            indicatorMinimumProjectedScale = Mathf.Clamp(
+                indicatorMinimumProjectedScale,
+                0f,
+                0.25f);
+            indicatorTumbleFadeExponent = Mathf.Clamp(
+                indicatorTumbleFadeExponent,
+                0.25f,
+                3f);
             rolloverSignDiameterRatio = Mathf.Max(
                 0.1f,
                 rolloverSignDiameterRatio);
