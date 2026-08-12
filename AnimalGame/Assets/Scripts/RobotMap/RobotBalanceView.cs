@@ -8,6 +8,8 @@ namespace AnimalGame.RobotMap
     [RequireComponent(typeof(RobotBalanceController))]
     public sealed class RobotBalanceView : MonoBehaviour
     {
+        public const string BalanceCanvasName = "Robot Balance UI";
+
         [Header("Visibility")]
         [SerializeField] private bool showBalanceDisplay = true;
         [SerializeField] private Color ringColor = new Color(0.92f, 0.98f, 1f, 1f);
@@ -62,6 +64,7 @@ namespace AnimalGame.RobotMap
         [SerializeField] private int canvasSortingOrder = 40;
 
         private RobotBalanceController balance;
+        private RobotTumbleController tumble;
         private Camera mapCamera;
         private GameObject canvasObject;
         private Canvas canvas;
@@ -70,6 +73,7 @@ namespace AnimalGame.RobotMap
         private void Awake()
         {
             balance = GetComponent<RobotBalanceController>();
+            tumble = GetComponent<RobotTumbleController>();
             CreateDisplay();
         }
 
@@ -83,7 +87,6 @@ namespace AnimalGame.RobotMap
         {
             if (!showBalanceDisplay
                 || balance == null
-                || balance.IsTippedOver
                 || graphic == null)
             {
                 if (canvasObject != null)
@@ -110,7 +113,10 @@ namespace AnimalGame.RobotMap
             RectTransform graphicRect = graphic.rectTransform;
             graphicRect.anchoredPosition = new Vector2(originScreen.x, originScreen.y);
 
-            RobotBalanceState state = balance.CurrentState;
+            RobotBalanceState state = tumble != null
+                                      && tumble.HasTumbleBalanceState
+                ? tumble.TumbleBalanceState
+                : balance.CurrentState;
             Vector2 screenDirection = Vector2.zero;
             if (state.NormalizedWorldOffset.sqrMagnitude > 0.000001f)
             {
@@ -171,7 +177,7 @@ namespace AnimalGame.RobotMap
                 return;
 
             canvasObject = new GameObject(
-                "Robot Balance UI",
+                BalanceCanvasName,
                 typeof(RectTransform),
                 typeof(Canvas),
                 typeof(CanvasScaler));

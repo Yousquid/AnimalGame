@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using AnimalGame.RobotMap;
 using UnityEngine;
 
@@ -106,6 +107,11 @@ namespace AnimalGame.MapTest
             tumble.Initialize(traversalEvaluator);
             heightMotion.Initialize(map);
             cameraShake.Initialize(robot, balance, heightMotion);
+            RobotTumbleUiRotation uiRotation =
+                mainUiObject.GetComponent<RobotTumbleUiRotation>();
+            if (uiRotation == null)
+                uiRotation = mainUiObject.AddComponent<RobotTumbleUiRotation>();
+            uiRotation.Initialize(tumble, camera);
             traversalOverlay.Initialize(map, traversalEvaluator, camera, robot);
             scanOverlay.Initialize(
                 map,
@@ -190,8 +196,22 @@ namespace AnimalGame.MapTest
 
         private void OnGUI()
         {
-            DrawFrameRate();
+            Matrix4x4 previousGuiMatrix =
+                RobotTumbleUiRotation.BeginImmediateModeGuiRotation();
+            try
+            {
+                DrawFrameRate();
+            }
+            finally
+            {
+                GUI.matrix = previousGuiMatrix;
+            }
 
+            DrawRobotTerrainData();
+        }
+
+        private void DrawRobotTerrainData()
+        {
             GUIStyle title = new GUIStyle(GUI.skin.label) { fontSize = 18, fontStyle = FontStyle.Bold };
             title.normal.textColor = new Color(0.9f, 0.97f, 1f);
             GUIStyle data = new GUIStyle(GUI.skin.label) { fontSize = 15 };
@@ -312,6 +332,220 @@ namespace AnimalGame.MapTest
         private void OnValidate()
         {
             frameRateRefreshInterval = Mathf.Max(0.05f, frameRateRefreshInterval);
+        }
+    }
+
+    [DefaultExecutionOrder(350)]
+    [DisallowMultipleComponent]
+    public sealed class RobotTumbleUiRotation : MonoBehaviour
+    {
+        public static float ActiveRotationDegrees { get; private set; }
+
+        [Tooltip("How often newly created root canvases are added to the rotating UI layer.")]
+        [SerializeField, Min(0.05f)] private float canvasRefreshInterval = 0.5f;
+
+        private readonly Dictionary<Canvas, RectTransform> canvasPivots = new();
+        private RobotTumbleController tumble;
+        private Camera mapCamera;
+        private float currentRotationDegrees;
+        private float nextCanvasRefreshTime;
+        private int screenQuarterTurnSign = 1;
+        private bool tumbleDirectionLocked;
+
+        public void Initialize(RobotTumbleController tumbleController, Camera camera)
+        {
+            tumble = tumbleController;
+            mapCamera = camera;
+            RefreshCanvasRoots();
+        }
+
+        private void LateUpdate()
+        {
+            if (Time.unscaledTime >= nextCanvasRefreshTime)
+                RefreshCanvasRoots();
+
+            currentRotationDegrees = CalculateTargetRotation();
+            ActiveRotationDegrees = currentRotationDegrees;
+            ApplyRotationToCanvasPivots();
+        }
+
+        public static Matrix4x4 BeginImmediateModeGuiRotation()
+        {
+            Matrix4x4 previousMatrix = GUI.matrix;
+            if (Mathf.Abs(ActiveRotationDegrees) > 0.0001f)
+            {
+                GUIUtility.RotateAroundPivot(
+                    ActiveRotationDegrees,
+                    new Vector2(Screen.width * 0.5f, Screen.height * 0.5f));
+            }
+
+            return previousMatrix;
+        }
+
+        private float CalculateTargetRotation()
+        {
+            if (tumble == null || tumble.State == RobotTumbleState.Upright)
+            {
+                tumbleDirectionLocked = false;
+                return 0f;
+            }
+
+            if (!tumbleDirectionLocked)
+                LockScreenQuarterTurnSign();
+
+            float stepProgress = Mathf.Clamp01(tumble.StepProgress01);
+            float easedStepProgress = stepProgress * stepProgress
+                                      * (3f - 2f * stepProgress);
+            float quarterTurnProgress = tumble.CompletedStepCount;
+            if (tumble.State == RobotTumbleState.Tumbling)
+                quarterTurnProgress += easedStepProgress;
+            return screenQuarterTurnSign * quarterTurnProgress * 90f;
+        }
+
+        private void LockScreenQuarterTurnSign()
+        {
+            screenQuarterTurnSign = tumble != null
+                ? tumble.QuarterTurnSign
+                : 1;
+            if (tumble != null
+                && mapCamera != null
+                && tumble.DirectionWorld.sqrMagnitude > 0.000001f)
+            {
+                Vector3 originScreen = mapCamera.WorldToScreenPoint(
+                    tumble.transform.position);
+                Vector3 directionScreen = mapCamera.WorldToScreenPoint(
+                    tumble.transform.position + (Vector3)tumble.DirectionWorld);
+                float screenDirectionX = directionScreen.x - originScreen.x;
+                if (Mathf.Abs(screenDirectionX) > 0.001f)
+                    screenQuarterTurnSign = screenDirectionX > 0f ? -1 : 1;
+            }
+
+            tumbleDirectionLocked = true;
+        }
+
+        private void RefreshCanvasRoots()
+        {
+            nextCanvasRefreshTime = Time.unscaledTime
+                                    + Mathf.Max(0.05f, canvasRefreshInterval);
+            Canvas[] canvases = FindObjectsOfType<Canvas>(true);
+            foreach (Canvas canvas in canvases)
+            {
+                if (canvas == null
+                    || !canvas.isRootCanvas
+                    || canvas.renderMode == RenderMode.WorldSpace)
+                {
+                    continue;
+                }
+
+                if (canvas.gameObject.name == RobotBalanceView.BalanceCanvasName)
+                {
+                    if (canvasPivots.TryGetValue(
+                            canvas,
+                            out RectTransform excludedPivot)
+                        && excludedPivot != null)
+                    {
+                        excludedPivot.localRotation = Quaternion.identity;
+                    }
+
+                    canvasPivots.Remove(canvas);
+                    continue;
+                }
+
+                if (!canvasPivots.TryGetValue(canvas, out RectTransform pivot)
+                    || pivot == null)
+                {
+                    pivot = FindOrCreateRotationPivot(canvas);
+                    canvasPivots[canvas] = pivot;
+                }
+
+                MoveDirectCanvasChildrenUnderPivot(canvas, pivot);
+            }
+        }
+
+        private static RectTransform FindOrCreateRotationPivot(Canvas canvas)
+        {
+            const string PivotName = "Tumble UI Rotation Pivot";
+            Transform canvasTransform = canvas.transform;
+            for (int i = 0; i < canvasTransform.childCount; i++)
+            {
+                Transform child = canvasTransform.GetChild(i);
+                if (child.name == PivotName && child is RectTransform existingPivot)
+                    return existingPivot;
+            }
+
+            var pivotObject = new GameObject(PivotName, typeof(RectTransform));
+            pivotObject.layer = canvas.gameObject.layer;
+            RectTransform pivot = pivotObject.GetComponent<RectTransform>();
+            pivot.SetParent(canvasTransform, false);
+            pivot.anchorMin = Vector2.zero;
+            pivot.anchorMax = Vector2.one;
+            pivot.offsetMin = Vector2.zero;
+            pivot.offsetMax = Vector2.zero;
+            pivot.pivot = Vector2.one * 0.5f;
+            return pivot;
+        }
+
+        private static void MoveDirectCanvasChildrenUnderPivot(
+            Canvas canvas,
+            RectTransform pivot)
+        {
+            Transform canvasTransform = canvas.transform;
+            for (int i = canvasTransform.childCount - 1; i >= 0; i--)
+            {
+                Transform child = canvasTransform.GetChild(i);
+                if (child == pivot)
+                    continue;
+
+                child.SetParent(pivot, false);
+            }
+        }
+
+        private void ApplyRotationToCanvasPivots()
+        {
+            var missingCanvases = new List<Canvas>();
+            foreach (KeyValuePair<Canvas, RectTransform> canvasPivot in canvasPivots)
+            {
+                if (canvasPivot.Key == null || canvasPivot.Value == null)
+                {
+                    missingCanvases.Add(canvasPivot.Key);
+                    continue;
+                }
+
+                canvasPivot.Value.localRotation = Quaternion.Euler(
+                    0f,
+                    0f,
+                    currentRotationDegrees);
+            }
+
+            foreach (Canvas missingCanvas in missingCanvases)
+                canvasPivots.Remove(missingCanvas);
+        }
+
+        private void RestoreCanvasRotations()
+        {
+            foreach (KeyValuePair<Canvas, RectTransform> canvasPivot in canvasPivots)
+            {
+                if (canvasPivot.Value != null)
+                    canvasPivot.Value.localRotation = Quaternion.identity;
+            }
+
+            currentRotationDegrees = 0f;
+            ActiveRotationDegrees = 0f;
+        }
+
+        private void OnDisable()
+        {
+            RestoreCanvasRotations();
+        }
+
+        private void OnDestroy()
+        {
+            RestoreCanvasRotations();
+        }
+
+        private void OnValidate()
+        {
+            canvasRefreshInterval = Mathf.Max(0.05f, canvasRefreshInterval);
         }
     }
 }

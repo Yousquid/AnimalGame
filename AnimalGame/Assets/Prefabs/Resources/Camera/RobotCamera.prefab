@@ -179,10 +179,29 @@ MonoBehaviour:
   tumbleStartRotationImpactDegrees: 1.8
   tumbleStartZoomImpactFraction: 0.01
   tumbleImpactEnergyAtFullStrength: 8
-  tumbleStepMinimumImpactStrength: 0.3
+  tumbleStepMinimumImpactStrength: 0.65
   tumbleStepPositionImpact: 0.28
   tumbleStepRotationImpactDegrees: 4
   tumbleStepZoomImpactFraction: 0.03
+  tumbleImpactMultiplier: 4.5
+  tumbleImmediateImpactFraction: 0.72
+  tumbleMaximumPositionOffset: 1.3
+  tumbleMaximumRotationDegrees: 22
+  tumbleMaximumZoomFraction: 0.12
+  tumbleContinuousPositionAmplitude: 0.28
+  tumbleContinuousRotationDegrees: 5
+  tumbleContinuousFrequency: 9.5
+  tumbleImpactLimitHoldDuration: 1
+  tumbleAftershockDuration: 0.8
+  tumbleContinuousLowFrequencyStrength: 0.95
+  tumbleContinuousHighFrequencyStrength: 0.82
+  tumbleLandingLowFrequencyStrength: 1
+  tumbleLandingHighFrequencyStrength: 1
+  tumbleLandingRumblePeakHoldDuration: 0.24
+  tumbleLandingRumbleDuration: 0.95
+  tumbleLandingRumbleFalloffExponent: 0.75
+  sonyTumbleMaximumLowFrequencyStrength: 1
+  sonyTumbleMaximumHighFrequencyStrength: 1
   landingPositionImpact: 0.36
   landingRotationImpactDegrees: 5.2
   landingZoomImpactFraction: 0.042

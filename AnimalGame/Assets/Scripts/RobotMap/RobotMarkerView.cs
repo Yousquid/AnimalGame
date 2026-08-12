@@ -33,6 +33,15 @@ namespace AnimalGame.RobotMap
         [SerializeField] private float indicatorRotationOffsetDegrees;
         [SerializeField] private Color indicatorColor = new Color(0.92f, 0.98f, 1f, 1f);
 
+        [Header("Fallen Rollover Sign")]
+        [Tooltip("Arts/rollover_sign displayed over the robot only after tumbling has completely settled.")]
+        [SerializeField] private Sprite rolloverSignSprite;
+
+        [Tooltip("Diameter of the rollover sign relative to the visible robot body diameter.")]
+        [SerializeField, Min(0.1f)] private float rolloverSignDiameterRatio = 0.8f;
+
+        [SerializeField] private Color rolloverSignColor = Color.white;
+
         [Header("Visual Drive Bob")]
         [Tooltip("Moves only the Body and Indicator visual hierarchy. Robot position, camera target, terrain queries and traversal UI remain unchanged.")]
         [SerializeField] private bool showDriveBob = true;
@@ -81,6 +90,7 @@ namespace AnimalGame.RobotMap
         private SpriteRenderer bodyFill;
         private SpriteRenderer bodyArtwork;
         private SpriteRenderer directionIndicator;
+        private SpriteRenderer rolloverSign;
         private LineRenderer tail;
         private Sprite generatedBodySprite;
         private Texture2D generatedBodyTexture;
@@ -88,6 +98,7 @@ namespace AnimalGame.RobotMap
         private Camera bodyFillBackgroundCamera;
         private Camera markerSizingCamera;
         private RobotMover mover;
+        private RobotTumbleController tumble;
         private float driveBobPhase;
         private float driveBobBlend;
         private float driveBobBlendVelocity;
@@ -101,6 +112,7 @@ namespace AnimalGame.RobotMap
         private void Awake()
         {
             mover = GetComponent<RobotMover>();
+            tumble = GetComponent<RobotTumbleController>();
             driveBobRandom = new System.Random(
                 unchecked(GetInstanceID() * 397 ^ System.Environment.TickCount));
             driveBobNoiseSeed = NextDriveBobRandom(0f, 1000f);
@@ -109,6 +121,7 @@ namespace AnimalGame.RobotMap
             CreateForegroundSpriteMaterial();
             CreateBodySpriteRenderer();
             CreateDirectionIndicatorRenderer();
+            CreateRolloverSignRenderer();
 
             tail = RobotMapDemo.CreateLine(transform, "Motion Tail", new[]
             {
@@ -135,6 +148,7 @@ namespace AnimalGame.RobotMap
         {
             SynchronizeMarkerScreenSize();
             SynchronizeBodyFillColor();
+            SynchronizeRolloverSignVisibility();
 
             bool movementLocked = mover != null && mover.IsMovementLocked;
             float pulse = 1f + Mathf.Sin(Time.time * 3.2f) * 0.035f;
@@ -553,6 +567,52 @@ namespace AnimalGame.RobotMap
             }
         }
 
+        private void CreateRolloverSignRenderer()
+        {
+            var rolloverObject = new GameObject("Fallen Rollover Sign");
+            rolloverObject.transform.SetParent(markerVisualRoot, false);
+
+            rolloverSign = rolloverObject.AddComponent<SpriteRenderer>();
+            rolloverSign.sprite = rolloverSignSprite;
+            rolloverSign.color = rolloverSignColor;
+            rolloverSign.sortingOrder = 1003;
+            if (foregroundSpriteMaterial != null)
+                rolloverSign.sharedMaterial = foregroundSpriteMaterial;
+
+            if (rolloverSignSprite != null)
+            {
+                float spriteDiameter = Mathf.Max(
+                    rolloverSignSprite.bounds.size.x,
+                    rolloverSignSprite.bounds.size.y);
+                float targetDiameter = bodyDiameter * rolloverSignDiameterRatio;
+                rolloverObject.transform.localScale = Vector3.one
+                                                     * (targetDiameter
+                                                        / Mathf.Max(
+                                                            0.0001f,
+                                                            spriteDiameter));
+            }
+            else
+            {
+                Debug.LogWarning(
+                    "RobotMarkerView is missing Arts/rollover_sign.",
+                    this);
+            }
+
+            SynchronizeRolloverSignVisibility();
+        }
+
+        private void SynchronizeRolloverSignVisibility()
+        {
+            if (rolloverSign == null)
+                return;
+
+            if (tumble == null)
+                tumble = GetComponent<RobotTumbleController>();
+            rolloverSign.enabled = rolloverSign.sprite != null
+                                   && tumble != null
+                                   && tumble.State == RobotTumbleState.Fallen;
+        }
+
         private void OnDestroy()
         {
             if (generatedBodySprite != null)
@@ -572,6 +632,9 @@ namespace AnimalGame.RobotMap
             bodyScreenDiameterPixels = Mathf.Max(1f, bodyScreenDiameterPixels);
             bodyFillDiameterRatio = Mathf.Clamp(bodyFillDiameterRatio, 0.1f, 1f);
             indicatorScale = Mathf.Max(0.1f, indicatorScale);
+            rolloverSignDiameterRatio = Mathf.Max(
+                0.1f,
+                rolloverSignDiameterRatio);
             driveBobAmplitude = Mathf.Max(0f, driveBobAmplitude);
             driveBobCyclesPerMeter = Mathf.Max(0f, driveBobCyclesPerMeter);
             driveBobFullStrengthSpeed = Mathf.Max(0.01f, driveBobFullStrengthSpeed);

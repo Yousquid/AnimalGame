@@ -158,6 +158,22 @@ namespace AnimalGame.RobotMap
         [SerializeField, Min(0.01f)] private float minimumStepDuration = 0.18f;
         [SerializeField, Min(0.01f)] private float maximumStepDuration = 0.8f;
 
+        [Header("Tumble Balance Display")]
+        [Tooltip("Preferred normalized centre-of-mass distance while tumbling. Values above one place the point outside the support ring.")]
+        [SerializeField, Range(1f, 1.5f)] private float outerBalanceMagnitude = 1.1f;
+
+        [Tooltip("Closest normalized distance reached during the brief inward part of a strong tumble swing.")]
+        [SerializeField, Range(0.9f, 1f)] private float minimumSwingMagnitude = 0.98f;
+
+        [Tooltip("Higher values shorten the part of each tumble during which the centre-of-mass point moves close to or inside the support ring.")]
+        [SerializeField, Range(2f, 16f)] private float inwardSwingSharpness = 8f;
+
+        [Tooltip("Maximum alternating sideways arc of the simulated centre-of-mass point during each tumble step.")]
+        [SerializeField, Range(0f, 30f)] private float lateralSwingDegrees = 12f;
+
+        [Tooltip("Additional visual swing reduction per completed tumble, on top of the remaining-energy reduction.")]
+        [SerializeField, Range(0f, 0.5f)] private float laterStepSwingDamping = 0.08f;
+
         [Header("Safety Limits")]
         [Tooltip("An abrupt unsmoothed downward detail step above this size is treated as an unsupported ledge. Continuous downhill slope is never blocked by this limit.")]
         [SerializeField, Min(0f)] private float maximumGroundedDetailStepMeters = 1.8f;
@@ -169,6 +185,7 @@ namespace AnimalGame.RobotMap
             RobotTumbleState.Upright;
         public RobotTumbleAxis Axis { get; private set; }
         public Vector2 DirectionWorld { get; private set; }
+        public int QuarterTurnSign { get; private set; } = 1;
         public int CompletedStepCount { get; private set; }
         public int ActiveStepIndex => CompletedStepCount;
         public float StepProgress01 { get; private set; }
@@ -176,9 +193,13 @@ namespace AnimalGame.RobotMap
         public float CurrentStepDistanceMeters { get; private set; }
         public float CurrentVerticalSizeMeters { get; private set; }
         public float NextVerticalSizeMeters { get; private set; }
+        public RobotBalanceState TumbleBalanceState { get; private set; }
+        public bool HasTumbleBalanceState => State != RobotTumbleState.Upright;
         public float ContinuousQuarterTurnProgress =>
             CompletedStepCount
             + (activeStep ? StepProgress01 : 0f);
+        public float SignedContinuousQuarterTurnProgress =>
+            QuarterTurnSign * ContinuousQuarterTurnProgress;
 
         public event Action<RobotTumbleStartedInfo> Started;
         public event Action<RobotTumbleStepInfo> StepCompleted;
@@ -200,6 +221,9 @@ namespace AnimalGame.RobotMap
         private float stepElapsed;
         private float stepDuration;
         private float stepRequiredSpecificEnergy;
+        private float triggerBalanceMagnitude;
+        private float tumbleBalanceOuterMagnitude;
+        private float tumbleBalanceEnergyReference;
 
         private void Awake()
         {
@@ -263,6 +287,7 @@ namespace AnimalGame.RobotMap
                 easedProgress);
             nextPosition.z = stepStartWorld.z;
             transform.position = nextPosition;
+            UpdateTumbleBalanceState(StepProgress01);
 
             if (StepProgress01 >= 1f)
                 CompleteActiveStep();
@@ -283,6 +308,14 @@ namespace AnimalGame.RobotMap
             tumbleStartTime = Time.time;
             CompletedStepCount = 0;
             StepProgress01 = 0f;
+            triggerBalanceMagnitude = Mathf.Max(
+                1.001f,
+                tipOverInfo.TriggerState.Magnitude);
+            tumbleBalanceOuterMagnitude = Mathf.Max(
+                triggerBalanceMagnitude,
+                outerBalanceMagnitude);
+            tumbleBalanceEnergyReference = 0f;
+            UpdateTumbleBalanceState(0f);
 
             if (evaluator == null || !evaluator.IsInitialized)
             {
@@ -330,6 +363,9 @@ namespace AnimalGame.RobotMap
                 : Mathf.Sign(localDirection.x);
             if (Mathf.Approximately(sign, 0f))
                 sign = 1f;
+            // This is the deterministic fallback used by screen-space effects
+            // when the world tumble direction projects almost vertically.
+            QuarterTurnSign = sign > 0f ? -1 : 1;
 
             DirectionWorld = tipOverInfo.WorldDirection;
             if (DirectionWorld.sqrMagnitude >= 0.000001f)
@@ -416,6 +452,9 @@ namespace AnimalGame.RobotMap
                 CurrentSpecificEnergy = Mathf.Max(
                     CurrentSpecificEnergy,
                     stepRequiredSpecificEnergy + commitReserve);
+                tumbleBalanceEnergyReference = Mathf.Max(
+                    0.0001f,
+                    CurrentSpecificEnergy);
             }
             else
             {
@@ -449,6 +488,7 @@ namespace AnimalGame.RobotMap
                 minimumStepDuration,
                 maximumStepDuration);
             activeStep = true;
+            UpdateTumbleBalanceState(0f);
 
             if (forceCommittedFirstStep)
             {
@@ -547,6 +587,77 @@ namespace AnimalGame.RobotMap
                    * mapSpeed;
         }
 
+        private void UpdateTumbleBalanceState(float stepProgress01)
+        {
+            float progress = Mathf.Clamp01(stepProgress01);
+            float smoothedProgress = progress * progress
+                                     * (3f - 2f * progress);
+            float baseMagnitude = CompletedStepCount == 0
+                ? Mathf.Lerp(
+                    triggerBalanceMagnitude,
+                    tumbleBalanceOuterMagnitude,
+                    smoothedProgress)
+                : tumbleBalanceOuterMagnitude;
+
+            float energyStrength = tumbleBalanceEnergyReference > 0.0001f
+                ? Mathf.Sqrt(Mathf.Clamp01(
+                    CurrentSpecificEnergy / tumbleBalanceEnergyReference))
+                : 1f;
+            float laterStepStrength = 1f
+                                      / (1f
+                                         + CompletedStepCount
+                                         * laterStepSwingDamping);
+            float swingStrength = Mathf.Clamp01(
+                energyStrength * laterStepStrength);
+            float halfTurnWave = Mathf.Sin(progress * Mathf.PI);
+            float narrowInwardWindow = Mathf.Pow(
+                Mathf.Max(0f, halfTurnWave),
+                inwardSwingSharpness);
+            float inwardMagnitude = Mathf.Lerp(
+                baseMagnitude,
+                Mathf.Min(baseMagnitude, minimumSwingMagnitude),
+                swingStrength);
+            float displayedMagnitude = Mathf.Lerp(
+                baseMagnitude,
+                inwardMagnitude,
+                narrowInwardWindow);
+
+            float alternatingSign = (CompletedStepCount & 1) == 0
+                ? 1f
+                : -1f;
+            float lateralAngleRadians = lateralSwingDegrees
+                                        * Mathf.Deg2Rad
+                                        * halfTurnWave
+                                        * swingStrength
+                                        * alternatingSign;
+            Vector2 baseDirection = DirectionWorld.sqrMagnitude > 0.000001f
+                ? DirectionWorld.normalized
+                : Vector2.right;
+            float cosine = Mathf.Cos(lateralAngleRadians);
+            float sine = Mathf.Sin(lateralAngleRadians);
+            Vector2 displayedWorldDirection = new Vector2(
+                baseDirection.x * cosine - baseDirection.y * sine,
+                baseDirection.x * sine + baseDirection.y * cosine);
+            Vector2 displayedWorldOffset = displayedWorldDirection
+                                           * displayedMagnitude;
+            Vector2 displayedLocalDirection = new Vector2(
+                Vector2.Dot(displayedWorldDirection, transform.right),
+                Vector2.Dot(displayedWorldDirection, transform.up));
+            if (displayedLocalDirection.sqrMagnitude > 0.000001f)
+                displayedLocalDirection.Normalize();
+
+            RobotBalanceLevel level = displayedMagnitude >= 1f
+                ? RobotBalanceLevel.OutsideSupport
+                : RobotBalanceLevel.Critical;
+            TumbleBalanceState = new RobotBalanceState(
+                displayedLocalDirection * displayedMagnitude,
+                displayedWorldOffset,
+                Vector2.zero,
+                displayedMagnitude,
+                Mathf.InverseLerp(0.75f, 1f, displayedMagnitude),
+                level);
+        }
+
         private void Settle(RobotTumbleSettleReason reason)
         {
             if (State == RobotTumbleState.Fallen)
@@ -582,6 +693,26 @@ namespace AnimalGame.RobotMap
             maximumStepDuration = Mathf.Max(
                 minimumStepDuration,
                 maximumStepDuration);
+            outerBalanceMagnitude = Mathf.Clamp(
+                outerBalanceMagnitude,
+                1.001f,
+                1.5f);
+            minimumSwingMagnitude = Mathf.Clamp(
+                minimumSwingMagnitude,
+                0.9f,
+                1f);
+            inwardSwingSharpness = Mathf.Clamp(
+                inwardSwingSharpness,
+                2f,
+                16f);
+            lateralSwingDegrees = Mathf.Clamp(
+                lateralSwingDegrees,
+                0f,
+                30f);
+            laterStepSwingDamping = Mathf.Clamp(
+                laterStepSwingDamping,
+                0f,
+                0.5f);
             maximumGroundedDetailStepMeters = Mathf.Max(
                 0f,
                 maximumGroundedDetailStepMeters);
