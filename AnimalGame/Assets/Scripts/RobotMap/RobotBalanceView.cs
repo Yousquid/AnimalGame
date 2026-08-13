@@ -9,6 +9,7 @@ namespace AnimalGame.RobotMap
     public sealed class RobotBalanceView : MonoBehaviour
     {
         public const string BalanceCanvasName = "Robot Balance UI";
+        public float ControlRingRadiusPixels => controlRingDiameterPixels * 0.5f;
 
         [Header("Visibility")]
         [SerializeField] private bool showBalanceDisplay = true;

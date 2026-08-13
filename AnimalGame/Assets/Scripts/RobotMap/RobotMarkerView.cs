@@ -33,6 +33,14 @@ namespace AnimalGame.RobotMap
         [SerializeField] private float indicatorRotationOffsetDegrees;
         [SerializeField] private Color indicatorColor = new Color(0.92f, 0.98f, 1f, 1f);
 
+        [Tooltip("Time used to fade the direction arrow out after entering arm-control mode.")]
+        [SerializeField, Min(0.01f)]
+        private float indicatorArmModeFadeOutDuration = 0.16f;
+
+        [Tooltip("Time used to fade the direction arrow back in after leaving arm-control mode.")]
+        [SerializeField, Min(0.01f)]
+        private float indicatorArmModeFadeInDuration = 0.2f;
+
         [Header("Direction Indicator Tumble Projection")]
         [Tooltip("How far the direction arrow moves toward the falling edge while its top surface turns away, relative to the visible body diameter.")]
         [SerializeField, Range(0f, 0.5f)] private float indicatorTumbleEdgeOffsetRatio = 0.18f;
@@ -116,6 +124,8 @@ namespace AnimalGame.RobotMap
         private Camera markerSizingCamera;
         private RobotMover mover;
         private RobotTumbleController tumble;
+        private RobotArmController armController;
+        private float indicatorArmModeVisibility = 1f;
         private float driveBobPhase;
         private float driveBobBlend;
         private float driveBobBlendVelocity;
@@ -130,6 +140,7 @@ namespace AnimalGame.RobotMap
         {
             mover = GetComponent<RobotMover>();
             tumble = GetComponent<RobotTumbleController>();
+            armController = GetComponent<RobotArmController>();
             driveBobRandom = new System.Random(
                 unchecked(GetInstanceID() * 397 ^ System.Environment.TickCount));
             driveBobNoiseSeed = NextDriveBobRandom(0f, 1000f);
@@ -149,6 +160,40 @@ namespace AnimalGame.RobotMap
 
         public bool ShowMotionTail => showMotionTail;
         public bool ShowDriveBob => showDriveBob;
+        public Transform MarkerVisualRoot => markerVisualRoot;
+        public float BodyDiameter => bodyDiameter;
+        public Material ForegroundSpriteMaterial => foregroundSpriteMaterial;
+
+        public float ScreenPixelsToMarkerLocalUnits(float screenPixels)
+        {
+            if (markerVisualRoot == null)
+                return 0f;
+
+            if (markerSizingCamera == null
+                || !markerSizingCamera.isActiveAndEnabled)
+            {
+                markerSizingCamera = Camera.main;
+            }
+
+            if (markerSizingCamera != null && markerSizingCamera.orthographic)
+            {
+                float worldUnitsPerPixel = markerSizingCamera.orthographicSize
+                                           * 2f
+                                           / Mathf.Max(
+                                               1f,
+                                               markerSizingCamera.pixelHeight);
+                float visualWorldScale = Mathf.Max(
+                    0.0001f,
+                    markerVisualRoot.lossyScale.x);
+                return Mathf.Max(0f, screenPixels)
+                       * worldUnitsPerPixel
+                       / visualWorldScale;
+            }
+
+            return Mathf.Max(0f, screenPixels)
+                   * bodyDiameter
+                   / Mathf.Max(1f, bodyScreenDiameterPixels);
+        }
 
         public void SetMotionTailVisible(bool shouldShow)
         {
@@ -611,11 +656,30 @@ namespace AnimalGame.RobotMap
             if (directionIndicator == null)
                 return;
 
+            if (armController == null)
+                armController = GetComponent<RobotArmController>();
+
+            bool armModeActive = armController != null
+                                 && armController.IsArmModeActive;
+            float armVisibilityTarget = armModeActive ? 0f : 1f;
+            float armFadeDuration = armModeActive
+                ? indicatorArmModeFadeOutDuration
+                : indicatorArmModeFadeInDuration;
+            indicatorArmModeVisibility = Mathf.MoveTowards(
+                indicatorArmModeVisibility,
+                armVisibilityTarget,
+                Mathf.Max(0f, Time.deltaTime)
+                / Mathf.Max(0.01f, armFadeDuration));
+
             if (tumble == null)
                 tumble = GetComponent<RobotTumbleController>();
             if (tumble == null || tumble.State == RobotTumbleState.Upright)
             {
-                ApplyDirectionIndicatorProjection(1f, 0f, Vector2.zero);
+                ApplyDirectionIndicatorProjection(
+                    1f,
+                    0f,
+                    Vector2.zero,
+                    1f);
                 return;
             }
 
@@ -625,12 +689,17 @@ namespace AnimalGame.RobotMap
                                         * quarterTurnProgress
                                         * Mathf.PI
                                         * 0.5f;
-            float topFacing = Mathf.Max(0f, Mathf.Cos(surfaceAngleRadians));
+            float signedSurfaceFacing = Mathf.Cos(surfaceAngleRadians);
             float visibility = Mathf.Pow(
-                topFacing,
+                Mathf.Abs(signedSurfaceFacing),
                 indicatorTumbleFadeExponent);
             float signedEdgeProjection = Mathf.Sin(surfaceAngleRadians)
                                          * tumble.QuarterTurnSign;
+            float forwardDirectionSign = tumble.Axis
+                                         == RobotTumbleAxis.ForwardBack
+                                         && signedSurfaceFacing < 0f
+                ? -1f
+                : 1f;
 
             Vector2 localTumbleDirection = new Vector2(
                 Vector2.Dot(tumble.DirectionWorld, transform.right),
@@ -641,13 +710,15 @@ namespace AnimalGame.RobotMap
             ApplyDirectionIndicatorProjection(
                 visibility,
                 signedEdgeProjection,
-                localTumbleDirection);
+                localTumbleDirection,
+                forwardDirectionSign);
         }
 
         private void ApplyDirectionIndicatorProjection(
             float visibility,
             float edgeProjection,
-            Vector2 localTumbleDirection)
+            Vector2 localTumbleDirection,
+            float forwardDirectionSign)
         {
             float safeVisibility = Mathf.Clamp01(visibility);
             float projectedScale = Mathf.Lerp(
@@ -659,7 +730,8 @@ namespace AnimalGame.RobotMap
                 && tumble.State != RobotTumbleState.Upright
                 && tumble.Axis == RobotTumbleAxis.ForwardBack)
             {
-                scale.y *= projectedScale;
+                scale.y *= projectedScale
+                           * (forwardDirectionSign < 0f ? -1f : 1f);
             }
             else if (tumble != null
                      && tumble.State != RobotTumbleState.Upright)
@@ -674,10 +746,12 @@ namespace AnimalGame.RobotMap
                           * indicatorTumbleEdgeOffsetRatio
                           * Mathf.Clamp(edgeProjection, -1f, 1f));
             Color projectedColor = indicatorColor;
-            projectedColor.a *= safeVisibility;
+            float combinedVisibility = safeVisibility
+                                       * indicatorArmModeVisibility;
+            projectedColor.a *= combinedVisibility;
             directionIndicator.color = projectedColor;
             directionIndicator.enabled = directionIndicator.sprite != null
-                                         && safeVisibility > 0.001f;
+                                         && combinedVisibility > 0.001f;
         }
 
         private void CreateRolloverSignRenderer()
@@ -747,6 +821,12 @@ namespace AnimalGame.RobotMap
             bodyScreenDiameterPixels = Mathf.Max(1f, bodyScreenDiameterPixels);
             bodyFillDiameterRatio = Mathf.Clamp(bodyFillDiameterRatio, 0.1f, 1f);
             indicatorScale = Mathf.Max(0.1f, indicatorScale);
+            indicatorArmModeFadeOutDuration = Mathf.Max(
+                0.01f,
+                indicatorArmModeFadeOutDuration);
+            indicatorArmModeFadeInDuration = Mathf.Max(
+                0.01f,
+                indicatorArmModeFadeInDuration);
             indicatorTumbleEdgeOffsetRatio = Mathf.Clamp(
                 indicatorTumbleEdgeOffsetRatio,
                 0f,

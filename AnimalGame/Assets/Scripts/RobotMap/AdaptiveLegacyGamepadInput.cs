@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
 
 namespace AnimalGame.RobotMap
 {
@@ -56,6 +59,30 @@ namespace AnimalGame.RobotMap
         {
             RefreshDeviceIfNeeded();
             return HasConnectedGamepad ? ReadAxisSafely(TurnAxis) : 0f;
+        }
+
+        public static Vector2 ReadLeftStick()
+        {
+            return new Vector2(ReadSteering(), ReadMove());
+        }
+
+        public static bool IsLeftStickButtonHeld()
+        {
+#if ENABLE_INPUT_SYSTEM
+            foreach (Gamepad gamepad in Gamepad.all)
+            {
+                if (gamepad != null
+                    && gamepad.added
+                    && gamepad.leftStickButton.isPressed)
+                {
+                    return true;
+                }
+            }
+#endif
+            // Legacy Xbox/XInput and most generic Windows mappings expose L3
+            // as joystick button 8. The Input System path above handles Sony
+            // layouts without relying on their legacy button indices.
+            return Input.GetKey(KeyCode.JoystickButton8);
         }
 
         public static Vector2 ReadBalance()

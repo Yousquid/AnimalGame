@@ -73,6 +73,8 @@ namespace AnimalGame.MapTest
                 heightMotion = robotObject.AddComponent<RobotHeightMotionDetector>();
             if (robotObject.GetComponent<RobotBalanceView>() == null)
                 robotObject.AddComponent<RobotBalanceView>();
+            if (robotObject.GetComponent<RobotArmController>() == null)
+                robotObject.AddComponent<RobotArmController>();
             Camera camera = cameraObject.GetComponent<Camera>();
             RobotCameraFollow cameraFollow = cameraObject.GetComponent<RobotCameraFollow>();
             RobotCameraShake cameraShake =

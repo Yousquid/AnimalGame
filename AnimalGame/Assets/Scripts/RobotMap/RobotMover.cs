@@ -187,6 +187,7 @@ namespace AnimalGame.RobotMap
         public bool IsExternallyTumbling =>
             MovementMode == RobotMovementMode.ExternalTumble;
         public bool IsPermanentlyFallen => MovementMode == RobotMovementMode.Fallen;
+        public bool IsArmInputCaptured { get; private set; }
         public LevelThreeClimbFailurePhase CurrentLevelThreeClimbPhase
         {
             get;
@@ -278,6 +279,11 @@ namespace AnimalGame.RobotMap
 
             float throttle = SelectStrongerInput(keyboardThrottle, gamepadThrottle);
             float steering = SelectStrongerInput(keyboardSteering, gamepadSteering);
+            if (IsArmInputCaptured)
+            {
+                throttle = 0f;
+                steering = 0f;
+            }
             if (balanceController != null)
             {
                 throttle *= balanceController.DriveAuthority;
@@ -417,6 +423,12 @@ namespace AnimalGame.RobotMap
             MovementMode = RobotMovementMode.ExternalTumble;
             ClearMotionForExternalControl();
             return capturedWorldVelocity;
+        }
+
+        public void SetArmInputCaptured(bool captured)
+        {
+            IsArmInputCaptured = captured
+                                 && MovementMode == RobotMovementMode.Driven;
         }
 
         internal void MarkFallenPermanently()
