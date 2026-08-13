@@ -8,6 +8,7 @@ namespace AnimalGame.RobotMap
     {
         Upright,
         Tumbling,
+        FinalRocking,
         Fallen
     }
 
@@ -111,6 +112,40 @@ namespace AnimalGame.RobotMap
         }
     }
 
+    public readonly struct RobotTumbleFinalRockInfo
+    {
+        public float Duration { get; }
+        public float MaximumAngleDegrees { get; }
+        public float EnergyCloseness { get; }
+
+        public RobotTumbleFinalRockInfo(
+            float duration,
+            float maximumAngleDegrees,
+            float energyCloseness)
+        {
+            Duration = duration;
+            MaximumAngleDegrees = maximumAngleDegrees;
+            EnergyCloseness = energyCloseness;
+        }
+    }
+
+    public readonly struct RobotTumbleRockImpactInfo
+    {
+        public int ImpactIndex { get; }
+        public Vector2 WorldDirection { get; }
+        public float Strength { get; }
+
+        public RobotTumbleRockImpactInfo(
+            int impactIndex,
+            Vector2 worldDirection,
+            float strength)
+        {
+            ImpactIndex = impactIndex;
+            WorldDirection = worldDirection;
+            Strength = strength;
+        }
+    }
+
     /// <summary>
     /// Owns the authoritative planar displacement after a balance failure.
     /// Each completed step represents one discrete 90-degree rigid-body tumble.
@@ -158,6 +193,19 @@ namespace AnimalGame.RobotMap
         [SerializeField, Min(0.01f)] private float minimumStepDuration = 0.18f;
         [SerializeField, Min(0.01f)] private float maximumStepDuration = 0.8f;
 
+        [Header("Final Settling Rock")]
+        [Tooltip("Time spent rocking around the final resting face after continuation energy is depleted.")]
+        [SerializeField, Min(0.1f)] private float finalRockDuration = 1.2f;
+
+        [Tooltip("Smallest first rebound angle after the last committed tumble landing.")]
+        [SerializeField, Range(0f, 30f)] private float finalRockMinimumAngleDegrees = 6f;
+
+        [Tooltip("Largest first rebound angle when the robot nearly had enough energy for another tumble.")]
+        [SerializeField, Range(0f, 30f)] private float finalRockMaximumAngleDegrees = 18f;
+
+        [Tooltip("Maximum sideways arc used by the centre-of-mass display while the chassis settles.")]
+        [SerializeField, Range(0f, 30f)] private float finalRockBalanceSwingDegrees = 14f;
+
         [Header("Tumble Balance Display")]
         [Tooltip("Preferred normalized centre-of-mass distance while tumbling. Values above one place the point outside the support ring.")]
         [SerializeField, Range(1f, 1.5f)] private float outerBalanceMagnitude = 1.1f;
@@ -193,16 +241,30 @@ namespace AnimalGame.RobotMap
         public float CurrentStepDistanceMeters { get; private set; }
         public float CurrentVerticalSizeMeters { get; private set; }
         public float NextVerticalSizeMeters { get; private set; }
+        public float FinalRockProgress01 { get; private set; }
+        public float FinalRockOffsetDegrees { get; private set; }
+        public float FinalRockMaximumAngleDegrees { get; private set; }
+        public float FinalRockNormalizedOffset =>
+            FinalRockMaximumAngleDegrees > 0.0001f
+                ? FinalRockOffsetDegrees / FinalRockMaximumAngleDegrees
+                : 0f;
         public RobotBalanceState TumbleBalanceState { get; private set; }
         public bool HasTumbleBalanceState => State != RobotTumbleState.Upright;
         public float ContinuousQuarterTurnProgress =>
             CompletedStepCount
-            + (activeStep ? StepProgress01 : 0f);
+            + (activeStep
+                ? Mathf.SmoothStep(0f, 1f, StepProgress01)
+                : 0f)
+            + (State == RobotTumbleState.FinalRocking
+                ? FinalRockOffsetDegrees / 90f
+                : 0f);
         public float SignedContinuousQuarterTurnProgress =>
             QuarterTurnSign * ContinuousQuarterTurnProgress;
 
         public event Action<RobotTumbleStartedInfo> Started;
         public event Action<RobotTumbleStepInfo> StepCompleted;
+        public event Action<RobotTumbleFinalRockInfo> FinalRockingStarted;
+        public event Action<RobotTumbleRockImpactInfo> RockImpact;
         public event Action<RobotTumbleSettledInfo> Settled;
 
         private RobotMover mover;
@@ -224,6 +286,9 @@ namespace AnimalGame.RobotMap
         private float triggerBalanceMagnitude;
         private float tumbleBalanceOuterMagnitude;
         private float tumbleBalanceEnergyReference;
+        private float lastStepImpactLostSpecificEnergy;
+        private float finalRockElapsed;
+        private int nextFinalRockImpactIndex;
 
         private void Awake()
         {
@@ -258,6 +323,18 @@ namespace AnimalGame.RobotMap
 
         private void Update()
         {
+            if (State == RobotTumbleState.FinalRocking)
+            {
+                if (mover == null || !mover.IsExternallyTumbling)
+                {
+                    Settle(RobotTumbleSettleReason.ExternalControlLost);
+                    return;
+                }
+
+                UpdateFinalRocking();
+                return;
+            }
+
             if (State != RobotTumbleState.Tumbling)
                 return;
 
@@ -308,6 +385,10 @@ namespace AnimalGame.RobotMap
             tumbleStartTime = Time.time;
             CompletedStepCount = 0;
             StepProgress01 = 0f;
+            FinalRockProgress01 = 0f;
+            FinalRockOffsetDegrees = 0f;
+            FinalRockMaximumAngleDegrees = 0f;
+            lastStepImpactLostSpecificEnergy = 0f;
             triggerBalanceMagnitude = Mathf.Max(
                 1.001f,
                 tipOverInfo.TriggerState.Magnitude);
@@ -465,7 +546,7 @@ namespace AnimalGame.RobotMap
                     minimumKineticEnergy);
                 if (CurrentSpecificEnergy + 0.00001f < requiredToContinue)
                 {
-                    Settle(RobotTumbleSettleReason.EnergyDepleted);
+                    BeginFinalRocking(requiredToContinue);
                     return;
                 }
             }
@@ -547,6 +628,7 @@ namespace AnimalGame.RobotMap
             float remainingEnergy = energyBeforeImpact
                                     * impactEnergyRetention;
             float impactLostEnergy = energyBeforeImpact - remainingEnergy;
+            lastStepImpactLostSpecificEnergy = impactLostEnergy;
 
             int completedIndex = CompletedStepCount;
             CurrentSpecificEnergy = remainingEnergy;
@@ -577,6 +659,123 @@ namespace AnimalGame.RobotMap
             }
 
             TryStartNextStep(false);
+        }
+
+        private void BeginFinalRocking(float requiredToContinue)
+        {
+            activeStep = false;
+            State = RobotTumbleState.FinalRocking;
+            finalRockElapsed = 0f;
+            nextFinalRockImpactIndex = 0;
+            FinalRockProgress01 = 0f;
+            FinalRockOffsetDegrees = 0f;
+
+            float energyCloseness = requiredToContinue > 0.0001f
+                ? Mathf.Clamp01(CurrentSpecificEnergy / requiredToContinue)
+                : 0f;
+            float impactContribution = Mathf.Sqrt(Mathf.Clamp01(
+                lastStepImpactLostSpecificEnergy
+                / Mathf.Max(0.01f, requiredToContinue)));
+            float rockingStrength = Mathf.Clamp01(
+                energyCloseness * 0.75f + impactContribution * 0.25f);
+            FinalRockMaximumAngleDegrees = Mathf.Lerp(
+                finalRockMinimumAngleDegrees,
+                finalRockMaximumAngleDegrees,
+                rockingStrength);
+            UpdateFinalRockBalanceState(0f);
+            FinalRockingStarted?.Invoke(new RobotTumbleFinalRockInfo(
+                finalRockDuration,
+                FinalRockMaximumAngleDegrees,
+                energyCloseness));
+        }
+
+        private void UpdateFinalRocking()
+        {
+            finalRockElapsed += Mathf.Max(0f, Time.deltaTime);
+            FinalRockProgress01 = Mathf.Clamp01(
+                finalRockElapsed / Mathf.Max(0.1f, finalRockDuration));
+            FinalRockOffsetDegrees = EvaluateFinalRockOffset(
+                FinalRockProgress01)
+                * FinalRockMaximumAngleDegrees;
+            UpdateFinalRockBalanceState(FinalRockNormalizedOffset);
+
+            while (nextFinalRockImpactIndex < 2
+                   && FinalRockProgress01
+                   >= GetFinalRockImpactProgress(nextFinalRockImpactIndex))
+            {
+                int impactIndex = nextFinalRockImpactIndex++;
+                Vector2 impactDirection = DirectionWorld
+                                          * (impactIndex == 0 ? -1f : 1f);
+                float strength = impactIndex == 0 ? 0.46f : 0.28f;
+                RockImpact?.Invoke(new RobotTumbleRockImpactInfo(
+                    impactIndex,
+                    impactDirection,
+                    strength));
+            }
+
+            if (FinalRockProgress01 < 1f)
+                return;
+
+            FinalRockOffsetDegrees = 0f;
+            UpdateFinalRockBalanceState(0f);
+            Settle(RobotTumbleSettleReason.EnergyDepleted);
+        }
+
+        private static float EvaluateFinalRockOffset(float progress01)
+        {
+            float progress = Mathf.Clamp01(progress01);
+            if (progress < 0.22f)
+                return SmoothSegment(0f, -1f, progress / 0.22f);
+            if (progress < 0.5f)
+                return SmoothSegment(-1f, 0.5f, (progress - 0.22f) / 0.28f);
+            if (progress < 0.74f)
+                return SmoothSegment(0.5f, -0.2f, (progress - 0.5f) / 0.24f);
+
+            return SmoothSegment(-0.2f, 0f, (progress - 0.74f) / 0.26f);
+        }
+
+        private static float SmoothSegment(float from, float to, float progress)
+        {
+            float smooth = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(progress));
+            return Mathf.LerpUnclamped(from, to, smooth);
+        }
+
+        private static float GetFinalRockImpactProgress(int impactIndex)
+        {
+            return impactIndex == 0 ? 0.22f : 0.5f;
+        }
+
+        private void UpdateFinalRockBalanceState(float normalizedRockOffset)
+        {
+            Vector2 baseDirection = DirectionWorld.sqrMagnitude > 0.000001f
+                ? DirectionWorld.normalized
+                : Vector2.right;
+            float balanceAngle = normalizedRockOffset
+                                 * finalRockBalanceSwingDegrees
+                                 * Mathf.Deg2Rad;
+            float cosine = Mathf.Cos(balanceAngle);
+            float sine = Mathf.Sin(balanceAngle);
+            Vector2 displayedWorldDirection = new Vector2(
+                baseDirection.x * cosine - baseDirection.y * sine,
+                baseDirection.x * sine + baseDirection.y * cosine);
+            float edgeMagnitude = Mathf.Max(1.01f, tumbleBalanceOuterMagnitude);
+            float displayedMagnitude = Mathf.Lerp(
+                tumbleBalanceOuterMagnitude,
+                edgeMagnitude,
+                Mathf.Abs(normalizedRockOffset) * 0.65f);
+            Vector2 displayedLocalDirection = new Vector2(
+                Vector2.Dot(displayedWorldDirection, transform.right),
+                Vector2.Dot(displayedWorldDirection, transform.up));
+            if (displayedLocalDirection.sqrMagnitude > 0.000001f)
+                displayedLocalDirection.Normalize();
+
+            TumbleBalanceState = new RobotBalanceState(
+                displayedLocalDirection * displayedMagnitude,
+                displayedWorldDirection * displayedMagnitude,
+                Vector2.zero,
+                displayedMagnitude,
+                1f,
+                RobotBalanceLevel.OutsideSupport);
         }
 
         private float CalculateKineticSpecificEnergy(float mapSpeed)
@@ -664,6 +863,9 @@ namespace AnimalGame.RobotMap
                 return;
 
             activeStep = false;
+            if (State == RobotTumbleState.FinalRocking)
+                UpdateFinalRockBalanceState(0f);
+            FinalRockOffsetDegrees = 0f;
             State = RobotTumbleState.Fallen;
             mover?.MarkFallenPermanently();
             Settled?.Invoke(new RobotTumbleSettledInfo(
@@ -693,6 +895,19 @@ namespace AnimalGame.RobotMap
             maximumStepDuration = Mathf.Max(
                 minimumStepDuration,
                 maximumStepDuration);
+            finalRockDuration = Mathf.Max(0.1f, finalRockDuration);
+            finalRockMinimumAngleDegrees = Mathf.Clamp(
+                finalRockMinimumAngleDegrees,
+                0f,
+                30f);
+            finalRockMaximumAngleDegrees = Mathf.Clamp(
+                finalRockMaximumAngleDegrees,
+                finalRockMinimumAngleDegrees,
+                30f);
+            finalRockBalanceSwingDegrees = Mathf.Clamp(
+                finalRockBalanceSwingDegrees,
+                0f,
+                30f);
             outerBalanceMagnitude = Mathf.Clamp(
                 outerBalanceMagnitude,
                 1.001f,

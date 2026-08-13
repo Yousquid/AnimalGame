@@ -47,10 +47,17 @@ namespace AnimalGame.RobotMap
         [Tooltip("Arts/rollover_sign displayed over the robot only after tumbling has completely settled.")]
         [SerializeField] private Sprite rolloverSignSprite;
 
-        [Tooltip("Diameter of the rollover sign relative to the visible robot body diameter.")]
-        [SerializeField, Min(0.1f)] private float rolloverSignDiameterRatio = 0.8f;
+        [Tooltip("Diagonal endpoint span of the visible rollover sign relative to the visible robot body diameter. A value of one inscribes the X inside the circular body.")]
+        [SerializeField, Min(0.1f)] private float rolloverSignDiameterRatio = 1f;
+
+        [Tooltip("Width and height of the visible artwork in the 128 px Arts/rollover_sign source. Transparent padding is ignored and the diagonal endpoint span is calculated from this value.")]
+        [SerializeField, Min(1f)] private float rolloverSignVisibleDiameterPixels = 60f;
 
         [SerializeField] private Color rolloverSignColor = Color.white;
+
+        [Header("Final Settling Rock")]
+        [Tooltip("Maximum sideways marker travel during the final rocking phase, relative to the visible body diameter.")]
+        [SerializeField, Range(0f, 0.15f)] private float finalRockVisualOffsetRatio = 0.045f;
 
         [Header("Visual Drive Bob")]
         [Tooltip("Moves only the Body and Indicator visual hierarchy. Robot position, camera target, terrain queries and traversal UI remain unchanged.")]
@@ -571,11 +578,32 @@ namespace AnimalGame.RobotMap
 
             if (markerVisualRoot != null)
             {
+                Vector2 finalRockOffset = CalculateFinalRockVisualOffset();
                 markerVisualRoot.localPosition = new Vector3(
-                    0f,
-                    0f,
+                    finalRockOffset.x,
+                    finalRockOffset.y,
                     visualDepthOffset);
             }
+        }
+
+        private Vector2 CalculateFinalRockVisualOffset()
+        {
+            if (tumble == null
+                || tumble.State != RobotTumbleState.FinalRocking)
+            {
+                return Vector2.zero;
+            }
+
+            Vector2 localDirection = new Vector2(
+                Vector2.Dot(tumble.DirectionWorld, transform.right),
+                Vector2.Dot(tumble.DirectionWorld, transform.up));
+            if (localDirection.sqrMagnitude > 0.000001f)
+                localDirection.Normalize();
+
+            return localDirection
+                   * bodyDiameter
+                   * finalRockVisualOffsetRatio
+                   * tumble.FinalRockNormalizedOffset;
         }
 
         private void UpdateDirectionIndicatorSurfaceProjection()
@@ -591,14 +619,7 @@ namespace AnimalGame.RobotMap
                 return;
             }
 
-            float quarterTurnProgress = tumble.CompletedStepCount;
-            if (tumble.State == RobotTumbleState.Tumbling)
-            {
-                float stepProgress = Mathf.Clamp01(tumble.StepProgress01);
-                float easedStepProgress = stepProgress * stepProgress
-                                          * (3f - 2f * stepProgress);
-                quarterTurnProgress += easedStepProgress;
-            }
+            float quarterTurnProgress = tumble.ContinuousQuarterTurnProgress;
 
             float surfaceAngleRadians = tumble.QuarterTurnSign
                                         * quarterTurnProgress
@@ -673,15 +694,17 @@ namespace AnimalGame.RobotMap
 
             if (rolloverSignSprite != null)
             {
-                float spriteDiameter = Mathf.Max(
-                    rolloverSignSprite.bounds.size.x,
-                    rolloverSignSprite.bounds.size.y);
+                float visibleSpriteDiagonal = rolloverSignVisibleDiameterPixels
+                                              * Mathf.Sqrt(2f)
+                                              / Mathf.Max(
+                                                  1f,
+                                                  rolloverSignSprite.pixelsPerUnit);
                 float targetDiameter = bodyDiameter * rolloverSignDiameterRatio;
                 rolloverObject.transform.localScale = Vector3.one
                                                      * (targetDiameter
                                                         / Mathf.Max(
                                                             0.0001f,
-                                                            spriteDiameter));
+                                                            visibleSpriteDiagonal));
             }
             else
             {
@@ -739,6 +762,13 @@ namespace AnimalGame.RobotMap
             rolloverSignDiameterRatio = Mathf.Max(
                 0.1f,
                 rolloverSignDiameterRatio);
+            rolloverSignVisibleDiameterPixels = Mathf.Max(
+                1f,
+                rolloverSignVisibleDiameterPixels);
+            finalRockVisualOffsetRatio = Mathf.Clamp(
+                finalRockVisualOffsetRatio,
+                0f,
+                0.15f);
             driveBobAmplitude = Mathf.Max(0f, driveBobAmplitude);
             driveBobCyclesPerMeter = Mathf.Max(0f, driveBobCyclesPerMeter);
             driveBobFullStrengthSpeed = Mathf.Max(0.01f, driveBobFullStrengthSpeed);

@@ -66,4 +66,3 @@ MonoBehaviour:
   middleHeightColor: {r: 0, g: 0, b: 0, a: 1}
   highHeightColor: {r: 0, g: 0, b: 0, a: 1}
   contourColor: {r: 0.92, g: 0.97, b: 1, a: 1}
-  probeColor: {r: 1, g: 0.83, b: 0.27, a: 1}

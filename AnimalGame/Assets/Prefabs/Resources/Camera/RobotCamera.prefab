@@ -193,6 +193,9 @@ MonoBehaviour:
   tumbleContinuousFrequency: 9.5
   tumbleImpactLimitHoldDuration: 1
   tumbleAftershockDuration: 0.8
+  finalRockPositionImpact: 0.1
+  finalRockRotationImpactDegrees: 1.6
+  finalRockZoomImpactFraction: 0.006
   tumbleContinuousLowFrequencyStrength: 0.95
   tumbleContinuousHighFrequencyStrength: 0.82
   tumbleLandingLowFrequencyStrength: 1

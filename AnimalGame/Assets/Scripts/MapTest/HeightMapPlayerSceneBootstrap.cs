@@ -393,12 +393,7 @@ namespace AnimalGame.MapTest
             if (!tumbleDirectionLocked)
                 LockScreenQuarterTurnSign();
 
-            float stepProgress = Mathf.Clamp01(tumble.StepProgress01);
-            float easedStepProgress = stepProgress * stepProgress
-                                      * (3f - 2f * stepProgress);
-            float quarterTurnProgress = tumble.CompletedStepCount;
-            if (tumble.State == RobotTumbleState.Tumbling)
-                quarterTurnProgress += easedStepProgress;
+            float quarterTurnProgress = tumble.ContinuousQuarterTurnProgress;
             return screenQuarterTurnSign * quarterTurnProgress * 90f;
         }
 

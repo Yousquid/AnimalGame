@@ -79,17 +79,9 @@ namespace AnimalGame.MapTest
         [Tooltip("Base color of all dynamic contour lines before height-dependent opacity is applied.")]
         [SerializeField] private Color contourColor = new Color(0.92f, 0.97f, 1f);
 
-        [Tooltip("Color of the mouse height-probe crosshair in the standalone map inspection scene.")]
-        [SerializeField] private Color probeColor = new Color(1f, 0.83f, 0.27f);
-
         private Camera mapCamera;
         private SpriteRenderer mapRenderer;
-        private LineRenderer crosshair;
         private BakedHeightField heightField;
-        private bool cursorInsideMap;
-        private Vector2 cursorUv;
-        private float cursorRawGray;
-        private float cursorHeight;
         private Material contourMaterial;
         private Texture2D generatedPreviewTexture;
         private Sprite generatedMapSprite;
@@ -126,7 +118,6 @@ namespace AnimalGame.MapTest
             BakePhysicalHeightField();
             CreateCamera();
             CreateHeightVisualization();
-            CreateCrosshair();
             UpdateVisibleContourRange(mapCamera);
         }
 
@@ -140,11 +131,6 @@ namespace AnimalGame.MapTest
         {
             Camera.onPreCull -= HandleCameraPreCull;
             RenderPipelineManager.beginCameraRendering -= HandleBeginCameraRendering;
-        }
-
-        private void Update()
-        {
-            UpdateHeightProbe();
         }
 
         public float SampleHeight(Vector2 uv)
@@ -557,77 +543,6 @@ namespace AnimalGame.MapTest
             contourMaterial.SetFloat("_EdgeSoftness", contourEdgeSoftness);
             contourMaterial.SetFloat("_MinimumOpacity", LowestVisibleContourOpacity);
             contourMaterial.SetFloat("_MaximumOpacity", HighestVisibleContourOpacity);
-        }
-
-        private void CreateCrosshair()
-        {
-            var crosshairObject = new GameObject("Height Probe Crosshair");
-            crosshair = crosshairObject.AddComponent<LineRenderer>();
-            crosshair.useWorldSpace = true;
-            crosshair.positionCount = 4;
-            crosshair.startWidth = 0.025f;
-            crosshair.endWidth = 0.025f;
-            crosshair.startColor = probeColor;
-            crosshair.endColor = crosshair.startColor;
-            crosshair.material = new Material(Shader.Find("Sprites/Default"));
-            crosshair.sortingOrder = 10;
-            crosshair.enabled = false;
-        }
-
-        private void UpdateHeightProbe()
-        {
-            Ray cursorRay = mapCamera.ScreenPointToRay(Input.mousePosition);
-            if (!TryProjectRayToMapPlane(
-                    cursorRay,
-                    mapRenderer.transform.position.z,
-                    out Vector3 world))
-            {
-                cursorInsideMap = false;
-                crosshair.enabled = false;
-                return;
-            }
-
-            Bounds bounds = mapRenderer.bounds;
-            cursorInsideMap = world.x >= bounds.min.x && world.x <= bounds.max.x
-                              && world.y >= bounds.min.y && world.y <= bounds.max.y;
-            crosshair.enabled = cursorInsideMap;
-            if (!cursorInsideMap)
-                return;
-
-            cursorUv = new Vector2(
-                Mathf.InverseLerp(bounds.min.x, bounds.max.x, world.x),
-                Mathf.InverseLerp(bounds.min.y, bounds.max.y, world.y));
-            cursorRawGray = heightMap.GetPixelBilinear(cursorUv.x, cursorUv.y).grayscale;
-            cursorHeight = SampleHeight(cursorUv);
-
-            const float arm = 0.16f;
-            const float gap = 0.04f;
-            crosshair.SetPosition(0, new Vector3(world.x - arm, world.y));
-            crosshair.SetPosition(1, new Vector3(world.x - gap, world.y));
-            crosshair.SetPosition(2, new Vector3(world.x + gap, world.y));
-            crosshair.SetPosition(3, new Vector3(world.x + arm, world.y));
-        }
-
-        private void OnGUI()
-        {
-            GUIStyle title = new GUIStyle(GUI.skin.label) { fontSize = 20, fontStyle = FontStyle.Bold };
-            title.normal.textColor = new Color(0.9f, 0.97f, 1f);
-            GUIStyle data = new GUIStyle(GUI.skin.label) { fontSize = 15 };
-            data.normal.textColor = new Color(0.75f, 0.9f, 0.93f);
-
-            GUI.Box(new Rect(18f, 18f, 330f, cursorInsideMap ? 150f : 92f), GUIContent.none);
-            GUI.Label(new Rect(34f, 28f, 290f, 28f), "MAP HEIGHT PROBE", title);
-            if (!cursorInsideMap)
-            {
-                GUI.Label(new Rect(34f, 61f, 290f, 24f), "Move the mouse over the map", data);
-                return;
-            }
-
-            float mapX = cursorUv.x * mapWidthMeters;
-            float mapY = cursorUv.y * mapHeightMeters;
-            GUI.Label(new Rect(34f, 61f, 290f, 24f), $"MAP POSITION   X {mapX:F1}m   Y {mapY:F1}m", data);
-            GUI.Label(new Rect(34f, 86f, 290f, 24f), $"SOURCE GRAY    {cursorRawGray:F3}", data);
-            GUI.Label(new Rect(34f, 111f, 290f, 30f), $"HEIGHT         {cursorHeight:F1}m", data);
         }
 
         private Color EvaluateHeightColor(float height)

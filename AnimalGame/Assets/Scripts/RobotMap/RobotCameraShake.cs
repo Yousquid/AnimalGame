@@ -216,6 +216,16 @@ namespace AnimalGame.RobotMap
         [Tooltip("Duration of the violent high-frequency aftershock following every tumble landing.")]
         [SerializeField, Min(0f)] private float tumbleAftershockDuration = 0.8f;
 
+        [Header("Final Settling Rock Impacts")]
+        [Tooltip("Camera displacement used by the smaller support-edge contacts during the final rocking phase.")]
+        [SerializeField, Min(0f)] private float finalRockPositionImpact = 0.1f;
+
+        [Tooltip("Camera roll used by the smaller support-edge contacts during the final rocking phase.")]
+        [SerializeField, Min(0f)] private float finalRockRotationImpactDegrees = 1.6f;
+
+        [Tooltip("Orthographic zoom impulse used by final rocking contacts.")]
+        [SerializeField, Range(0f, 0.1f)] private float finalRockZoomImpactFraction = 0.006f;
+
         [Header("Tumble Gamepad Rumble")]
         [Tooltip("Low-frequency motor strength maintained throughout an active tumble.")]
         [SerializeField, Range(0f, 1f)] private float tumbleContinuousLowFrequencyStrength = 0.95f;
@@ -432,6 +442,8 @@ namespace AnimalGame.RobotMap
 
             tumble.Started += HandleTumbleStarted;
             tumble.StepCompleted += HandleTumbleStepCompleted;
+            tumble.FinalRockingStarted += HandleFinalRockingStarted;
+            tumble.RockImpact += HandleTumbleRockImpact;
             tumble.Settled += HandleTumbleSettled;
             tumbleEventsSubscribed = true;
             observedTumbleState = tumble.State;
@@ -446,6 +458,8 @@ namespace AnimalGame.RobotMap
             {
                 tumble.Started -= HandleTumbleStarted;
                 tumble.StepCompleted -= HandleTumbleStepCompleted;
+                tumble.FinalRockingStarted -= HandleFinalRockingStarted;
+                tumble.RockImpact -= HandleTumbleRockImpact;
                 tumble.Settled -= HandleTumbleSettled;
             }
 
@@ -458,7 +472,7 @@ namespace AnimalGame.RobotMap
             // Discard any ordinary drive/collision spring already in flight so
             // the tumble phase contains only explicit tumble and scan feedback.
             ResetShakeState();
-            StartTumbleLandingRumble(0.7f);
+            StartTumbleLandingRumble(1f);
             ExtendTumbleIntensityLimits();
             AddTumbleDirectionalImpact(
                 started.WorldDirection,
@@ -482,7 +496,7 @@ namespace AnimalGame.RobotMap
 
             // Tumble landings are authoritative events and deliberately bypass
             // the ordinary collision/deceleration impact cooldown.
-            StartTumbleLandingRumble(impactStrength);
+            StartTumbleLandingRumble(1f);
             StartTumbleAftershock(impactStrength);
             AddTumbleDirectionalImpact(
                 tumble != null ? tumble.DirectionWorld : Vector2.up,
@@ -497,6 +511,27 @@ namespace AnimalGame.RobotMap
             observedTumbleState = RobotTumbleState.Fallen;
             continuousPosition = Vector2.zero;
             continuousRotation = 0f;
+        }
+
+        private void HandleFinalRockingStarted(RobotTumbleFinalRockInfo rocking)
+        {
+            observedTumbleState = RobotTumbleState.FinalRocking;
+            continuousPosition = Vector2.zero;
+            continuousRotation = 0f;
+        }
+
+        private void HandleTumbleRockImpact(RobotTumbleRockImpactInfo impact)
+        {
+            float strength = Mathf.Clamp01(impact.Strength);
+            ExtendTumbleIntensityLimits();
+            StartTumbleLandingRumble(strength);
+            StartTumbleAftershock(strength * 0.45f);
+            AddTumbleDirectionalImpact(
+                impact.WorldDirection,
+                strength,
+                finalRockPositionImpact,
+                finalRockRotationImpactDegrees,
+                finalRockZoomImpactFraction);
         }
 
         private void LateUpdate()
@@ -1245,7 +1280,7 @@ namespace AnimalGame.RobotMap
             tumbleLandingRumbleStartTime = Time.time;
             tumbleLandingRumbleEndTime = Time.time
                                           + tumbleLandingRumbleDuration;
-            tumbleLandingRumbleStrength = 1f;
+            tumbleLandingRumbleStrength = Mathf.Clamp01(strength);
         }
 
         private SonyRumbleCalibration CreateSonyRumbleCalibration(
@@ -1491,6 +1526,14 @@ namespace AnimalGame.RobotMap
             tumbleAftershockDuration = Mathf.Max(
                 0f,
                 tumbleAftershockDuration);
+            finalRockPositionImpact = Mathf.Max(0f, finalRockPositionImpact);
+            finalRockRotationImpactDegrees = Mathf.Max(
+                0f,
+                finalRockRotationImpactDegrees);
+            finalRockZoomImpactFraction = Mathf.Clamp(
+                finalRockZoomImpactFraction,
+                0f,
+                0.1f);
             tumbleContinuousLowFrequencyStrength = Mathf.Clamp01(
                 tumbleContinuousLowFrequencyStrength);
             tumbleContinuousHighFrequencyStrength = Mathf.Clamp01(
