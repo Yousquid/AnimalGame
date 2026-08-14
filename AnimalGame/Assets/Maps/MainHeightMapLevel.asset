@@ -1,0 +1,36 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5369c3e47e384b0483418332bc4f2cad, type: 3}
+  m_Name: MainHeightMapLevel
+  m_EditorClassIdentifier:
+  heightMap: {fileID: 2800000, guid: 8b67fa9e7636ced418527687e79fd9a3, type: 3}
+  mapWidthMeters: 250
+  mapHeightMeters: 250
+  minimumHeightMeters: 0
+  maximumHeightMeters: 70
+  bakedHeightResolution: 2048
+  normalizeSourceRange: 1
+  surfaceSmoothingSigmaMeters: 0.75
+  previewResolution: 2160
+  contourIntervalMeters: 8
+  pixelsPerUnit: 32
+  dynamicContourShader: {fileID: 4800000, guid: 66c17e2481f6472cb3cd86fe63c9f57a, type: 3}
+  minimumContourWidth: 0.7
+  maximumContourWidth: 3.68
+  maximumContourCoverage: 0.3
+  contourEdgeSoftness: 0.4
+  viewportHeightSamples: 64
+  backgroundColor: {r: 0.008, g: 0.012, b: 0.017, a: 1}
+  lowHeightColor: {r: 0, g: 0, b: 0, a: 1}
+  middleHeightColor: {r: 0, g: 0, b: 0, a: 1}
+  highHeightColor: {r: 0, g: 0, b: 0, a: 1}
+  contourColor: {r: 0.92, g: 0.97, b: 1, a: 1}

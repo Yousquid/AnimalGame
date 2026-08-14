@@ -34,7 +34,10 @@ namespace AnimalGame.MapTest
 
         private void Awake()
         {
-            GameObject mapObject = InstantiateResource(MapResourcePath, "Map Test Controller");
+            map = FindObjectOfType<MapTestSceneController>();
+            GameObject mapObject = map != null
+                ? map.gameObject
+                : InstantiateResource(MapResourcePath, "Map Test Controller");
             GameObject robotObject = InstantiateResource(RobotResourcePath, "Robot Marker");
             GameObject cameraObject = InstantiateResource(CameraResourcePath, "Robot Camera");
             GameObject traversalObject = InstantiateResource(
@@ -57,7 +60,8 @@ namespace AnimalGame.MapTest
                 return;
             }
 
-            map = mapObject.GetComponent<MapTestSceneController>();
+            if (map == null)
+                map = mapObject.GetComponent<MapTestSceneController>();
             robot = robotObject.GetComponent<RobotMover>();
             RobotBalanceController balance =
                 robotObject.GetComponent<RobotBalanceController>();

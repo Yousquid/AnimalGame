@@ -165,7 +165,10 @@ namespace AnimalGame.MapTest
         {
             if (SurfaceTexture != null)
             {
-                UnityEngine.Object.Destroy(SurfaceTexture);
+                if (Application.isPlaying)
+                    UnityEngine.Object.Destroy(SurfaceTexture);
+                else
+                    UnityEngine.Object.DestroyImmediate(SurfaceTexture);
                 SurfaceTexture = null;
             }
         }
