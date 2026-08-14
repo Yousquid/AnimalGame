@@ -212,8 +212,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7f3a986c5d3441da8c621bb09c842e7f, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
   supportDirectionToleranceDegrees: 18
   minimumArmPushMagnitude: 0.9
   requiredEffortPushFrequencyPerSecond: 3
@@ -224,7 +224,7 @@ MonoBehaviour:
   rightStickDeadZone: 0.2
   minimumEffortPushMagnitude: 0.65
   effortPushRearmMagnitude: 0.3
-  effortPushToleranceDegrees: 22
+  effortPushToleranceDegrees: 38
   recoveredInsideMagnitude: 0.88
   failedReturnDuration: 0.8
   chassisRightingDuration: 0.46
