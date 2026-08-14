@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace AnimalGame.RobotMap
 {
@@ -80,40 +81,43 @@ namespace AnimalGame.RobotMap
         [SerializeField, Range(0f, 1f)]
         private float minimumArmPushMagnitude = 0.9f;
 
-        [Header("Force Tapping")]
-        [Tooltip("Keyboard alternative to the gamepad north face button (Xbox Y / Sony Triangle).")]
-        [SerializeField] private KeyCode keyboardForceKey = KeyCode.RightControl;
-
-        [Tooltip("Required accepted Y-button presses per second. This is evaluated through a rolling time window.")]
+        [Header("Repeated Right Stick Effort")]
+        [Tooltip("Required accepted right-stick pushes per second. Each push must return below the rearm threshold before another push can count.")]
+        [FormerlySerializedAs("requiredForceTapFrequencyPerSecond")]
         [SerializeField, Range(0.5f, 10f)]
-        private float requiredForceTapFrequencyPerSecond = 3f;
+        private float requiredEffortPushFrequencyPerSecond = 3f;
 
-        [Tooltip("Length of the rolling time window used to measure force-button frequency.")]
+        [Tooltip("Length of the rolling time window used to measure right-stick push frequency.")]
+        [FormerlySerializedAs("forceTapWindowSeconds")]
         [SerializeField, Range(0.4f, 2f)]
-        private float forceTapWindowSeconds = 1f;
+        private float effortPushWindowSeconds = 1f;
 
-        [Tooltip("Time allowed below the required cadence before a loaded brace collapses. This lets the right thumb travel between Y and the right stick.")]
+        [Tooltip("Time allowed below the required push cadence before the loaded brace collapses and balance progress starts returning outward.")]
+        [FormerlySerializedAs("forceCadenceLossGraceSeconds")]
         [SerializeField, Range(0.05f, 1.2f)]
-        private float forceCadenceLossGraceSeconds = 0.55f;
+        private float effortCadenceLossGraceSeconds = 0.55f;
 
         [Tooltip("Time a loaded brace tolerates an incorrect arm direction before it collapses.")]
         [SerializeField, Range(0f, 0.5f)]
         private float armDirectionLossGraceSeconds = 0.14f;
 
-        [Header("Slow Balance Pull")]
-        [Tooltip("Seconds of sustained full right-stick pull required to bring the fallen balance point back inside support.")]
+        [Header("Repeated Effort Recovery")]
+        [Tooltip("Seconds of maintaining sufficient correctly directed right-stick push frequency required to bring the fallen balance point back inside support.")]
         [SerializeField, Range(2f, 4f)] private float balancePullDuration = 3f;
 
         [SerializeField, Range(0f, 0.9f)] private float rightStickDeadZone = 0.2f;
-        [SerializeField, Range(0f, 1f)] private float minimumBalancePullMagnitude = 0.65f;
-        [SerializeField, Range(1f, 60f)] private float balancePullToleranceDegrees = 22f;
+        [FormerlySerializedAs("minimumBalancePullMagnitude")]
+        [SerializeField, Range(0f, 1f)] private float minimumEffortPushMagnitude = 0.65f;
 
-        [Tooltip("Short interruption allowed while the player moves their thumb between Y and the right stick.")]
-        [SerializeField, Range(0.05f, 1f)]
-        private float balancePullLossGraceSeconds = 0.38f;
+        [Tooltip("The stick must return below this remapped magnitude before the next outward push can count. Keep this below Minimum Effort Push Magnitude.")]
+        [SerializeField, Range(0f, 0.9f)] private float effortPushRearmMagnitude = 0.3f;
+
+        [FormerlySerializedAs("balancePullToleranceDegrees")]
+        [SerializeField, Range(1f, 60f)] private float effortPushToleranceDegrees = 22f;
 
         [SerializeField, Range(0.5f, 0.99f)] private float recoveredInsideMagnitude = 0.88f;
-        [SerializeField, Range(0.05f, 0.6f)] private float failedReturnDuration = 0.22f;
+        [Tooltip("Seconds used for lost recovery progress to ease back to the outer fallen position.")]
+        [SerializeField, Range(0.1f, 2f)] private float failedReturnDuration = 0.8f;
 
         [Header("Righting and Opposite Inertia")]
         [SerializeField, Range(0.15f, 1f)] private float chassisRightingDuration = 0.46f;
@@ -146,13 +150,16 @@ namespace AnimalGame.RobotMap
         public bool HasBalancePresentation => State != RobotSelfRightingState.Inactive;
         public bool ShowBalancePointAsCross =>
             State == RobotSelfRightingState.FallenIdle
-            || State == RobotSelfRightingState.BuildingSupport
+            || (State == RobotSelfRightingState.BuildingSupport
+                && !IsArmSupportCorrect)
             || State == RobotSelfRightingState.ReturningAfterFailure;
         public bool UseRecoveryBalancePointColor =>
-            State == RobotSelfRightingState.PullingBalance;
+            IsArmSupportCorrect
+            && (State == RobotSelfRightingState.BuildingSupport
+                || State == RobotSelfRightingState.PullingBalance);
         public RobotBalanceState DisplayedBalanceState { get; private set; }
         public float PullProgress01 { get; private set; }
-        public float CurrentForceTapFrequency { get; private set; }
+        public float CurrentEffortPushFrequency { get; private set; }
         public bool IsArmSupportCorrect { get; private set; }
         public float ArmAlignment01 { get; private set; }
         public Vector2 CurrentBalancePullInputLocal { get; private set; }
@@ -161,7 +168,7 @@ namespace AnimalGame.RobotMap
         public event Action<RobotSelfRightingFailureInfo> SupportFailed;
         public event Action<RobotSelfRightingLandedInfo> RightingLanded;
 
-        private readonly Queue<float> validForceTapTimes = new Queue<float>();
+        private readonly Queue<float> validEffortPushTimes = new Queue<float>();
         private RobotTumbleController tumble;
         private RobotBalanceController balance;
         private RobotArmController arms;
@@ -171,11 +178,12 @@ namespace AnimalGame.RobotMap
         private float fallenBalanceMagnitude;
         private float armDirectionLossElapsed;
         private float forceCadenceLossElapsed;
-        private float balancePullLossElapsed;
         private float failedReturnElapsed;
         private float failedReturnStartMagnitude;
         private float rightingElapsed;
         private bool supportHasCarriedLoad;
+        private bool effortPushIsArmed = true;
+        private bool invalidEffortDirectionThisFrame;
         private float guideVisibility;
         private LineRenderer guideOutline;
         private LineRenderer guideCentreLine;
@@ -226,31 +234,17 @@ namespace AnimalGame.RobotMap
             if (State == RobotSelfRightingState.Inactive)
                 EnterFallenState();
 
-            bool forcePressed = Input.GetKeyDown(keyboardForceKey)
-                                || AdaptiveLegacyGamepadInput
-                                    .WasNorthFaceButtonPressedThisFrame();
             EvaluateArmSupport();
-            if (forcePressed && arms != null && arms.IsArmModeActive)
-            {
-                bool accepted = IsArmSupportCorrect;
-                if (accepted)
-                {
-                    validForceTapTimes.Enqueue(Time.time);
-                    supportHasCarriedLoad = true;
-                }
-
-                ForcePulse?.Invoke(new RobotSelfRightingForcePulseInfo(
-                    lockedTumbleDirectionWorld,
-                    accepted,
-                    ArmAlignment01));
-            }
-
-            PruneForceTapWindow();
-            CurrentForceTapFrequency = validForceTapTimes.Count
-                                       / Mathf.Max(0.1f, forceTapWindowSeconds);
+            CurrentBalancePullInputLocal = ReadBalancePullInputLocal();
+            UpdateEffortPushInput();
+            PruneEffortPushWindow();
+            CurrentEffortPushFrequency = validEffortPushTimes.Count
+                                         / Mathf.Max(
+                                             0.1f,
+                                             effortPushWindowSeconds);
             if ((State == RobotSelfRightingState.FallenIdle
-                 || State == RobotSelfRightingState.BuildingSupport)
-                && validForceTapTimes.Count == 0)
+                  || State == RobotSelfRightingState.BuildingSupport)
+                && validEffortPushTimes.Count == 0)
             {
                 supportHasCarriedLoad = false;
             }
@@ -283,8 +277,10 @@ namespace AnimalGame.RobotMap
                 tumble.TumbleBalanceState.Magnitude);
             PullProgress01 = 0f;
             supportHasCarriedLoad = false;
-            validForceTapTimes.Clear();
-            CurrentForceTapFrequency = 0f;
+            validEffortPushTimes.Clear();
+            CurrentEffortPushFrequency = 0f;
+            effortPushIsArmed = true;
+            invalidEffortDirectionThisFrame = false;
             State = RobotSelfRightingState.FallenIdle;
             PublishBalancePresentation(fallenBalanceMagnitude, Vector2.zero);
         }
@@ -322,9 +318,62 @@ namespace AnimalGame.RobotMap
                 alignment);
         }
 
+        private void UpdateEffortPushInput()
+        {
+            invalidEffortDirectionThisFrame = false;
+            float magnitude = CurrentBalancePullInputLocal.magnitude;
+            if (State == RobotSelfRightingState.ReturningAfterFailure)
+            {
+                if (magnitude <= effortPushRearmMagnitude)
+                    effortPushIsArmed = true;
+                return;
+            }
+
+            if (magnitude <= effortPushRearmMagnitude)
+            {
+                effortPushIsArmed = true;
+                return;
+            }
+
+            if (!effortPushIsArmed || magnitude < minimumEffortPushMagnitude)
+                return;
+
+            effortPushIsArmed = false;
+            Vector2 desiredDirectionLocal = -WorldDirectionToLocal(
+                lockedTumbleDirectionWorld);
+            float alignment = Vector2.Dot(
+                CurrentBalancePullInputLocal.normalized,
+                desiredDirectionLocal.normalized);
+            float minimumAlignment = Mathf.Cos(
+                effortPushToleranceDegrees * Mathf.Deg2Rad);
+            bool directionCorrect = alignment >= minimumAlignment;
+            bool armsDeployed = arms != null && arms.IsArmModeActive;
+            bool accepted = armsDeployed
+                            && IsArmSupportCorrect
+                            && directionCorrect;
+            if (accepted)
+            {
+                validEffortPushTimes.Enqueue(Time.time);
+                supportHasCarriedLoad = true;
+            }
+            else if (armsDeployed && !directionCorrect)
+            {
+                invalidEffortDirectionThisFrame = true;
+            }
+
+            if (!armsDeployed)
+                return;
+
+            Vector2 effortDirectionWorld = LocalDirectionToWorld(
+                CurrentBalancePullInputLocal);
+            ForcePulse?.Invoke(new RobotSelfRightingForcePulseInfo(
+                effortDirectionWorld,
+                accepted,
+                directionCorrect ? ArmAlignment01 : 0f));
+        }
+
         private void UpdateBuildingSupport(float deltaTime)
         {
-            CurrentBalancePullInputLocal = Vector2.zero;
             PublishBalancePresentation(fallenBalanceMagnitude, Vector2.zero);
             State = IsArmSupportCorrect
                 ? RobotSelfRightingState.BuildingSupport
@@ -345,8 +394,8 @@ namespace AnimalGame.RobotMap
             }
 
             if (!IsArmSupportCorrect
-                || CurrentForceTapFrequency
-                < requiredForceTapFrequencyPerSecond)
+                || CurrentEffortPushFrequency
+                < requiredEffortPushFrequencyPerSecond)
             {
                 return;
             }
@@ -355,7 +404,6 @@ namespace AnimalGame.RobotMap
             PullProgress01 = 0f;
             armDirectionLossElapsed = 0f;
             forceCadenceLossElapsed = 0f;
-            balancePullLossElapsed = -balancePullLossGraceSeconds;
             PublishBalancePresentation(fallenBalanceMagnitude, Vector2.zero);
         }
 
@@ -375,11 +423,19 @@ namespace AnimalGame.RobotMap
                 armDirectionLossElapsed = 0f;
             }
 
-            if (CurrentForceTapFrequency
-                < requiredForceTapFrequencyPerSecond)
+            if (invalidEffortDirectionThisFrame
+                || !IsCurrentEffortDirectionCorrect())
+            {
+                FailSupport(RobotSelfRightingFailureReason.BalancePullLost);
+                return;
+            }
+
+            bool cadenceEnough = CurrentEffortPushFrequency
+                                 >= requiredEffortPushFrequencyPerSecond;
+            if (!cadenceEnough)
             {
                 forceCadenceLossElapsed += deltaTime;
-                if (forceCadenceLossElapsed >= forceCadenceLossGraceSeconds)
+                if (forceCadenceLossElapsed >= effortCadenceLossGraceSeconds)
                 {
                     FailSupport(RobotSelfRightingFailureReason.ForceCadenceLost);
                     return;
@@ -390,39 +446,25 @@ namespace AnimalGame.RobotMap
                 forceCadenceLossElapsed = 0f;
             }
 
-            CurrentBalancePullInputLocal = ReadBalancePullInputLocal();
-            Vector2 desiredPullLocal = -WorldDirectionToLocal(
-                lockedTumbleDirectionWorld);
-            bool pullCorrect = CurrentBalancePullInputLocal.magnitude
-                               >= minimumBalancePullMagnitude
-                               && Vector2.Dot(
-                                      CurrentBalancePullInputLocal.normalized,
-                                      desiredPullLocal.normalized)
-                               >= Mathf.Cos(
-                                   balancePullToleranceDegrees
-                                   * Mathf.Deg2Rad);
-            if (pullCorrect)
+            if (IsArmSupportCorrect && cadenceEnough)
             {
-                balancePullLossElapsed = 0f;
-                float pullStrength = Mathf.InverseLerp(
-                    minimumBalancePullMagnitude,
+                float cadenceScale = Mathf.Clamp(
+                    CurrentEffortPushFrequency
+                    / Mathf.Max(0.1f, requiredEffortPushFrequencyPerSecond),
                     1f,
-                    CurrentBalancePullInputLocal.magnitude);
-                float speedScale = Mathf.Lerp(0.72f, 1f, pullStrength);
+                    1.35f);
                 PullProgress01 = Mathf.Clamp01(
                     PullProgress01
                     + deltaTime
                     / Mathf.Max(0.1f, balancePullDuration)
-                    * speedScale);
+                    * cadenceScale);
             }
             else
             {
-                balancePullLossElapsed += deltaTime;
-                if (balancePullLossElapsed >= balancePullLossGraceSeconds)
-                {
-                    FailSupport(RobotSelfRightingFailureReason.BalancePullLost);
-                    return;
-                }
+                PullProgress01 = Mathf.MoveTowards(
+                    PullProgress01,
+                    0f,
+                    deltaTime / Mathf.Max(0.1f, failedReturnDuration));
             }
 
             float easedProgress = Mathf.SmoothStep(0f, 1f, PullProgress01);
@@ -485,9 +527,10 @@ namespace AnimalGame.RobotMap
             State = RobotSelfRightingState.ReturningAfterFailure;
             PullProgress01 = 0f;
             CurrentBalancePullInputLocal = Vector2.zero;
-            validForceTapTimes.Clear();
-            CurrentForceTapFrequency = 0f;
+            validEffortPushTimes.Clear();
+            CurrentEffortPushFrequency = 0f;
             supportHasCarriedLoad = false;
+            effortPushIsArmed = false;
             SupportFailed?.Invoke(new RobotSelfRightingFailureInfo(
                 lockedTumbleDirectionWorld,
                 reason));
@@ -510,17 +553,35 @@ namespace AnimalGame.RobotMap
             State = RobotSelfRightingState.FallenIdle;
             armDirectionLossElapsed = 0f;
             forceCadenceLossElapsed = 0f;
-            balancePullLossElapsed = 0f;
+            effortPushIsArmed = CurrentBalancePullInputLocal.magnitude
+                                <= effortPushRearmMagnitude;
         }
 
-        private void PruneForceTapWindow()
+        private void PruneEffortPushWindow()
         {
-            float oldestAllowed = Time.time - forceTapWindowSeconds;
-            while (validForceTapTimes.Count > 0
-                   && validForceTapTimes.Peek() < oldestAllowed)
+            float oldestAllowed = Time.time - effortPushWindowSeconds;
+            while (validEffortPushTimes.Count > 0
+                   && validEffortPushTimes.Peek() < oldestAllowed)
             {
-                validForceTapTimes.Dequeue();
+                validEffortPushTimes.Dequeue();
             }
+        }
+
+        private bool IsCurrentEffortDirectionCorrect()
+        {
+            if (CurrentBalancePullInputLocal.magnitude
+                < minimumEffortPushMagnitude)
+            {
+                return true;
+            }
+
+            Vector2 desiredDirectionLocal = -WorldDirectionToLocal(
+                lockedTumbleDirectionWorld);
+            return Vector2.Dot(
+                       CurrentBalancePullInputLocal.normalized,
+                       desiredDirectionLocal.normalized)
+                   >= Mathf.Cos(
+                       effortPushToleranceDegrees * Mathf.Deg2Rad);
         }
 
         private Vector2 ReadBalancePullInputLocal()
@@ -588,6 +649,15 @@ namespace AnimalGame.RobotMap
             return local.sqrMagnitude > 0.000001f
                 ? local.normalized
                 : Vector2.up;
+        }
+
+        private Vector2 LocalDirectionToWorld(Vector2 localDirection)
+        {
+            Vector2 world = (Vector2)transform.right * localDirection.x
+                            + (Vector2)transform.up * localDirection.y;
+            return world.sqrMagnitude > 0.000001f
+                ? world.normalized
+                : -lockedTumbleDirectionWorld;
         }
 
         private void EnsureGuideVisual()
@@ -707,15 +777,16 @@ namespace AnimalGame.RobotMap
         {
             State = RobotSelfRightingState.Inactive;
             PullProgress01 = 0f;
-            CurrentForceTapFrequency = 0f;
+            CurrentEffortPushFrequency = 0f;
             CurrentBalancePullInputLocal = Vector2.zero;
             IsArmSupportCorrect = false;
             ArmAlignment01 = 0f;
             supportHasCarriedLoad = false;
-            validForceTapTimes.Clear();
+            validEffortPushTimes.Clear();
             armDirectionLossElapsed = 0f;
             forceCadenceLossElapsed = 0f;
-            balancePullLossElapsed = 0f;
+            effortPushIsArmed = true;
+            invalidEffortDirectionThisFrame = false;
             if (tumble != null)
                 tumble.CancelSelfRightingVisual();
         }
@@ -745,13 +816,16 @@ namespace AnimalGame.RobotMap
                 1f,
                 60f);
             minimumArmPushMagnitude = Mathf.Clamp01(minimumArmPushMagnitude);
-            requiredForceTapFrequencyPerSecond = Mathf.Clamp(
-                requiredForceTapFrequencyPerSecond,
+            requiredEffortPushFrequencyPerSecond = Mathf.Clamp(
+                requiredEffortPushFrequencyPerSecond,
                 0.5f,
                 10f);
-            forceTapWindowSeconds = Mathf.Clamp(forceTapWindowSeconds, 0.4f, 2f);
-            forceCadenceLossGraceSeconds = Mathf.Clamp(
-                forceCadenceLossGraceSeconds,
+            effortPushWindowSeconds = Mathf.Clamp(
+                effortPushWindowSeconds,
+                0.4f,
+                2f);
+            effortCadenceLossGraceSeconds = Mathf.Clamp(
+                effortCadenceLossGraceSeconds,
                 0.05f,
                 1.2f);
             armDirectionLossGraceSeconds = Mathf.Clamp(
@@ -760,21 +834,21 @@ namespace AnimalGame.RobotMap
                 0.5f);
             balancePullDuration = Mathf.Clamp(balancePullDuration, 2f, 4f);
             rightStickDeadZone = Mathf.Clamp(rightStickDeadZone, 0f, 0.9f);
-            minimumBalancePullMagnitude = Mathf.Clamp01(
-                minimumBalancePullMagnitude);
-            balancePullToleranceDegrees = Mathf.Clamp(
-                balancePullToleranceDegrees,
+            minimumEffortPushMagnitude = Mathf.Clamp01(
+                minimumEffortPushMagnitude);
+            effortPushRearmMagnitude = Mathf.Clamp(
+                effortPushRearmMagnitude,
+                0f,
+                Mathf.Max(0f, minimumEffortPushMagnitude - 0.05f));
+            effortPushToleranceDegrees = Mathf.Clamp(
+                effortPushToleranceDegrees,
                 1f,
                 60f);
-            balancePullLossGraceSeconds = Mathf.Clamp(
-                balancePullLossGraceSeconds,
-                0.05f,
-                1f);
             recoveredInsideMagnitude = Mathf.Clamp(
                 recoveredInsideMagnitude,
                 0.5f,
                 0.99f);
-            failedReturnDuration = Mathf.Clamp(failedReturnDuration, 0.05f, 0.6f);
+            failedReturnDuration = Mathf.Clamp(failedReturnDuration, 0.1f, 2f);
             chassisRightingDuration = Mathf.Clamp(chassisRightingDuration, 0.15f, 1f);
             uprightLandingBalanceMagnitude = Mathf.Clamp(
                 uprightLandingBalanceMagnitude,

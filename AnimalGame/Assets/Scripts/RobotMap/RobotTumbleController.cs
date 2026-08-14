@@ -349,6 +349,7 @@ namespace AnimalGame.RobotMap
         private Vector2 lastPublishedBalanceWorldOffset;
         private Vector2 publishedBalanceVelocity;
         private int lastBalancePublishFrame = -1;
+        private bool finalRockWillRecoverUpright;
         private float selfRightingStartQuarterTurns;
         private float selfRightingTargetQuarterTurns;
 
@@ -530,6 +531,7 @@ namespace AnimalGame.RobotMap
             FinalRockProgress01 = 0f;
             FinalRockOffsetDegrees = 0f;
             FinalRockMaximumAngleDegrees = 0f;
+            finalRockWillRecoverUpright = false;
             lastStepImpactLostSpecificEnergy = 0f;
             balanceLandingImpactStartTime = float.NegativeInfinity;
             balanceLandingImpactStrength = 0f;
@@ -832,7 +834,10 @@ namespace AnimalGame.RobotMap
                 finalRockMinimumAngleDegrees,
                 finalRockMaximumAngleDegrees,
                 rockingStrength);
-            UpdateFinalRockBalanceState(0f);
+            finalRockWillRecoverUpright = CompletedStepCount > 0
+                                          && CompletedStepCount
+                                          % StepsPerFullRotation == 0;
+            UpdateFinalRockBalanceState(0f, 0f);
             FinalRockingStarted?.Invoke(new RobotTumbleFinalRockInfo(
                 finalRockDuration,
                 FinalRockMaximumAngleDegrees,
@@ -847,7 +852,9 @@ namespace AnimalGame.RobotMap
             FinalRockOffsetDegrees = EvaluateFinalRockOffset(
                 FinalRockProgress01)
                 * FinalRockMaximumAngleDegrees;
-            UpdateFinalRockBalanceState(FinalRockNormalizedOffset);
+            UpdateFinalRockBalanceState(
+                FinalRockNormalizedOffset,
+                FinalRockProgress01);
 
             while (nextFinalRockImpactIndex < 2
                    && FinalRockProgress01
@@ -867,7 +874,7 @@ namespace AnimalGame.RobotMap
                 return;
 
             FinalRockOffsetDegrees = 0f;
-            UpdateFinalRockBalanceState(0f);
+            UpdateFinalRockBalanceState(0f, 1f);
             Settle(RobotTumbleSettleReason.EnergyDepleted);
         }
 
@@ -895,7 +902,9 @@ namespace AnimalGame.RobotMap
             return impactIndex == 0 ? 0.22f : 0.5f;
         }
 
-        private void UpdateFinalRockBalanceState(float normalizedRockOffset)
+        private void UpdateFinalRockBalanceState(
+            float normalizedRockOffset,
+            float settlingProgress01)
         {
             Vector2 baseDirection = DirectionWorld.sqrMagnitude > 0.000001f
                 ? DirectionWorld.normalized
@@ -916,9 +925,18 @@ namespace AnimalGame.RobotMap
             displayedMagnitude = Mathf.Max(
                 0.94f,
                 displayedMagnitude + EvaluateBalanceLandingKick());
-            PublishTumbleBalanceState(
-                displayedWorldDirection * displayedMagnitude,
-                Vector2.zero);
+            Vector2 displayedWorldOffset = displayedWorldDirection
+                                           * displayedMagnitude;
+            if (finalRockWillRecoverUpright)
+            {
+                float returnProgress = Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    Mathf.Clamp01(settlingProgress01));
+                displayedWorldOffset *= 1f - returnProgress;
+            }
+
+            PublishTumbleBalanceState(displayedWorldOffset, Vector2.zero);
         }
 
         private float CalculateKineticSpecificEnergy(float mapSpeed)
@@ -1179,10 +1197,26 @@ namespace AnimalGame.RobotMap
                                     % StepsPerFullRotation == 0
                                     && mover != null
                                     && mover.IsExternallyTumbling;
+            bool synchronizedFinalRockRecovery = recoveredUpright
+                                                  && State
+                                                  == RobotTumbleState.FinalRocking
+                                                  && finalRockWillRecoverUpright
+                                                  && FinalRockProgress01
+                                                  >= 0.9999f;
             float remainingSpecificEnergy = CurrentSpecificEnergy;
             activeStep = false;
             if (State == RobotTumbleState.FinalRocking)
-                UpdateFinalRockBalanceState(0f);
+            {
+                if (synchronizedFinalRockRecovery)
+                {
+                    UpdateFinalRockBalanceState(0f, 1f);
+                }
+                else
+                {
+                    finalRockWillRecoverUpright = false;
+                    UpdateFinalRockBalanceState(0f, 0f);
+                }
+            }
             float finalRockStrength = finalRockMaximumAngleDegrees > 0.0001f
                 ? Mathf.InverseLerp(
                     finalRockMinimumAngleDegrees,
@@ -1200,7 +1234,16 @@ namespace AnimalGame.RobotMap
                 FinalRockProgress01 = 0f;
                 balance?.RestoreUprightAfterCompletedTumble();
                 mover.RestoreDrivenAfterCompletedTumble();
-                StartUprightBalanceRecovery(finalRockStrength);
+                if (synchronizedFinalRockRecovery)
+                {
+                    IsBalanceRecoveryActive = false;
+                    BalanceRecoveryProgress01 = 0f;
+                    publishedBalanceVelocity = Vector2.zero;
+                }
+                else
+                {
+                    StartUprightBalanceRecovery(finalRockStrength);
+                }
                 FinalRockMaximumAngleDegrees = 0f;
             }
             else
@@ -1210,6 +1253,8 @@ namespace AnimalGame.RobotMap
                 State = RobotTumbleState.Fallen;
                 mover?.MarkFallenPermanently();
             }
+
+            finalRockWillRecoverUpright = false;
 
             Settled?.Invoke(new RobotTumbleSettledInfo(
                 reason,

@@ -216,18 +216,17 @@ MonoBehaviour:
   m_EditorClassIdentifier:
   supportDirectionToleranceDegrees: 18
   minimumArmPushMagnitude: 0.9
-  keyboardForceKey: 305
-  requiredForceTapFrequencyPerSecond: 3
-  forceTapWindowSeconds: 1
-  forceCadenceLossGraceSeconds: 0.55
+  requiredEffortPushFrequencyPerSecond: 3
+  effortPushWindowSeconds: 1
+  effortCadenceLossGraceSeconds: 0.55
   armDirectionLossGraceSeconds: 0.14
   balancePullDuration: 3
   rightStickDeadZone: 0.2
-  minimumBalancePullMagnitude: 0.65
-  balancePullToleranceDegrees: 22
-  balancePullLossGraceSeconds: 0.38
+  minimumEffortPushMagnitude: 0.65
+  effortPushRearmMagnitude: 0.3
+  effortPushToleranceDegrees: 22
   recoveredInsideMagnitude: 0.88
-  failedReturnDuration: 0.22
+  failedReturnDuration: 0.8
   chassisRightingDuration: 0.46
   uprightLandingBalanceMagnitude: 0.82
   oppositeInertiaMagnitude: 1.5
