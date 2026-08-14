@@ -190,6 +190,14 @@ MonoBehaviour:
   inwardSwingSharpness: 8
   lateralSwingDegrees: 12
   laterStepSwingDamping: 0.08
+  tumbleBalanceArcOutwardScale: 0.14
+  tumbleBalanceLandingKick: 0.12
+  tumbleBalanceLandingReboundDuration: 0.18
+  uprightBalanceRecoveryDuration: 0.58
+  uprightBalanceRecoveryOvershootRatio: 0.12
+  uprightBalanceRecoveryOscillationCount: 1
+  uprightBalanceVelocityCarrySeconds: 0.08
+  finalRockRecoveryInfluence: 0.5
   maximumGroundedDetailStepMeters: 1.8
   maximumStepCount: 12
   maximumTumbleDuration: 10
@@ -224,6 +232,11 @@ MonoBehaviour:
   maximumPointRadiusPixels: 8.5
   circleSegments: 64
   canvasSortingOrder: 40
+  showTumbleBalanceTrail: 1
+  tumbleBalanceTrailCount: 5
+  tumbleBalanceTrailLifetime: 0.16
+  tumbleBalanceTrailAlpha: 0.38
+  tumbleBalanceTrailEndScale: 0.55
 --- !u!114 &3540108170491067500
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -311,6 +324,7 @@ MonoBehaviour:
   retractDuration: 0.3
   secondArmDelay: 0.03
   aimSmoothingTime: 0.2
+  socketPositionSmoothingTime: 0.12
   aimEnterMagnitude: 0.12
   aimExitMagnitude: 0.06
   fullAimMagnitude: 0.7

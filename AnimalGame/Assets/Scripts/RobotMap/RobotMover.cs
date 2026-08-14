@@ -437,6 +437,13 @@ namespace AnimalGame.RobotMap
             ClearMotionForExternalControl();
         }
 
+        internal void RestoreDrivenAfterCompletedTumble()
+        {
+            ClearMotionForExternalControl();
+            IsArmInputCaptured = false;
+            MovementMode = RobotMovementMode.Driven;
+        }
+
         private void ClearMotionForExternalControl()
         {
             CurrentSpeed = 0f;

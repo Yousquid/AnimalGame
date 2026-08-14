@@ -508,7 +508,9 @@ namespace AnimalGame.RobotMap
 
         private void HandleTumbleSettled(RobotTumbleSettledInfo settled)
         {
-            observedTumbleState = RobotTumbleState.Fallen;
+            observedTumbleState = settled.RecoveredUpright
+                ? RobotTumbleState.Upright
+                : RobotTumbleState.Fallen;
             continuousPosition = Vector2.zero;
             continuousRotation = 0f;
         }

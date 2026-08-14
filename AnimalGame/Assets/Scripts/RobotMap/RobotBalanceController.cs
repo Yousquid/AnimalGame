@@ -256,6 +256,21 @@ namespace AnimalGame.RobotMap
             TippedOver?.Invoke(CurrentTipOver);
         }
 
+        internal void RestoreUprightAfterCompletedTumble()
+        {
+            IsTippedOver = false;
+            CurrentTipOver = default;
+            currentBalanceLocal = Vector2.zero;
+            balanceVelocityLocal = Vector2.zero;
+            currentCounterbalanceLocal = Vector2.zero;
+            counterbalanceVelocityLocal = Vector2.zero;
+            previousWorldVelocity = Vector2.zero;
+            filteredWorldAcceleration = Vector2.zero;
+            velocityInitialized = false;
+            PublishState();
+            CenterCameraFollowTarget();
+        }
+
         private Vector2 ApplyEdgeResistance(Vector2 target)
         {
             float magnitude = target.magnitude;

@@ -98,17 +98,20 @@ namespace AnimalGame.RobotMap
         public int CompletedStepCount { get; }
         public Vector2 WorldPosition { get; }
         public float RemainingSpecificEnergy { get; }
+        public bool RecoveredUpright { get; }
 
         public RobotTumbleSettledInfo(
             RobotTumbleSettleReason reason,
             int completedStepCount,
             Vector2 worldPosition,
-            float remainingSpecificEnergy)
+            float remainingSpecificEnergy,
+            bool recoveredUpright)
         {
             Reason = reason;
             CompletedStepCount = completedStepCount;
             WorldPosition = worldPosition;
             RemainingSpecificEnergy = remainingSpecificEnergy;
+            RecoveredUpright = recoveredUpright;
         }
     }
 
@@ -157,6 +160,8 @@ namespace AnimalGame.RobotMap
     [RequireComponent(typeof(RobotBalanceController))]
     public sealed class RobotTumbleController : MonoBehaviour
     {
+        private const int StepsPerFullRotation = 4;
+
         [Header("Robot Dimensions")]
         [Tooltip("Full upright robot height in logical map metres. This is deliberately separate from centre-of-mass height.")]
         [SerializeField, Min(0.1f)] private float robotHeightMeters = 1.8f;
@@ -222,6 +227,31 @@ namespace AnimalGame.RobotMap
         [Tooltip("Additional visual swing reduction per completed tumble, on top of the remaining-energy reduction.")]
         [SerializeField, Range(0f, 0.5f)] private float laterStepSwingDamping = 0.08f;
 
+        [Tooltip("Extra outward arc produced by rotating the centre of mass around the active contact edge. Robot height and the active length/width axis shape this amount.")]
+        [SerializeField, Range(0f, 0.35f)] private float tumbleBalanceArcOutwardScale = 0.14f;
+
+        [Tooltip("Maximum outward centre-of-mass kick injected by each completed 90-degree landing.")]
+        [SerializeField, Range(0f, 0.35f)] private float tumbleBalanceLandingKick = 0.12f;
+
+        [Tooltip("Time used by the landing kick to rebound and settle into the following tumble arc.")]
+        [SerializeField, Range(0.05f, 0.5f)] private float tumbleBalanceLandingReboundDuration = 0.18f;
+
+        [Header("Upright Balance Recovery")]
+        [Tooltip("Visual-only time used to carry the final tumble balance point back into live upright balance after a complete 360-degree rotation.")]
+        [SerializeField, Range(0.1f, 1.5f)] private float uprightBalanceRecoveryDuration = 0.58f;
+
+        [Tooltip("Maximum opposite-side overshoot relative to the balance displacement captured at the end of the tumble.")]
+        [SerializeField, Range(0f, 0.35f)] private float uprightBalanceRecoveryOvershootRatio = 0.12f;
+
+        [Tooltip("Number of damped visual oscillations made before the recovered point hands off to live balance.")]
+        [SerializeField, Range(0.5f, 2f)] private float uprightBalanceRecoveryOscillationCount = 1f;
+
+        [Tooltip("Seconds of final displayed balance velocity carried into the upright recovery curve.")]
+        [SerializeField, Range(0f, 0.25f)] private float uprightBalanceVelocityCarrySeconds = 0.08f;
+
+        [Tooltip("How strongly the final rocking angle increases the recovery overshoot.")]
+        [SerializeField, Range(0f, 1f)] private float finalRockRecoveryInfluence = 0.5f;
+
         [Header("Safety Limits")]
         [Tooltip("An abrupt unsmoothed downward detail step above this size is treated as an unsupported ledge. Continuous downhill slope is never blocked by this limit.")]
         [SerializeField, Min(0f)] private float maximumGroundedDetailStepMeters = 1.8f;
@@ -249,7 +279,10 @@ namespace AnimalGame.RobotMap
                 ? FinalRockOffsetDegrees / FinalRockMaximumAngleDegrees
                 : 0f;
         public RobotBalanceState TumbleBalanceState { get; private set; }
-        public bool HasTumbleBalanceState => State != RobotTumbleState.Upright;
+        public bool IsBalanceRecoveryActive { get; private set; }
+        public float BalanceRecoveryProgress01 { get; private set; }
+        public bool HasTumbleBalanceState => State != RobotTumbleState.Upright
+                                             || IsBalanceRecoveryActive;
         public float ContinuousQuarterTurnProgress =>
             CompletedStepCount
             + (activeStep
@@ -289,6 +322,15 @@ namespace AnimalGame.RobotMap
         private float lastStepImpactLostSpecificEnergy;
         private float finalRockElapsed;
         private int nextFinalRockImpactIndex;
+        private float balanceLandingImpactStartTime = float.NegativeInfinity;
+        private float balanceLandingImpactStrength;
+        private float balanceRecoveryElapsed;
+        private float balanceRecoveryOvershootScale;
+        private Vector2 balanceRecoveryStartWorldOffset;
+        private Vector2 balanceRecoveryStartVelocity;
+        private Vector2 lastPublishedBalanceWorldOffset;
+        private Vector2 publishedBalanceVelocity;
+        private int lastBalancePublishFrame = -1;
 
         private void Awake()
         {
@@ -323,6 +365,12 @@ namespace AnimalGame.RobotMap
 
         private void Update()
         {
+            if (IsBalanceRecoveryActive)
+            {
+                UpdateUprightBalanceRecovery();
+                return;
+            }
+
             if (State == RobotTumbleState.FinalRocking)
             {
                 if (mover == null || !mover.IsExternallyTumbling)
@@ -375,6 +423,9 @@ namespace AnimalGame.RobotMap
             if (State != RobotTumbleState.Upright || mover == null)
                 return;
 
+            IsBalanceRecoveryActive = false;
+            BalanceRecoveryProgress01 = 0f;
+
             Vector2 capturedWorldVelocity = mover.BeginExternalTumble();
             if (!mover.IsExternallyTumbling)
                 return;
@@ -389,6 +440,11 @@ namespace AnimalGame.RobotMap
             FinalRockOffsetDegrees = 0f;
             FinalRockMaximumAngleDegrees = 0f;
             lastStepImpactLostSpecificEnergy = 0f;
+            balanceLandingImpactStartTime = float.NegativeInfinity;
+            balanceLandingImpactStrength = 0f;
+            publishedBalanceVelocity = Vector2.zero;
+            lastPublishedBalanceWorldOffset = Vector2.zero;
+            lastBalancePublishFrame = -1;
             triggerBalanceMagnitude = Mathf.Max(
                 1.001f,
                 tipOverInfo.TriggerState.Magnitude);
@@ -629,6 +685,9 @@ namespace AnimalGame.RobotMap
                                     * impactEnergyRetention;
             float impactLostEnergy = energyBeforeImpact - remainingEnergy;
             lastStepImpactLostSpecificEnergy = impactLostEnergy;
+            StartBalanceLandingImpact(
+                impactLostEnergy,
+                Mathf.Max(0.01f, stepRequiredSpecificEnergy));
 
             int completedIndex = CompletedStepCount;
             CurrentSpecificEnergy = remainingEnergy;
@@ -763,19 +822,12 @@ namespace AnimalGame.RobotMap
                 tumbleBalanceOuterMagnitude,
                 edgeMagnitude,
                 Mathf.Abs(normalizedRockOffset) * 0.65f);
-            Vector2 displayedLocalDirection = new Vector2(
-                Vector2.Dot(displayedWorldDirection, transform.right),
-                Vector2.Dot(displayedWorldDirection, transform.up));
-            if (displayedLocalDirection.sqrMagnitude > 0.000001f)
-                displayedLocalDirection.Normalize();
-
-            TumbleBalanceState = new RobotBalanceState(
-                displayedLocalDirection * displayedMagnitude,
+            displayedMagnitude = Mathf.Max(
+                0.94f,
+                displayedMagnitude + EvaluateBalanceLandingKick());
+            PublishTumbleBalanceState(
                 displayedWorldDirection * displayedMagnitude,
-                Vector2.zero,
-                displayedMagnitude,
-                1f,
-                RobotBalanceLevel.OutsideSupport);
+                Vector2.zero);
         }
 
         private float CalculateKineticSpecificEnergy(float mapSpeed)
@@ -821,6 +873,29 @@ namespace AnimalGame.RobotMap
                 inwardMagnitude,
                 narrowInwardWindow);
 
+            float safeVerticalSize = Mathf.Max(
+                0.01f,
+                CurrentVerticalSizeMeters);
+            float safeForwardSize = Mathf.Max(
+                0.01f,
+                NextVerticalSizeMeters);
+            float geometryAspect = Mathf.Min(
+                                       safeVerticalSize,
+                                       safeForwardSize)
+                                   / Mathf.Max(
+                                       safeVerticalSize,
+                                       safeForwardSize);
+            float geometryArcStrength = Mathf.Lerp(
+                0.7f,
+                1f,
+                geometryAspect);
+            displayedMagnitude += tumbleBalanceArcOutwardScale
+                                  * halfTurnWave
+                                  * swingStrength
+                                  * geometryArcStrength;
+            displayedMagnitude += EvaluateBalanceLandingKick();
+            displayedMagnitude = Mathf.Max(0.94f, displayedMagnitude);
+
             float alternatingSign = (CompletedStepCount & 1) == 0
                 ? 1f
                 : -1f;
@@ -828,6 +903,7 @@ namespace AnimalGame.RobotMap
                                         * Mathf.Deg2Rad
                                         * halfTurnWave
                                         * swingStrength
+                                        * geometryArcStrength
                                         * alternatingSign;
             Vector2 baseDirection = DirectionWorld.sqrMagnitude > 0.000001f
                 ? DirectionWorld.normalized
@@ -839,22 +915,163 @@ namespace AnimalGame.RobotMap
                 baseDirection.x * sine + baseDirection.y * cosine);
             Vector2 displayedWorldOffset = displayedWorldDirection
                                            * displayedMagnitude;
-            Vector2 displayedLocalDirection = new Vector2(
-                Vector2.Dot(displayedWorldDirection, transform.right),
-                Vector2.Dot(displayedWorldDirection, transform.up));
-            if (displayedLocalDirection.sqrMagnitude > 0.000001f)
-                displayedLocalDirection.Normalize();
+            PublishTumbleBalanceState(displayedWorldOffset, Vector2.zero);
+        }
 
+        private void StartBalanceLandingImpact(
+            float lostSpecificEnergy,
+            float referenceSpecificEnergy)
+        {
+            float normalizedImpact = Mathf.Clamp01(
+                lostSpecificEnergy
+                / Mathf.Max(0.01f, referenceSpecificEnergy));
+            balanceLandingImpactStrength = Mathf.Lerp(
+                0.45f,
+                1f,
+                Mathf.Sqrt(normalizedImpact));
+            balanceLandingImpactStartTime = Time.time;
+        }
+
+        private float EvaluateBalanceLandingKick()
+        {
+            float elapsed = Time.time - balanceLandingImpactStartTime;
+            if (elapsed < 0f
+                || elapsed >= tumbleBalanceLandingReboundDuration)
+            {
+                return 0f;
+            }
+
+            float progress = Mathf.Clamp01(
+                elapsed
+                / Mathf.Max(0.05f, tumbleBalanceLandingReboundDuration));
+            float kickShape = progress < 0.32f
+                ? Mathf.Lerp(
+                    1f,
+                    -0.28f,
+                    Mathf.SmoothStep(0f, 1f, progress / 0.32f))
+                : Mathf.Lerp(
+                    -0.28f,
+                    0f,
+                    Mathf.SmoothStep(
+                        0f,
+                        1f,
+                        (progress - 0.32f) / 0.68f));
+            return tumbleBalanceLandingKick
+                   * balanceLandingImpactStrength
+                   * kickShape;
+        }
+
+        private void PublishTumbleBalanceState(
+            Vector2 displayedWorldOffset,
+            Vector2 playerCounterbalanceLocal)
+        {
+            int currentFrame = Time.frameCount;
+            if (lastBalancePublishFrame >= 0
+                && currentFrame != lastBalancePublishFrame)
+            {
+                float deltaTime = Mathf.Max(0.0001f, Time.deltaTime);
+                Vector2 rawVelocity = (displayedWorldOffset
+                                       - lastPublishedBalanceWorldOffset)
+                                      / deltaTime;
+                publishedBalanceVelocity = Vector2.ClampMagnitude(
+                    Vector2.Lerp(publishedBalanceVelocity, rawVelocity, 0.65f),
+                    12f);
+            }
+
+            lastBalancePublishFrame = currentFrame;
+            lastPublishedBalanceWorldOffset = displayedWorldOffset;
+
+            Vector2 displayedLocalOffset = new Vector2(
+                Vector2.Dot(displayedWorldOffset, transform.right),
+                Vector2.Dot(displayedWorldOffset, transform.up));
+            float displayedMagnitude = displayedWorldOffset.magnitude;
             RobotBalanceLevel level = displayedMagnitude >= 1f
                 ? RobotBalanceLevel.OutsideSupport
-                : RobotBalanceLevel.Critical;
+                : displayedMagnitude >= 0.72f
+                    ? RobotBalanceLevel.Critical
+                    : displayedMagnitude >= 0.35f
+                        ? RobotBalanceLevel.Loaded
+                        : RobotBalanceLevel.Stable;
             TumbleBalanceState = new RobotBalanceState(
-                displayedLocalDirection * displayedMagnitude,
+                displayedLocalOffset,
                 displayedWorldOffset,
-                Vector2.zero,
+                playerCounterbalanceLocal,
                 displayedMagnitude,
                 Mathf.InverseLerp(0.75f, 1f, displayedMagnitude),
                 level);
+        }
+
+        private void StartUprightBalanceRecovery(float finalRockStrength)
+        {
+            IsBalanceRecoveryActive = true;
+            BalanceRecoveryProgress01 = 0f;
+            balanceRecoveryElapsed = 0f;
+            balanceRecoveryStartWorldOffset =
+                TumbleBalanceState.NormalizedWorldOffset;
+            balanceRecoveryStartVelocity = publishedBalanceVelocity;
+            balanceRecoveryOvershootScale =
+                uprightBalanceRecoveryOvershootRatio
+                * Mathf.Lerp(
+                    1f,
+                    1.65f,
+                    Mathf.Clamp01(finalRockStrength)
+                    * finalRockRecoveryInfluence);
+        }
+
+        private void UpdateUprightBalanceRecovery()
+        {
+            balanceRecoveryElapsed += Mathf.Max(0f, Time.deltaTime);
+            BalanceRecoveryProgress01 = Mathf.Clamp01(
+                balanceRecoveryElapsed
+                / Mathf.Max(0.1f, uprightBalanceRecoveryDuration));
+
+            RobotBalanceState liveState = balance != null
+                ? balance.CurrentState
+                : default;
+            Vector2 targetWorldOffset = liveState.NormalizedWorldOffset;
+            float progress = BalanceRecoveryProgress01;
+            float envelope = (1f - progress) * (1f - progress);
+            float cosine = Mathf.Cos(
+                progress
+                * Mathf.PI
+                * 2f
+                * uprightBalanceRecoveryOscillationCount);
+            float residual;
+            if (cosine >= 0f)
+            {
+                residual = envelope * cosine;
+            }
+            else
+            {
+                const float OneCycleNegativePeakEnvelope = 0.25f;
+                residual = envelope
+                           * cosine
+                           * balanceRecoveryOvershootScale
+                           / OneCycleNegativePeakEnvelope;
+            }
+
+            Vector2 carriedVelocityOffset = balanceRecoveryStartVelocity
+                                            * uprightBalanceVelocityCarrySeconds
+                                            * progress
+                                            * envelope;
+            Vector2 displayedWorldOffset = targetWorldOffset
+                                           + (balanceRecoveryStartWorldOffset
+                                              - targetWorldOffset)
+                                           * residual
+                                           + carriedVelocityOffset;
+            PublishTumbleBalanceState(
+                displayedWorldOffset,
+                liveState.PlayerCounterbalanceLocal);
+
+            if (BalanceRecoveryProgress01 < 1f)
+                return;
+
+            PublishTumbleBalanceState(
+                targetWorldOffset,
+                liveState.PlayerCounterbalanceLocal);
+            IsBalanceRecoveryActive = false;
+            BalanceRecoveryProgress01 = 0f;
+            publishedBalanceVelocity = Vector2.zero;
         }
 
         private void Settle(RobotTumbleSettleReason reason)
@@ -862,17 +1079,53 @@ namespace AnimalGame.RobotMap
             if (State == RobotTumbleState.Fallen)
                 return;
 
+            bool interruptedDuringIncompleteStep = activeStep
+                                                    && StepProgress01
+                                                    < 0.9999f;
+            bool recoveredUpright = !interruptedDuringIncompleteStep
+                                    && CompletedStepCount > 0
+                                    && CompletedStepCount
+                                    % StepsPerFullRotation == 0
+                                    && mover != null
+                                    && mover.IsExternallyTumbling;
+            float remainingSpecificEnergy = CurrentSpecificEnergy;
             activeStep = false;
             if (State == RobotTumbleState.FinalRocking)
                 UpdateFinalRockBalanceState(0f);
+            float finalRockStrength = finalRockMaximumAngleDegrees > 0.0001f
+                ? Mathf.InverseLerp(
+                    finalRockMinimumAngleDegrees,
+                    Mathf.Max(
+                        finalRockMinimumAngleDegrees + 0.0001f,
+                        finalRockMaximumAngleDegrees),
+                    FinalRockMaximumAngleDegrees)
+                : 0f;
             FinalRockOffsetDegrees = 0f;
-            State = RobotTumbleState.Fallen;
-            mover?.MarkFallenPermanently();
+            if (recoveredUpright)
+            {
+                State = RobotTumbleState.Upright;
+                CurrentSpecificEnergy = 0f;
+                StepProgress01 = 0f;
+                FinalRockProgress01 = 0f;
+                balance?.RestoreUprightAfterCompletedTumble();
+                mover.RestoreDrivenAfterCompletedTumble();
+                StartUprightBalanceRecovery(finalRockStrength);
+                FinalRockMaximumAngleDegrees = 0f;
+            }
+            else
+            {
+                IsBalanceRecoveryActive = false;
+                BalanceRecoveryProgress01 = 0f;
+                State = RobotTumbleState.Fallen;
+                mover?.MarkFallenPermanently();
+            }
+
             Settled?.Invoke(new RobotTumbleSettledInfo(
                 reason,
                 CompletedStepCount,
                 transform.position,
-                CurrentSpecificEnergy));
+                remainingSpecificEnergy,
+                recoveredUpright));
         }
 
         private void OnValidate()
@@ -928,6 +1181,36 @@ namespace AnimalGame.RobotMap
                 laterStepSwingDamping,
                 0f,
                 0.5f);
+            tumbleBalanceArcOutwardScale = Mathf.Clamp(
+                tumbleBalanceArcOutwardScale,
+                0f,
+                0.35f);
+            tumbleBalanceLandingKick = Mathf.Clamp(
+                tumbleBalanceLandingKick,
+                0f,
+                0.35f);
+            tumbleBalanceLandingReboundDuration = Mathf.Clamp(
+                tumbleBalanceLandingReboundDuration,
+                0.05f,
+                0.5f);
+            uprightBalanceRecoveryDuration = Mathf.Clamp(
+                uprightBalanceRecoveryDuration,
+                0.1f,
+                1.5f);
+            uprightBalanceRecoveryOvershootRatio = Mathf.Clamp(
+                uprightBalanceRecoveryOvershootRatio,
+                0f,
+                0.35f);
+            uprightBalanceRecoveryOscillationCount = Mathf.Clamp(
+                uprightBalanceRecoveryOscillationCount,
+                0.5f,
+                2f);
+            uprightBalanceVelocityCarrySeconds = Mathf.Clamp(
+                uprightBalanceVelocityCarrySeconds,
+                0f,
+                0.25f);
+            finalRockRecoveryInfluence = Mathf.Clamp01(
+                finalRockRecoveryInfluence);
             maximumGroundedDetailStepMeters = Mathf.Max(
                 0f,
                 maximumGroundedDetailStepMeters);

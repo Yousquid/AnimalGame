@@ -85,6 +85,10 @@ namespace AnimalGame.RobotMap
         [Tooltip("Time used by the complete rigid arm to rotate toward the current stick target.")]
         [SerializeField, Min(0.001f)] private float aimSmoothingTime = 0.2f;
 
+        [Tooltip("Time used by visible arms to slide between the four body sockets when the rollover direction becomes their reference.")]
+        [SerializeField, Min(0.001f)]
+        private float socketPositionSmoothingTime = 0.12f;
+
         [Tooltip("Remapped stick magnitude at which arm aiming becomes active. This is applied after the radial dead zone.")]
         [SerializeField, Range(0f, 1f)] private float aimEnterMagnitude = 0.12f;
 
@@ -133,9 +137,12 @@ namespace AnimalGame.RobotMap
             public SpriteRenderer ArmTwoRenderer;
             public SpriteRenderer ArmOneRenderer;
             public SpriteRenderer HandRenderer;
+            public float SideSign;
             public Vector2 BodySocketDirection;
             public Vector2 ConnectorDirection;
             public Vector2 DefaultOuterDirection;
+            public float SocketAngle;
+            public float SocketAngleVelocity;
             public float ConnectorAngle;
             public float ConnectorDeployment;
             public float OuterDeployment;
@@ -163,10 +170,13 @@ namespace AnimalGame.RobotMap
             if (leftArm == null || rightArm == null)
                 TryCreateArmVisuals();
 
+            bool tumbleArmControlAvailable = tumble != null
+                                             && tumble.State
+                                             != RobotTumbleState.Upright;
             bool canOperate = mover != null
-                              && mover.MovementMode == RobotMovementMode.Driven
-                              && (tumble == null
-                                  || tumble.State == RobotTumbleState.Upright);
+                              && (mover.MovementMode
+                                  == RobotMovementMode.Driven
+                                  || tumbleArmControlAvailable);
             bool held = canOperate && IsArmInputHeld();
             IsArmModeActive = held;
             mover?.SetArmInputCaptured(held);
@@ -231,6 +241,7 @@ namespace AnimalGame.RobotMap
         private void UpdateArm(ArmVisual arm, float delay, bool extending)
         {
             float deltaTime = Mathf.Max(0f, Time.deltaTime);
+            UpdateArmSocketFrame(arm, deltaTime);
             bool armDelayElapsed = extending
                 ? modeElapsed >= delay
                 : releaseElapsed >= delay;
@@ -503,13 +514,85 @@ namespace AnimalGame.RobotMap
                 return;
             }
 
-            leftArm = CreateArm("Left Mechanical Arm", Vector2.left);
-            rightArm = CreateArm("Right Mechanical Arm", Vector2.right);
+            leftArm = CreateArm("Left Mechanical Arm", 1f);
+            rightArm = CreateArm("Right Mechanical Arm", -1f);
         }
 
-        private ArmVisual CreateArm(string objectName, Vector2 socketDirection)
+        private void UpdateArmSocketFrame(ArmVisual arm, float deltaTime)
         {
-            float sideSign = socketDirection.x < 0f ? 1f : -1f;
+            Vector2 forwardReference = GetArmForwardReferenceLocal();
+            Vector2 desiredSideDirection = RotateVector(
+                forwardReference,
+                90f * arm.SideSign);
+            Vector2 targetSocketDirection = GetNearestCardinalDirection(
+                desiredSideDirection);
+            float targetSocketAngle = Vector2.SignedAngle(
+                Vector2.up,
+                targetSocketDirection);
+            bool armIsVisible = arm.ConnectorDeployment > 0.0001f
+                                || arm.OuterDeployment > 0.0001f;
+            if (!armIsVisible)
+            {
+                arm.SocketAngle = targetSocketAngle;
+                arm.SocketAngleVelocity = 0f;
+            }
+            else
+            {
+                arm.SocketAngle = Mathf.SmoothDampAngle(
+                    arm.SocketAngle,
+                    targetSocketAngle,
+                    ref arm.SocketAngleVelocity,
+                    socketPositionSmoothingTime,
+                    Mathf.Infinity,
+                    deltaTime);
+            }
+
+            arm.BodySocketDirection = RotateVector(
+                Vector2.up,
+                arm.SocketAngle).normalized;
+            arm.ConnectorDirection = RotateVector(
+                arm.BodySocketDirection,
+                connectorDirectionDegrees * arm.SideSign).normalized;
+            arm.DefaultOuterDirection = RotateVector(
+                arm.ConnectorDirection,
+                -perpendicularAngleDegrees * arm.SideSign).normalized;
+            arm.ConnectorAngle = Vector2.SignedAngle(
+                Vector2.up,
+                arm.ConnectorDirection);
+        }
+
+        private Vector2 GetArmForwardReferenceLocal()
+        {
+            if (tumble == null
+                || tumble.State == RobotTumbleState.Upright
+                || tumble.DirectionWorld.sqrMagnitude <= 0.000001f)
+            {
+                return Vector2.up;
+            }
+
+            Vector2 directionWorld = tumble.DirectionWorld.normalized;
+            Vector3 directionLocal = transform.InverseTransformDirection(
+                new Vector3(directionWorld.x, directionWorld.y, 0f));
+            Vector2 localPlanarDirection = new Vector2(
+                directionLocal.x,
+                directionLocal.y);
+            return localPlanarDirection.sqrMagnitude > 0.000001f
+                ? localPlanarDirection.normalized
+                : Vector2.up;
+        }
+
+        private static Vector2 GetNearestCardinalDirection(Vector2 direction)
+        {
+            if (Mathf.Abs(direction.x) > Mathf.Abs(direction.y))
+                return direction.x >= 0f ? Vector2.right : Vector2.left;
+            return direction.y >= 0f ? Vector2.up : Vector2.down;
+        }
+
+        private ArmVisual CreateArm(string objectName, float sideSign)
+        {
+            Vector2 socketDirection = RotateVector(
+                Vector2.up,
+                90f * sideSign).normalized;
             Vector2 connectorDirection = RotateVector(
                 socketDirection,
                 connectorDirectionDegrees * sideSign).normalized;
@@ -518,9 +601,13 @@ namespace AnimalGame.RobotMap
                 -perpendicularAngleDegrees * sideSign).normalized;
             var arm = new ArmVisual
             {
+                SideSign = sideSign,
                 BodySocketDirection = socketDirection,
                 ConnectorDirection = connectorDirection,
                 DefaultOuterDirection = defaultOuterDirection,
+                SocketAngle = Vector2.SignedAngle(
+                    Vector2.up,
+                    socketDirection),
                 ConnectorAngle = Vector2.SignedAngle(
                     Vector2.up,
                     connectorDirection)
@@ -715,6 +802,9 @@ namespace AnimalGame.RobotMap
             retractDuration = Mathf.Max(0.01f, retractDuration);
             secondArmDelay = Mathf.Clamp(secondArmDelay, 0f, 0.2f);
             aimSmoothingTime = Mathf.Max(0.001f, aimSmoothingTime);
+            socketPositionSmoothingTime = Mathf.Max(
+                0.001f,
+                socketPositionSmoothingTime);
             aimEnterMagnitude = Mathf.Clamp01(aimEnterMagnitude);
             aimExitMagnitude = Mathf.Clamp(
                 aimExitMagnitude,

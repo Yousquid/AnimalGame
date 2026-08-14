@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -64,12 +65,45 @@ namespace AnimalGame.RobotMap
         [Tooltip("Screen-space canvas sorting order of the complete balance display.")]
         [SerializeField] private int canvasSortingOrder = 40;
 
+        [Header("Tumble Motion Trail")]
+        [SerializeField] private bool showTumbleBalanceTrail = true;
+
+        [Tooltip("Number of recent centre-of-mass positions retained during fast tumble motion.")]
+        [SerializeField, Range(2, 8)] private int tumbleBalanceTrailCount = 5;
+
+        [Tooltip("Lifetime in seconds of the oldest tumble balance afterimage.")]
+        [SerializeField, Range(0.05f, 0.4f)] private float tumbleBalanceTrailLifetime = 0.16f;
+
+        [Tooltip("Alpha multiplier of the newest afterimage relative to the live centre-of-mass point.")]
+        [SerializeField, Range(0f, 1f)] private float tumbleBalanceTrailAlpha = 0.38f;
+
+        [Tooltip("Size of the oldest afterimage relative to the live centre-of-mass point.")]
+        [SerializeField, Range(0.2f, 1f)] private float tumbleBalanceTrailEndScale = 0.55f;
+
         private RobotBalanceController balance;
         private RobotTumbleController tumble;
         private Camera mapCamera;
         private GameObject canvasObject;
         private Canvas canvas;
         private RobotBalanceGraphic graphic;
+        private readonly List<BalanceTrailSample> tumbleTrail =
+            new List<BalanceTrailSample>(8);
+        private readonly Vector2[] tumbleTrailOffsets = new Vector2[8];
+        private readonly float[] tumbleTrailAges01 = new float[8];
+        private float tumbleTrailSampleElapsed;
+        private bool tumbleTrailWasActive;
+
+        private struct BalanceTrailSample
+        {
+            public Vector2 NormalizedOffset;
+            public float Age;
+
+            public BalanceTrailSample(Vector2 normalizedOffset)
+            {
+                NormalizedOffset = normalizedOffset;
+                Age = 0f;
+            }
+        }
 
         private void Awake()
         {
@@ -148,6 +182,7 @@ namespace AnimalGame.RobotMap
                     centeredPointAlpha,
                     edgePointAlpha,
                     visibilityProgress));
+            int trailSampleCount = UpdateTumbleBalanceTrail(displayOffset);
             graphic.SetBalance(
                 displayOffset,
                 controlRingDiameterPixels * 0.5f,
@@ -163,6 +198,77 @@ namespace AnimalGame.RobotMap
                 displayedGuideColor,
                 displayedLineColor,
                 displayedPointColor);
+            graphic.SetTumbleTrail(
+                tumbleTrailOffsets,
+                tumbleTrailAges01,
+                trailSampleCount,
+                tumbleBalanceTrailAlpha,
+                tumbleBalanceTrailEndScale,
+                displayedPointColor);
+        }
+
+        private int UpdateTumbleBalanceTrail(Vector2 displayOffset)
+        {
+            float deltaTime = Mathf.Min(Mathf.Max(0f, Time.deltaTime), 0.05f);
+            for (int i = tumbleTrail.Count - 1; i >= 0; i--)
+            {
+                BalanceTrailSample sample = tumbleTrail[i];
+                sample.Age += deltaTime;
+                if (sample.Age >= tumbleBalanceTrailLifetime)
+                    tumbleTrail.RemoveAt(i);
+                else
+                    tumbleTrail[i] = sample;
+            }
+
+            bool trailActive = showTumbleBalanceTrail
+                               && tumble != null
+                               && tumble.State == RobotTumbleState.Tumbling;
+            if (trailActive && !tumbleTrailWasActive)
+            {
+                tumbleTrail.Clear();
+                tumbleTrailSampleElapsed = 0f;
+                AddTumbleTrailSample(displayOffset);
+            }
+
+            if (trailActive)
+            {
+                tumbleTrailSampleElapsed += deltaTime;
+                float sampleInterval = tumbleBalanceTrailLifetime
+                                       / Mathf.Max(2, tumbleBalanceTrailCount);
+                while (tumbleTrailSampleElapsed >= sampleInterval)
+                {
+                    tumbleTrailSampleElapsed -= sampleInterval;
+                    AddTumbleTrailSample(displayOffset);
+                }
+            }
+            else if (!showTumbleBalanceTrail)
+            {
+                tumbleTrail.Clear();
+            }
+
+            tumbleTrailWasActive = trailActive;
+            int sampleCount = Mathf.Min(
+                tumbleTrail.Count,
+                Mathf.Min(8, tumbleBalanceTrailCount));
+            int firstSample = tumbleTrail.Count - sampleCount;
+            for (int i = 0; i < sampleCount; i++)
+            {
+                BalanceTrailSample sample = tumbleTrail[firstSample + i];
+                tumbleTrailOffsets[i] = sample.NormalizedOffset;
+                tumbleTrailAges01[i] = Mathf.Clamp01(
+                    sample.Age
+                    / Mathf.Max(0.05f, tumbleBalanceTrailLifetime));
+            }
+
+            return sampleCount;
+        }
+
+        private void AddTumbleTrailSample(Vector2 displayOffset)
+        {
+            tumbleTrail.Add(new BalanceTrailSample(displayOffset));
+            int maximumSamples = Mathf.Min(8, tumbleBalanceTrailCount);
+            while (tumbleTrail.Count > maximumSamples)
+                tumbleTrail.RemoveAt(0);
         }
 
         public void SetBalanceDisplayVisible(bool visible)
@@ -219,6 +325,9 @@ namespace AnimalGame.RobotMap
 
         private void OnDisable()
         {
+            tumbleTrail.Clear();
+            tumbleTrailWasActive = false;
+            tumbleTrailSampleElapsed = 0f;
             if (canvasObject != null)
                 canvasObject.SetActive(false);
         }
@@ -247,6 +356,19 @@ namespace AnimalGame.RobotMap
             edgePointAlpha = Mathf.Clamp01(edgePointAlpha);
             centeredGuideAlpha = Mathf.Clamp01(centeredGuideAlpha);
             edgeGuideAlpha = Mathf.Clamp01(edgeGuideAlpha);
+            tumbleBalanceTrailCount = Mathf.Clamp(
+                tumbleBalanceTrailCount,
+                2,
+                8);
+            tumbleBalanceTrailLifetime = Mathf.Clamp(
+                tumbleBalanceTrailLifetime,
+                0.05f,
+                0.4f);
+            tumbleBalanceTrailAlpha = Mathf.Clamp01(tumbleBalanceTrailAlpha);
+            tumbleBalanceTrailEndScale = Mathf.Clamp(
+                tumbleBalanceTrailEndScale,
+                0.2f,
+                1f);
         }
     }
 
@@ -267,6 +389,12 @@ namespace AnimalGame.RobotMap
         private Color32 ringColor;
         private Color32 lineColor;
         private Color32 pointColor;
+        private readonly Vector2[] tumbleTrailOffsets = new Vector2[8];
+        private readonly float[] tumbleTrailAges01 = new float[8];
+        private int tumbleTrailCount;
+        private float tumbleTrailAlpha;
+        private float tumbleTrailEndScale = 0.55f;
+        private Color32 tumbleTrailColor;
 
         public void SetBalance(
             Vector2 newNormalizedOffset,
@@ -305,6 +433,27 @@ namespace AnimalGame.RobotMap
                                          * 2f
                                          + maximumPointRadius * 2f
                                          + 12f);
+            SetVerticesDirty();
+        }
+
+        public void SetTumbleTrail(
+            Vector2[] offsets,
+            float[] ages01,
+            int count,
+            float alpha,
+            float endScale,
+            Color color)
+        {
+            tumbleTrailCount = Mathf.Clamp(count, 0, 8);
+            for (int i = 0; i < tumbleTrailCount; i++)
+            {
+                tumbleTrailOffsets[i] = offsets[i];
+                tumbleTrailAges01[i] = Mathf.Clamp01(ages01[i]);
+            }
+
+            tumbleTrailAlpha = Mathf.Clamp01(alpha);
+            tumbleTrailEndScale = Mathf.Clamp(endScale, 0.2f, 1f);
+            tumbleTrailColor = color;
             SetVerticesDirty();
         }
 
@@ -352,12 +501,56 @@ namespace AnimalGame.RobotMap
                 ringThickness,
                 segments,
                 ringColor);
+            AddTumbleTrailDiscs(vertexHelper, center);
             AddDisc(
                 vertexHelper,
                 pointCenter,
                 pointRadius,
                 Mathf.Max(12, segments / 2),
                 pointColor);
+        }
+
+        private void AddTumbleTrailDiscs(
+            VertexHelper vertexHelper,
+            Vector2 center)
+        {
+            for (int i = 0; i < tumbleTrailCount; i++)
+            {
+                Vector2 offset = tumbleTrailOffsets[i];
+                float magnitude = offset.magnitude;
+                Vector2 direction = magnitude > 0.0001f
+                    ? offset / magnitude
+                    : Vector2.zero;
+                float displayedMagnitude = Mathf.Min(magnitude, overflowLimit);
+                Vector2 trailCenter = center
+                                      + direction
+                                      * displayedMagnitude
+                                      * pointTravelRange;
+                float freshness = 1f - tumbleTrailAges01[i];
+                float baseRadius = Mathf.Lerp(
+                    minimumPointRadius,
+                    maximumPointRadius,
+                    Mathf.Clamp01(magnitude));
+                float radiusScale = Mathf.Lerp(
+                    tumbleTrailEndScale,
+                    0.9f,
+                    freshness);
+                Color32 color = tumbleTrailColor;
+                color.a = (byte)Mathf.RoundToInt(
+                    color.a
+                    * tumbleTrailAlpha
+                    * freshness
+                    * freshness);
+                if (color.a == 0)
+                    continue;
+
+                AddDisc(
+                    vertexHelper,
+                    trailCenter,
+                    baseRadius * radiusScale,
+                    Mathf.Max(10, segments / 3),
+                    color);
+            }
         }
 
         private static void AddLine(
