@@ -146,6 +146,8 @@ namespace AnimalGame.RobotMap
                 robot.AddComponent<RobotBalanceController>();
             if (robot.GetComponent<RobotTumbleController>() == null)
                 robot.AddComponent<RobotTumbleController>();
+            if (robot.GetComponent<RobotSelfRightingController>() == null)
+                robot.AddComponent<RobotSelfRightingController>();
             if (robot.GetComponent<RobotBalanceView>() == null)
                 robot.AddComponent<RobotBalanceView>();
         }

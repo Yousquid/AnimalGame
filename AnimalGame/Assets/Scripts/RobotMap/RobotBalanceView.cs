@@ -44,7 +44,7 @@ namespace AnimalGame.RobotMap
         [SerializeField, Min(0f)] private float lineEndInsetPixels;
 
         [Tooltip("Maximum displayed point/line distance as a multiple of Point Travel Range. Values above one allow the point to visibly leave the ring.")]
-        [SerializeField, Range(1f, 1.5f)] private float displayedOverflowLimit = 1.16f;
+        [SerializeField, Range(1f, 2f)] private float displayedOverflowLimit = 1.9f;
 
         [Header("Screen-space Thickness and Size")]
         [Tooltip("Thickness of the balance range ring in screen pixels.")]
@@ -58,6 +58,23 @@ namespace AnimalGame.RobotMap
 
         [Tooltip("Radius of the centre-of-mass point at 100% balance displacement, in screen pixels.")]
         [SerializeField, Min(0.5f)] private float maximumPointRadiusPixels = 8.5f;
+
+        [Tooltip("Visible diagonal size of the fallen centre-of-mass cross relative to the normal point diameter.")]
+        [SerializeField, Range(0.5f, 2f)]
+        private float fallenPointCrossSizeOfPointDiameter = 1.6f;
+
+        [Tooltip("Additional same-colour UI outline used to make the fallen centre-of-mass cross heavier.")]
+        [SerializeField, Range(0f, 3f)]
+        private float fallenPointCrossOutlinePixels = 1.25f;
+
+        [Tooltip("Alpha multiplier applied to the complete balance display while tumble balance presentation is active.")]
+        [SerializeField, Range(1f, 2f)]
+        private float tumbleBalanceOpacityMultiplier = 1.2f;
+
+        [Header("Self Righting")]
+        [Tooltip("Colour of the solid centre-of-mass point after the arms establish enough self-righting support.")]
+        [SerializeField] private Color selfRightingBalancePointColor =
+            new Color(1f, 0.78f, 0.12f, 1f);
 
         [Tooltip("Number of segments used to draw the range ring. Higher values make it rounder.")]
         [SerializeField, Range(12, 128)] private int circleSegments = 64;
@@ -82,10 +99,14 @@ namespace AnimalGame.RobotMap
 
         private RobotBalanceController balance;
         private RobotTumbleController tumble;
+        private RobotSelfRightingController selfRighting;
+        private RobotMarkerView markerView;
         private Camera mapCamera;
         private GameObject canvasObject;
         private Canvas canvas;
         private RobotBalanceGraphic graphic;
+        private Image fallenPointCrossImage;
+        private Outline fallenPointCrossOutline;
         private readonly List<BalanceTrailSample> tumbleTrail =
             new List<BalanceTrailSample>(8);
         private readonly Vector2[] tumbleTrailOffsets = new Vector2[8];
@@ -109,6 +130,8 @@ namespace AnimalGame.RobotMap
         {
             balance = GetComponent<RobotBalanceController>();
             tumble = GetComponent<RobotTumbleController>();
+            selfRighting = GetComponent<RobotSelfRightingController>();
+            markerView = GetComponent<RobotMarkerView>();
             CreateDisplay();
         }
 
@@ -135,23 +158,31 @@ namespace AnimalGame.RobotMap
             if (mapCamera == null || !mapCamera.isActiveAndEnabled)
                 mapCamera = Camera.main;
             if (mapCamera == null)
+            {
+                SetFallenPointCrossVisible(false);
                 return;
+            }
 
             Vector3 originScreen = mapCamera.WorldToScreenPoint(transform.position);
             if (originScreen.z <= 0f)
             {
                 graphic.enabled = false;
+                SetFallenPointCrossVisible(false);
                 return;
             }
 
             graphic.enabled = true;
+            if (selfRighting == null)
+                selfRighting = GetComponent<RobotSelfRightingController>();
             RectTransform graphicRect = graphic.rectTransform;
             graphicRect.anchoredPosition = new Vector2(originScreen.x, originScreen.y);
 
-            RobotBalanceState state = tumble != null
-                                      && tumble.HasTumbleBalanceState
-                ? tumble.TumbleBalanceState
-                : balance.CurrentState;
+            RobotBalanceState state = selfRighting != null
+                                      && selfRighting.HasBalancePresentation
+                ? selfRighting.DisplayedBalanceState
+                : tumble != null && tumble.HasTumbleBalanceState
+                    ? tumble.TumbleBalanceState
+                    : balance.CurrentState;
             Vector2 screenDirection = Vector2.zero;
             if (state.NormalizedWorldOffset.sqrMagnitude > 0.000001f)
             {
@@ -163,25 +194,43 @@ namespace AnimalGame.RobotMap
             }
 
             Vector2 displayOffset = screenDirection * state.Magnitude;
+            float tumbleOpacityMultiplier = tumble != null
+                                             && tumble.HasTumbleBalanceState
+                ? tumbleBalanceOpacityMultiplier
+                : 1f;
+            bool showFallenPointCross = (selfRighting != null
+                                         && selfRighting.HasBalancePresentation
+                    ? selfRighting.ShowBalancePointAsCross
+                    : tumble != null
+                      && tumble.State == RobotTumbleState.Fallen)
+                                        && fallenPointCrossImage != null
+                                        && fallenPointCrossImage.sprite != null;
             float visibilityProgress = Mathf.Clamp01(state.Magnitude);
             Color displayedGuideColor = WithAlpha(
                 ringColor,
                 Mathf.Lerp(
                     centeredGuideAlpha,
                     edgeGuideAlpha,
-                    visibilityProgress));
+                    visibilityProgress)
+                * tumbleOpacityMultiplier);
             Color displayedLineColor = WithAlpha(
                 lineColor,
                 Mathf.Lerp(
                     centeredGuideAlpha,
                     edgeGuideAlpha,
-                    visibilityProgress));
+                    visibilityProgress)
+                * tumbleOpacityMultiplier);
+            Color activePointColor = selfRighting != null
+                                     && selfRighting.UseRecoveryBalancePointColor
+                ? selfRightingBalancePointColor
+                : pointColor;
             Color displayedPointColor = WithAlpha(
-                pointColor,
+                activePointColor,
                 Mathf.Lerp(
                     centeredPointAlpha,
                     edgePointAlpha,
-                    visibilityProgress));
+                    visibilityProgress)
+                * tumbleOpacityMultiplier);
             int trailSampleCount = UpdateTumbleBalanceTrail(displayOffset);
             graphic.SetBalance(
                 displayOffset,
@@ -193,6 +242,7 @@ namespace AnimalGame.RobotMap
                 lineThicknessPixels,
                 minimumPointRadiusPixels,
                 maximumPointRadiusPixels,
+                !showFallenPointCross,
                 displayedOverflowLimit,
                 circleSegments,
                 displayedGuideColor,
@@ -204,6 +254,11 @@ namespace AnimalGame.RobotMap
                 trailSampleCount,
                 tumbleBalanceTrailAlpha,
                 tumbleBalanceTrailEndScale,
+                displayedPointColor);
+            UpdateFallenPointCross(
+                showFallenPointCross,
+                new Vector2(originScreen.x, originScreen.y),
+                displayOffset,
                 displayedPointColor);
         }
 
@@ -314,7 +369,91 @@ namespace AnimalGame.RobotMap
             rect.pivot = Vector2.one * 0.5f;
             rect.sizeDelta = Vector2.one * (controlRingDiameterPixels + 40f);
 
+            CreateFallenPointCrossImage();
+
             canvasObject.SetActive(showBalanceDisplay);
+        }
+
+        private void CreateFallenPointCrossImage()
+        {
+            var crossObject = new GameObject(
+                "Fallen Balance Point Cross",
+                typeof(RectTransform),
+                typeof(CanvasRenderer));
+            crossObject.layer = canvasObject.layer;
+            crossObject.transform.SetParent(canvasObject.transform, false);
+            fallenPointCrossImage = crossObject.AddComponent<Image>();
+            fallenPointCrossImage.raycastTarget = false;
+            fallenPointCrossImage.preserveAspect = true;
+            fallenPointCrossImage.sprite = markerView != null
+                ? markerView.RolloverSignSprite
+                : null;
+
+            RectTransform crossRect = fallenPointCrossImage.rectTransform;
+            crossRect.anchorMin = Vector2.zero;
+            crossRect.anchorMax = Vector2.zero;
+            crossRect.pivot = Vector2.one * 0.5f;
+            if (fallenPointCrossImage.sprite != null)
+            {
+                float sourceVisibleDiagonalPixels = Mathf.Max(
+                    1f,
+                    markerView.RolloverSignVisibleDiameterPixels)
+                    * Mathf.Sqrt(2f);
+                float targetVisibleDiagonalPixels = maximumPointRadiusPixels
+                                                    * 2f
+                                                    * fallenPointCrossSizeOfPointDiameter;
+                float artworkScale = targetVisibleDiagonalPixels
+                                     / sourceVisibleDiagonalPixels;
+                Rect spriteRect = fallenPointCrossImage.sprite.rect;
+                crossRect.sizeDelta = new Vector2(
+                    spriteRect.width * artworkScale,
+                    spriteRect.height * artworkScale);
+            }
+            else
+            {
+                crossRect.sizeDelta = Vector2.one
+                                      * maximumPointRadiusPixels
+                                      * 2f;
+            }
+
+            fallenPointCrossOutline = crossObject.AddComponent<Outline>();
+            fallenPointCrossOutline.useGraphicAlpha = false;
+            fallenPointCrossOutline.effectDistance = new Vector2(
+                fallenPointCrossOutlinePixels,
+                -fallenPointCrossOutlinePixels);
+
+            fallenPointCrossImage.enabled = false;
+        }
+
+        private void UpdateFallenPointCross(
+            bool visible,
+            Vector2 originScreen,
+            Vector2 displayOffset,
+            Color displayedColor)
+        {
+            if (fallenPointCrossImage == null)
+                return;
+
+            bool canDisplay = visible
+                              && fallenPointCrossImage.sprite != null;
+            fallenPointCrossImage.enabled = canDisplay;
+            if (!canDisplay)
+                return;
+
+            Vector2 clampedOffset = Vector2.ClampMagnitude(
+                displayOffset,
+                displayedOverflowLimit);
+            fallenPointCrossImage.rectTransform.anchoredPosition =
+                originScreen + clampedOffset * pointTravelRangePixels;
+            fallenPointCrossImage.color = displayedColor;
+            if (fallenPointCrossOutline != null)
+                fallenPointCrossOutline.effectColor = displayedColor;
+        }
+
+        private void SetFallenPointCrossVisible(bool visible)
+        {
+            if (fallenPointCrossImage != null)
+                fallenPointCrossImage.enabled = visible;
         }
 
         private static Color WithAlpha(Color color, float alpha)
@@ -350,7 +489,19 @@ namespace AnimalGame.RobotMap
             maximumPointRadiusPixels = Mathf.Max(
                 minimumPointRadiusPixels,
                 maximumPointRadiusPixels);
-            displayedOverflowLimit = Mathf.Clamp(displayedOverflowLimit, 1f, 1.5f);
+            fallenPointCrossSizeOfPointDiameter = Mathf.Clamp(
+                fallenPointCrossSizeOfPointDiameter,
+                0.5f,
+                2f);
+            fallenPointCrossOutlinePixels = Mathf.Clamp(
+                fallenPointCrossOutlinePixels,
+                0f,
+                3f);
+            tumbleBalanceOpacityMultiplier = Mathf.Clamp(
+                tumbleBalanceOpacityMultiplier,
+                1f,
+                2f);
+            displayedOverflowLimit = Mathf.Clamp(displayedOverflowLimit, 1f, 2f);
             circleSegments = Mathf.Clamp(circleSegments, 12, 128);
             centeredPointAlpha = Mathf.Clamp01(centeredPointAlpha);
             edgePointAlpha = Mathf.Clamp01(edgePointAlpha);
@@ -384,6 +535,7 @@ namespace AnimalGame.RobotMap
         private float lineThickness = 1f;
         private float minimumPointRadius = 2f;
         private float maximumPointRadius = 8f;
+        private bool pointVisible = true;
         private float overflowLimit = 1.16f;
         private int segments = 64;
         private Color32 ringColor;
@@ -406,6 +558,7 @@ namespace AnimalGame.RobotMap
             float newLineThickness,
             float newMinimumPointRadius,
             float newMaximumPointRadius,
+            bool newPointVisible,
             float newOverflowLimit,
             int newSegments,
             Color newRingColor,
@@ -421,6 +574,7 @@ namespace AnimalGame.RobotMap
             lineThickness = newLineThickness;
             minimumPointRadius = newMinimumPointRadius;
             maximumPointRadius = newMaximumPointRadius;
+            pointVisible = newPointVisible;
             overflowLimit = newOverflowLimit;
             segments = newSegments;
             ringColor = newRingColor;
@@ -502,12 +656,15 @@ namespace AnimalGame.RobotMap
                 segments,
                 ringColor);
             AddTumbleTrailDiscs(vertexHelper, center);
-            AddDisc(
-                vertexHelper,
-                pointCenter,
-                pointRadius,
-                Mathf.Max(12, segments / 2),
-                pointColor);
+            if (pointVisible)
+            {
+                AddDisc(
+                    vertexHelper,
+                    pointCenter,
+                    pointRadius,
+                    Mathf.Max(12, segments / 2),
+                    pointColor);
+            }
         }
 
         private void AddTumbleTrailDiscs(

@@ -110,6 +110,11 @@ namespace AnimalGame.RobotMap
         public bool IsArmModeActive { get; private set; }
         public Vector2 CurrentTargetLocal { get; private set; }
         public float CurrentInputMagnitude { get; private set; }
+        public float VisibleDeployment01 => leftArm != null && rightArm != null
+            ? Mathf.Min(
+                Mathf.Max(leftArm.ConnectorDeployment, leftArm.OuterDeployment),
+                Mathf.Max(rightArm.ConnectorDeployment, rightArm.OuterDeployment))
+            : 0f;
 
         private RobotMover mover;
         private RobotMarkerView markerView;
@@ -521,11 +526,23 @@ namespace AnimalGame.RobotMap
         private void UpdateArmSocketFrame(ArmVisual arm, float deltaTime)
         {
             Vector2 forwardReference = GetArmForwardReferenceLocal();
-            Vector2 desiredSideDirection = RotateVector(
-                forwardReference,
-                90f * arm.SideSign);
-            Vector2 targetSocketDirection = GetNearestCardinalDirection(
-                desiredSideDirection);
+            Vector2 targetSocketDirection;
+            if (ShouldUseTumbleSocketSelection())
+            {
+                GetNearestTumbleSocketPair(
+                    forwardReference,
+                    out Vector2 leftSocketDirection,
+                    out Vector2 rightSocketDirection);
+                targetSocketDirection = arm.SideSign > 0f
+                    ? leftSocketDirection
+                    : rightSocketDirection;
+            }
+            else
+            {
+                targetSocketDirection = RotateVector(
+                    forwardReference,
+                    90f * arm.SideSign).normalized;
+            }
             float targetSocketAngle = Vector2.SignedAngle(
                 Vector2.up,
                 targetSocketDirection);
@@ -561,6 +578,13 @@ namespace AnimalGame.RobotMap
                 arm.ConnectorDirection);
         }
 
+        private bool ShouldUseTumbleSocketSelection()
+        {
+            return tumble != null
+                   && tumble.State != RobotTumbleState.Upright
+                   && tumble.DirectionWorld.sqrMagnitude > 0.000001f;
+        }
+
         private Vector2 GetArmForwardReferenceLocal()
         {
             if (tumble == null
@@ -581,11 +605,48 @@ namespace AnimalGame.RobotMap
                 : Vector2.up;
         }
 
-        private static Vector2 GetNearestCardinalDirection(Vector2 direction)
+        private static void GetNearestTumbleSocketPair(
+            Vector2 direction,
+            out Vector2 leftSocketDirection,
+            out Vector2 rightSocketDirection)
         {
+            Vector2 primaryDirection;
+            Vector2 secondaryDirection;
             if (Mathf.Abs(direction.x) > Mathf.Abs(direction.y))
-                return direction.x >= 0f ? Vector2.right : Vector2.left;
-            return direction.y >= 0f ? Vector2.up : Vector2.down;
+            {
+                primaryDirection = direction.x >= 0f
+                    ? Vector2.right
+                    : Vector2.left;
+                secondaryDirection = direction.y >= 0f
+                    ? Vector2.up
+                    : Vector2.down;
+            }
+            else
+            {
+                primaryDirection = direction.y >= 0f
+                    ? Vector2.up
+                    : Vector2.down;
+                secondaryDirection = direction.x >= 0f
+                    ? Vector2.right
+                    : Vector2.left;
+            }
+
+            float primarySideAngle = Vector2.SignedAngle(
+                direction,
+                primaryDirection);
+            float secondarySideAngle = Vector2.SignedAngle(
+                direction,
+                secondaryDirection);
+            if (primarySideAngle >= secondarySideAngle)
+            {
+                leftSocketDirection = primaryDirection;
+                rightSocketDirection = secondaryDirection;
+            }
+            else
+            {
+                leftSocketDirection = secondaryDirection;
+                rightSocketDirection = primaryDirection;
+            }
         }
 
         private ArmVisual CreateArm(string objectName, float sideSign)

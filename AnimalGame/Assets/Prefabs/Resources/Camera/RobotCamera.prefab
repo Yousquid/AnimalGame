@@ -196,6 +196,15 @@ MonoBehaviour:
   finalRockPositionImpact: 0.1
   finalRockRotationImpactDegrees: 1.6
   finalRockZoomImpactFraction: 0.006
+  selfRightForcePositionImpact: 0.055
+  selfRightForceRotationImpactDegrees: 0.8
+  selfRightForceZoomImpactFraction: 0.002
+  selfRightFailurePositionImpact: 0.22
+  selfRightFailureRotationImpactDegrees: 3.2
+  selfRightFailureZoomImpactFraction: 0.015
+  selfRightLandingPositionImpact: 0.48
+  selfRightLandingRotationImpactDegrees: 7
+  selfRightLandingZoomImpactFraction: 0.055
   tumbleContinuousLowFrequencyStrength: 0.95
   tumbleContinuousHighFrequencyStrength: 0.82
   tumbleLandingLowFrequencyStrength: 1

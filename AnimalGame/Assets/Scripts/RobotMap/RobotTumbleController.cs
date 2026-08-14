@@ -213,7 +213,7 @@ namespace AnimalGame.RobotMap
 
         [Header("Tumble Balance Display")]
         [Tooltip("Preferred normalized centre-of-mass distance while tumbling. Values above one place the point outside the support ring.")]
-        [SerializeField, Range(1f, 1.5f)] private float outerBalanceMagnitude = 1.1f;
+        [SerializeField, Range(1f, 2f)] private float outerBalanceMagnitude = 1.66f;
 
         [Tooltip("Closest normalized distance reached during the brief inward part of a strong tumble swing.")]
         [SerializeField, Range(0.9f, 1f)] private float minimumSwingMagnitude = 0.98f;
@@ -281,16 +281,34 @@ namespace AnimalGame.RobotMap
         public RobotBalanceState TumbleBalanceState { get; private set; }
         public bool IsBalanceRecoveryActive { get; private set; }
         public float BalanceRecoveryProgress01 { get; private set; }
+        public bool IsSelfRightingVisualActive { get; private set; }
+        public float SelfRightingVisualProgress01 { get; private set; }
         public bool HasTumbleBalanceState => State != RobotTumbleState.Upright
                                              || IsBalanceRecoveryActive;
-        public float ContinuousQuarterTurnProgress =>
-            CompletedStepCount
-            + (activeStep
-                ? Mathf.SmoothStep(0f, 1f, StepProgress01)
-                : 0f)
-            + (State == RobotTumbleState.FinalRocking
-                ? FinalRockOffsetDegrees / 90f
-                : 0f);
+        public float ContinuousQuarterTurnProgress
+        {
+            get
+            {
+                if (IsSelfRightingVisualActive)
+                {
+                    return Mathf.Lerp(
+                        selfRightingStartQuarterTurns,
+                        selfRightingTargetQuarterTurns,
+                        Mathf.SmoothStep(
+                            0f,
+                            1f,
+                            SelfRightingVisualProgress01));
+                }
+
+                return CompletedStepCount
+                       + (activeStep
+                           ? Mathf.SmoothStep(0f, 1f, StepProgress01)
+                           : 0f)
+                       + (State == RobotTumbleState.FinalRocking
+                           ? FinalRockOffsetDegrees / 90f
+                           : 0f);
+            }
+        }
         public float SignedContinuousQuarterTurnProgress =>
             QuarterTurnSign * ContinuousQuarterTurnProgress;
 
@@ -331,6 +349,8 @@ namespace AnimalGame.RobotMap
         private Vector2 lastPublishedBalanceWorldOffset;
         private Vector2 publishedBalanceVelocity;
         private int lastBalancePublishFrame = -1;
+        private float selfRightingStartQuarterTurns;
+        private float selfRightingTargetQuarterTurns;
 
         private void Awake()
         {
@@ -361,6 +381,76 @@ namespace AnimalGame.RobotMap
         public void Initialize(HeightMapTraversalEvaluator traversalEvaluator)
         {
             evaluator = traversalEvaluator;
+        }
+
+        internal bool BeginSelfRightingVisual()
+        {
+            if (State != RobotTumbleState.Fallen)
+                return false;
+
+            selfRightingStartQuarterTurns = CompletedStepCount;
+            float lowerUprightQuarterTurns = Mathf.Floor(
+                selfRightingStartQuarterTurns / StepsPerFullRotation)
+                * StepsPerFullRotation;
+            float upperUprightQuarterTurns = lowerUprightQuarterTurns
+                                             + StepsPerFullRotation;
+            selfRightingTargetQuarterTurns =
+                Mathf.Abs(selfRightingStartQuarterTurns
+                          - lowerUprightQuarterTurns)
+                <= Mathf.Abs(upperUprightQuarterTurns
+                             - selfRightingStartQuarterTurns)
+                    ? lowerUprightQuarterTurns
+                    : upperUprightQuarterTurns;
+            SelfRightingVisualProgress01 = 0f;
+            IsSelfRightingVisualActive = true;
+            return true;
+        }
+
+        internal void UpdateSelfRightingVisualProgress(float progress01)
+        {
+            if (!IsSelfRightingVisualActive)
+                return;
+            SelfRightingVisualProgress01 = Mathf.Clamp01(progress01);
+        }
+
+        internal void CancelSelfRightingVisual()
+        {
+            IsSelfRightingVisualActive = false;
+            SelfRightingVisualProgress01 = 0f;
+        }
+
+        internal bool CompleteSelfRighting(
+            Vector2 landingBalanceWorldDirection,
+            Vector2 inertiaWorldDirection,
+            float landingBalanceMagnitude,
+            float inertiaMagnitude,
+            float inertiaDuration)
+        {
+            if (State != RobotTumbleState.Fallen
+                || !IsSelfRightingVisualActive)
+            {
+                return false;
+            }
+
+            IsSelfRightingVisualActive = false;
+            SelfRightingVisualProgress01 = 0f;
+            IsBalanceRecoveryActive = false;
+            BalanceRecoveryProgress01 = 0f;
+            State = RobotTumbleState.Upright;
+            CompletedStepCount = 0;
+            CurrentSpecificEnergy = 0f;
+            StepProgress01 = 0f;
+            FinalRockProgress01 = 0f;
+            FinalRockOffsetDegrees = 0f;
+            FinalRockMaximumAngleDegrees = 0f;
+            balance?.RestoreUprightFromSelfRighting(
+                landingBalanceWorldDirection,
+                inertiaWorldDirection,
+                landingBalanceMagnitude,
+                inertiaMagnitude,
+                inertiaDuration);
+            mover?.RestoreDrivenAfterCompletedTumble();
+            return true;
         }
 
         private void Update()
@@ -431,6 +521,7 @@ namespace AnimalGame.RobotMap
                 return;
 
             triggerInfo = tipOverInfo;
+            CancelSelfRightingVisual();
             ChooseTumbleAxisAndDirection(tipOverInfo);
             State = RobotTumbleState.Tumbling;
             tumbleStartTime = Time.time;
@@ -1164,7 +1255,7 @@ namespace AnimalGame.RobotMap
             outerBalanceMagnitude = Mathf.Clamp(
                 outerBalanceMagnitude,
                 1.001f,
-                1.5f);
+                2f);
             minimumSwingMagnitude = Mathf.Clamp(
                 minimumSwingMagnitude,
                 0.9f,

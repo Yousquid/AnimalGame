@@ -226,6 +226,17 @@ namespace AnimalGame.RobotMap
         [Tooltip("Orthographic zoom impulse used by final rocking contacts.")]
         [SerializeField, Range(0f, 0.1f)] private float finalRockZoomImpactFraction = 0.006f;
 
+        [Header("Self Righting Impacts")]
+        [SerializeField, Min(0f)] private float selfRightForcePositionImpact = 0.055f;
+        [SerializeField, Min(0f)] private float selfRightForceRotationImpactDegrees = 0.8f;
+        [SerializeField, Range(0f, 0.1f)] private float selfRightForceZoomImpactFraction = 0.002f;
+        [SerializeField, Min(0f)] private float selfRightFailurePositionImpact = 0.22f;
+        [SerializeField, Min(0f)] private float selfRightFailureRotationImpactDegrees = 3.2f;
+        [SerializeField, Range(0f, 0.1f)] private float selfRightFailureZoomImpactFraction = 0.015f;
+        [SerializeField, Min(0f)] private float selfRightLandingPositionImpact = 0.48f;
+        [SerializeField, Min(0f)] private float selfRightLandingRotationImpactDegrees = 7f;
+        [SerializeField, Range(0f, 0.1f)] private float selfRightLandingZoomImpactFraction = 0.055f;
+
         [Header("Tumble Gamepad Rumble")]
         [Tooltip("Low-frequency motor strength maintained throughout an active tumble.")]
         [SerializeField, Range(0f, 1f)] private float tumbleContinuousLowFrequencyStrength = 0.95f;
@@ -312,6 +323,7 @@ namespace AnimalGame.RobotMap
         private RobotMover mover;
         private RobotBalanceController balance;
         private RobotTumbleController tumble;
+        private RobotSelfRightingController selfRighting;
         private RobotHeightMotionDetector heightMotion;
         private float baseOrthographicSize;
         private float scanZoomMultiplier = 1f;
@@ -333,6 +345,7 @@ namespace AnimalGame.RobotMap
         private TraversalBlockReason previousBlockReason;
         private LevelThreeClimbFailurePhase previousLevelThreePhase;
         private bool tumbleEventsSubscribed;
+        private bool selfRightingEventsSubscribed;
         private RobotTumbleState observedTumbleState = RobotTumbleState.Upright;
         private float nextDiscreteImpactTime;
         private float noiseSeedX;
@@ -390,17 +403,22 @@ namespace AnimalGame.RobotMap
             RobotHeightMotionDetector heightMotionDetector)
         {
             UnsubscribeFromTumbleEvents();
+            UnsubscribeFromSelfRightingEvents();
 
             mover = robotMover;
             balance = balanceController;
             tumble = mover != null
                 ? mover.GetComponent<RobotTumbleController>()
                 : null;
+            selfRighting = mover != null
+                ? mover.GetComponent<RobotSelfRightingController>()
+                : null;
             heightMotion = heightMotionDetector;
             observedTumbleState = tumble != null
                 ? tumble.State
                 : RobotTumbleState.Upright;
             SubscribeToTumbleEvents();
+            SubscribeToSelfRightingEvents();
 
             previousMotionInitialized = false;
             previousBlocked = mover != null && mover.IsSlopeBlocked;
@@ -464,6 +482,78 @@ namespace AnimalGame.RobotMap
             }
 
             tumbleEventsSubscribed = false;
+        }
+
+        private void SubscribeToSelfRightingEvents()
+        {
+            if (selfRightingEventsSubscribed
+                || selfRighting == null
+                || !isActiveAndEnabled)
+            {
+                return;
+            }
+
+            selfRighting.ForcePulse += HandleSelfRightingForcePulse;
+            selfRighting.SupportFailed += HandleSelfRightingFailure;
+            selfRighting.RightingLanded += HandleSelfRightingLanded;
+            selfRightingEventsSubscribed = true;
+        }
+
+        private void UnsubscribeFromSelfRightingEvents()
+        {
+            if (!selfRightingEventsSubscribed)
+                return;
+
+            if (selfRighting != null)
+            {
+                selfRighting.ForcePulse -= HandleSelfRightingForcePulse;
+                selfRighting.SupportFailed -= HandleSelfRightingFailure;
+                selfRighting.RightingLanded -= HandleSelfRightingLanded;
+            }
+
+            selfRightingEventsSubscribed = false;
+        }
+
+        private void HandleSelfRightingForcePulse(
+            RobotSelfRightingForcePulseInfo pulse)
+        {
+            float strength = pulse.Accepted ? 0.38f : 0.2f;
+            ExtendTumbleIntensityLimits();
+            StartTumbleLandingRumble(strength);
+            AddTumbleDirectionalImpact(
+                pulse.WorldDirection,
+                strength,
+                selfRightForcePositionImpact,
+                selfRightForceRotationImpactDegrees,
+                selfRightForceZoomImpactFraction);
+        }
+
+        private void HandleSelfRightingFailure(
+            RobotSelfRightingFailureInfo failure)
+        {
+            ExtendTumbleIntensityLimits();
+            StartTumbleLandingRumble(0.72f);
+            StartTumbleAftershock(0.48f);
+            AddTumbleDirectionalImpact(
+                failure.WorldDirection,
+                0.82f,
+                selfRightFailurePositionImpact,
+                selfRightFailureRotationImpactDegrees,
+                selfRightFailureZoomImpactFraction);
+        }
+
+        private void HandleSelfRightingLanded(RobotSelfRightingLandedInfo landed)
+        {
+            observedTumbleState = RobotTumbleState.Upright;
+            ExtendTumbleIntensityLimits();
+            StartTumbleLandingRumble(1f);
+            StartTumbleAftershock(1f);
+            AddTumbleDirectionalImpact(
+                -landed.OriginalTumbleDirectionWorld,
+                1f,
+                selfRightLandingPositionImpact,
+                selfRightLandingRotationImpactDegrees,
+                selfRightLandingZoomImpactFraction);
         }
 
         private void HandleTumbleStarted(RobotTumbleStartedInfo started)
@@ -1406,6 +1496,7 @@ namespace AnimalGame.RobotMap
         private void OnDisable()
         {
             UnsubscribeFromTumbleEvents();
+            UnsubscribeFromSelfRightingEvents();
             ResetShakeState();
             StopGamepadRumble();
             scanZoomMultiplier = 1f;
@@ -1445,6 +1536,7 @@ namespace AnimalGame.RobotMap
         private void OnEnable()
         {
             SubscribeToTumbleEvents();
+            SubscribeToSelfRightingEvents();
         }
 
         private void OnApplicationFocus(bool hasFocus)
@@ -1462,6 +1554,7 @@ namespace AnimalGame.RobotMap
         private void OnDestroy()
         {
             UnsubscribeFromTumbleEvents();
+            UnsubscribeFromSelfRightingEvents();
             StopGamepadRumble();
         }
 

@@ -175,6 +175,11 @@ namespace AnimalGame.RobotMap
         private Vector2 previousWorldVelocity;
         private Vector2 filteredWorldAcceleration;
         private bool velocityInitialized;
+        private Vector2 selfRightingInertiaDirectionLocal;
+        private float selfRightingInertiaMagnitude;
+        private float selfRightingInertiaInitialMagnitude;
+        private float selfRightingInertiaElapsed;
+        private float selfRightingInertiaDuration;
         private void Awake()
         {
             mover = GetComponent<RobotMover>();
@@ -204,10 +209,13 @@ namespace AnimalGame.RobotMap
 
             UpdateMeasuredAcceleration(deltaTime);
             UpdatePlayerCounterbalance(deltaTime);
+            UpdateSelfRightingInertia(deltaTime);
 
             Vector2 targetBalanceLocal = CalculateSlopeBalanceLocal()
                                          + CalculateInertiaBalanceLocal()
-                                         + currentCounterbalanceLocal;
+                                         + currentCounterbalanceLocal
+                                         + selfRightingInertiaDirectionLocal
+                                           * selfRightingInertiaMagnitude;
             targetBalanceLocal = ApplyEdgeResistance(
                 Vector2.ClampMagnitude(targetBalanceLocal, 4f));
 
@@ -251,6 +259,7 @@ namespace AnimalGame.RobotMap
             balanceVelocityLocal = Vector2.zero;
             counterbalanceVelocityLocal = Vector2.zero;
             filteredWorldAcceleration = Vector2.zero;
+            ClearSelfRightingInertia();
 
             CenterCameraFollowTarget();
             TippedOver?.Invoke(CurrentTipOver);
@@ -267,8 +276,86 @@ namespace AnimalGame.RobotMap
             previousWorldVelocity = Vector2.zero;
             filteredWorldAcceleration = Vector2.zero;
             velocityInitialized = false;
+            ClearSelfRightingInertia();
             PublishState();
             CenterCameraFollowTarget();
+        }
+
+        internal void RestoreUprightFromSelfRighting(
+            Vector2 landingBalanceWorldDirection,
+            Vector2 inertiaWorldDirection,
+            float landingBalanceMagnitude,
+            float inertiaMagnitude,
+            float inertiaDuration)
+        {
+            IsTippedOver = false;
+            CurrentTipOver = default;
+            Vector2 safeWorldDirection = inertiaWorldDirection.sqrMagnitude
+                                         > 0.000001f
+                ? inertiaWorldDirection.normalized
+                : (Vector2)transform.right;
+            selfRightingInertiaDirectionLocal = new Vector2(
+                Vector2.Dot(safeWorldDirection, transform.right),
+                Vector2.Dot(safeWorldDirection, transform.up)).normalized;
+            Vector2 safeLandingWorldDirection =
+                landingBalanceWorldDirection.sqrMagnitude > 0.000001f
+                    ? landingBalanceWorldDirection.normalized
+                    : -safeWorldDirection;
+            Vector2 landingBalanceDirectionLocal = new Vector2(
+                Vector2.Dot(safeLandingWorldDirection, transform.right),
+                Vector2.Dot(safeLandingWorldDirection, transform.up)).normalized;
+            currentBalanceLocal = landingBalanceDirectionLocal
+                                  * Mathf.Clamp(
+                                      landingBalanceMagnitude,
+                                      0f,
+                                      0.99f);
+            balanceVelocityLocal = Vector2.zero;
+            currentCounterbalanceLocal = Vector2.zero;
+            counterbalanceVelocityLocal = Vector2.zero;
+            previousWorldVelocity = Vector2.zero;
+            filteredWorldAcceleration = Vector2.zero;
+            velocityInitialized = false;
+            selfRightingInertiaInitialMagnitude = Mathf.Max(
+                0f,
+                inertiaMagnitude);
+            selfRightingInertiaMagnitude = selfRightingInertiaInitialMagnitude;
+            selfRightingInertiaElapsed = 0f;
+            selfRightingInertiaDuration = Mathf.Max(0.01f, inertiaDuration);
+            PublishState();
+            UpdateCameraFollowTarget();
+        }
+
+        private void UpdateSelfRightingInertia(float deltaTime)
+        {
+            if (selfRightingInertiaMagnitude <= 0f
+                || selfRightingInertiaDuration <= 0f)
+            {
+                return;
+            }
+
+            selfRightingInertiaElapsed += deltaTime;
+            float progress = Mathf.Clamp01(
+                selfRightingInertiaElapsed / selfRightingInertiaDuration);
+            const float PeakHoldRatio = 0.55f;
+            float envelope = progress <= PeakHoldRatio
+                ? 1f
+                : 1f - Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    (progress - PeakHoldRatio) / (1f - PeakHoldRatio));
+            selfRightingInertiaMagnitude = selfRightingInertiaInitialMagnitude
+                                          * envelope;
+            if (progress >= 1f)
+                ClearSelfRightingInertia();
+        }
+
+        private void ClearSelfRightingInertia()
+        {
+            selfRightingInertiaDirectionLocal = Vector2.zero;
+            selfRightingInertiaMagnitude = 0f;
+            selfRightingInertiaInitialMagnitude = 0f;
+            selfRightingInertiaElapsed = 0f;
+            selfRightingInertiaDuration = 0f;
         }
 
         private Vector2 ApplyEdgeResistance(Vector2 target)

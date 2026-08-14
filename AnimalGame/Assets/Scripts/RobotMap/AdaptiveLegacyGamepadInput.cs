@@ -85,6 +85,23 @@ namespace AnimalGame.RobotMap
             return Input.GetKey(KeyCode.JoystickButton8);
         }
 
+        public static bool WasNorthFaceButtonPressedThisFrame()
+        {
+#if ENABLE_INPUT_SYSTEM
+            foreach (Gamepad gamepad in Gamepad.all)
+            {
+                if (gamepad != null
+                    && gamepad.added
+                    && gamepad.buttonNorth.wasPressedThisFrame)
+                {
+                    return true;
+                }
+            }
+#endif
+            // Xbox Y and Sony Triangle use the north face-button position.
+            return Input.GetKeyDown(KeyCode.JoystickButton3);
+        }
+
         public static Vector2 ReadBalance()
         {
             RefreshDeviceIfNeeded();

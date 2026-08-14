@@ -163,6 +163,9 @@ namespace AnimalGame.RobotMap
         public Transform MarkerVisualRoot => markerVisualRoot;
         public float BodyDiameter => bodyDiameter;
         public Material ForegroundSpriteMaterial => foregroundSpriteMaterial;
+        public Sprite RolloverSignSprite => rolloverSignSprite;
+        public float RolloverSignVisibleDiameterPixels =>
+            rolloverSignVisibleDiameterPixels;
 
         public float ScreenPixelsToMarkerLocalUnits(float screenPixels)
         {
