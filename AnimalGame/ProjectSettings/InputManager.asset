@@ -300,7 +300,7 @@ InputManager:
     negativeButton: 
     positiveButton: left ctrl
     altNegativeButton: 
-    altPositiveButton: joystick button 8
+    altPositiveButton:
     gravity: 0
     dead: 0
     sensitivity: 0
@@ -316,7 +316,7 @@ InputManager:
     negativeButton: 
     positiveButton: backspace
     altNegativeButton: 
-    altPositiveButton: joystick button 9
+    altPositiveButton:
     gravity: 0
     dead: 0
     sensitivity: 0
