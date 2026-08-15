@@ -9,7 +9,8 @@ namespace AnimalGame.MapTest
         Slope,
         Step,
         UnsafeDownhill,
-        Boundary
+        Boundary,
+        Obstacle
     }
 
     public enum UphillSlopeLevel
@@ -96,6 +97,22 @@ namespace AnimalGame.MapTest
                 0f,
                 Vector2.zero,
                 TraversalBlockReason.Boundary);
+
+        public static SlopeTraversalResult BlockedObstacle =>
+            new SlopeTraversalResult(
+                true,
+                false,
+                true,
+                UphillSlopeLevel.LevelOne,
+                0f,
+                0f,
+                0f,
+                0f,
+                0f,
+                0f,
+                0f,
+                Vector2.zero,
+                TraversalBlockReason.Obstacle);
     }
 
     /// <summary>
@@ -221,6 +238,14 @@ namespace AnimalGame.MapTest
         [Tooltip("Short look-ahead used only for hard blockers (steps, unsafe drops and map boundaries) during real movement. Keep this near the robot footprint so a blocker several meters ahead does not feel like an invisible wall.")]
         [SerializeField, Min(0.25f)] private float hardStopProbeDistanceMeters = 2f;
 
+        [Header("Map Obstacles")]
+        [Tooltip("Circular player radius used when sweeping against solid map props. This is independent from the terrain contact footprint so collisions stop at the visible core instead of at the terrain look-ahead distance.")]
+        [SerializeField, Min(0.05f)]
+        private float robotObstacleCollisionRadiusMeters = 0.75f;
+
+        [Tooltip("Small extra separation kept between the player and a solid prop to avoid numerical re-entry at exact contact.")]
+        [SerializeField, Min(0f)] private float obstacleContactSkinMeters = 0.02f;
+
         private MapTestSceneController map;
         private readonly float[] stepPreviousHeightScratch = new float[9];
         private readonly float[] stepResidualScratch = new float[9];
@@ -240,6 +265,8 @@ namespace AnimalGame.MapTest
         public float MaximumStepHeightMeters => maximumStepHeightMeters;
         public float MovementProbeDistanceMeters => movementProbeDistanceMeters;
         public float HardStopProbeDistanceMeters => hardStopProbeDistanceMeters;
+        public float RobotObstacleCollisionRadiusMeters =>
+            robotObstacleCollisionRadiusMeters;
         public float PathSampleSpacingMeters => pathEvaluationSpacingMeters;
         public bool IsInitialized => map != null && map.HasGeneratedMap;
 
@@ -332,6 +359,10 @@ namespace AnimalGame.MapTest
             Vector2 requestedEndWorldPosition = startWorldPosition
                                                 + normalizedWorldDirection
                                                 * requestedWorldDistance;
+            bool hasMapObstacle = IsObstacleSweepBlocked(
+                startMapPosition,
+                requestedEndMapPosition,
+                sweepWidth * 0.5f);
             Vector2 mapRight = new Vector2(mapDirection.y, -mapDirection.x);
             int lateralSampleCount = CalculateTumbleLateralSampleCount(
                 sweepWidth);
@@ -346,6 +377,7 @@ namespace AnimalGame.MapTest
                 result = CreateTumbleTerrainSegment(
                     false,
                     true,
+                    hasMapObstacle,
                     startMapPosition,
                     requestedEndMapPosition,
                     startMapPosition,
@@ -465,6 +497,7 @@ namespace AnimalGame.MapTest
             result = CreateTumbleTerrainSegment(
                 isComplete,
                 hitBoundary,
+                hasMapObstacle,
                 startMapPosition,
                 requestedEndMapPosition,
                 lastValidMapPosition,
@@ -616,6 +649,7 @@ namespace AnimalGame.MapTest
         private TumbleTerrainSegment CreateTumbleTerrainSegment(
             bool isComplete,
             bool hitBoundary,
+            bool hasMapObstacle,
             Vector2 startMapPosition,
             Vector2 requestedEndMapPosition,
             Vector2 lastValidMapPosition,
@@ -635,7 +669,8 @@ namespace AnimalGame.MapTest
                 true,
                 isComplete,
                 hitBoundary,
-                maximumUpwardDetailStepMeters > maximumStepHeightMeters,
+                hasMapObstacle
+                || maximumUpwardDetailStepMeters > maximumStepHeightMeters,
                 startMapPosition,
                 requestedEndMapPosition,
                 lastValidMapPosition,
@@ -654,6 +689,99 @@ namespace AnimalGame.MapTest
                 traversedDistanceMeters);
         }
 
+        /// <summary>
+        /// Tests only solid authored map props over the exact requested frame
+        /// displacement. Terrain look-ahead intentionally stays separate so a
+        /// small tree core does not stop the robot several metres too early.
+        /// </summary>
+        public SlopeTraversalResult EvaluateObstacleSweep(
+            Vector2 startWorldPosition,
+            Vector2 endWorldPosition)
+        {
+            if (!IsInitialized
+                || !map.TrySampleWorldPosition(
+                    startWorldPosition,
+                    out Vector2 startMapPosition,
+                    out _))
+            {
+                return SlopeTraversalResult.NoData;
+            }
+
+            if (!map.TrySampleWorldPosition(
+                    endWorldPosition,
+                    out Vector2 endMapPosition,
+                    out _))
+            {
+                return SlopeTraversalResult.BlockedBoundary;
+            }
+
+            return IsObstacleSweepBlocked(
+                    startMapPosition,
+                    endMapPosition,
+                    robotObstacleCollisionRadiusMeters)
+                ? SlopeTraversalResult.BlockedObstacle
+                : SlopeTraversalResult.NoData;
+        }
+
+        private bool IsObstacleSweepBlocked(
+            Vector2 startMapPosition,
+            Vector2 endMapPosition,
+            float movingRadiusMeters)
+        {
+            Vector2 displacement = endMapPosition - startMapPosition;
+            float displacementLengthSquared = displacement.sqrMagnitude;
+            if (displacementLengthSquared <= 0.0000001f)
+                return false;
+
+            foreach (HeightMapObstacleFootprint obstacle
+                     in HeightMapObstacleFootprint.ActiveFootprints)
+            {
+                if (obstacle == null
+                    || !obstacle.isActiveAndEnabled
+                    || !obstacle.BlocksTraversal
+                    || obstacle.RadiusMeters <= 0f
+                    || obstacle.gameObject.scene != map.gameObject.scene
+                    || !map.TrySampleWorldPosition(
+                        obstacle.transform.position,
+                        out Vector2 obstacleMapPosition,
+                        out _))
+                {
+                    continue;
+                }
+
+                float combinedRadius = Mathf.Max(0f, movingRadiusMeters)
+                                       + obstacle.RadiusMeters
+                                       + obstacleContactSkinMeters;
+                float combinedRadiusSquared = combinedRadius * combinedRadius;
+                Vector2 startFromObstacle =
+                    startMapPosition - obstacleMapPosition;
+
+                // A prop placed over an existing player must not trap it. Any
+                // tangent or outward motion is allowed until it leaves contact.
+                if (startFromObstacle.sqrMagnitude
+                    <= combinedRadiusSquared + 0.0001f
+                    && Vector2.Dot(displacement, startFromObstacle) >= 0f)
+                {
+                    continue;
+                }
+
+                float closestTime = Mathf.Clamp01(
+                    Vector2.Dot(
+                        obstacleMapPosition - startMapPosition,
+                        displacement)
+                    / displacementLengthSquared);
+                Vector2 closestPoint = startMapPosition
+                                       + displacement * closestTime;
+                if ((closestPoint - obstacleMapPosition).sqrMagnitude
+                    <= combinedRadiusSquared)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         public SlopeTraversalResult EvaluateMovement(
             Vector2 startWorld,
             Vector2 worldDirection)
@@ -661,7 +789,8 @@ namespace AnimalGame.MapTest
             return EvaluateMovement(
                 startWorld,
                 worldDirection,
-                movementProbeDistanceMeters);
+                movementProbeDistanceMeters,
+                true);
         }
 
         public SlopeTraversalResult EvaluateImmediateSafety(
@@ -671,13 +800,15 @@ namespace AnimalGame.MapTest
             return EvaluateMovement(
                 startWorld,
                 worldDirection,
-                hardStopProbeDistanceMeters);
+                hardStopProbeDistanceMeters,
+                false);
         }
 
         private SlopeTraversalResult EvaluateMovement(
             Vector2 startWorld,
             Vector2 worldDirection,
-            float probeDistanceMeters)
+            float probeDistanceMeters,
+            bool includeMapObstacles)
         {
             if (!IsInitialized || worldDirection.sqrMagnitude < 0.000001f)
                 return SlopeTraversalResult.NoData;
@@ -693,12 +824,26 @@ namespace AnimalGame.MapTest
                                      + mapDirection * Mathf.Max(
                                          0.25f,
                                          probeDistanceMeters);
-            return EvaluateMapPath(startMapPosition, endMapPosition);
+            return EvaluateMapPathInternal(
+                startMapPosition,
+                endMapPosition,
+                includeMapObstacles);
         }
 
         public SlopeTraversalResult EvaluateMapPath(
             Vector2 startMapPosition,
             Vector2 endMapPosition)
+        {
+            return EvaluateMapPathInternal(
+                startMapPosition,
+                endMapPosition,
+                true);
+        }
+
+        private SlopeTraversalResult EvaluateMapPathInternal(
+            Vector2 startMapPosition,
+            Vector2 endMapPosition,
+            bool includeMapObstacles)
         {
             if (!IsInitialized
                 || !map.TrySampleMapPosition(startMapPosition, out _))
@@ -729,6 +874,15 @@ namespace AnimalGame.MapTest
             }
 
             Vector2 direction = path / pathLength;
+            if (includeMapObstacles
+                && IsObstacleSweepBlocked(
+                    startMapPosition,
+                    endMapPosition,
+                    robotObstacleCollisionRadiusMeters))
+            {
+                return SlopeTraversalResult.BlockedObstacle;
+            }
+
             int evaluationCount = Mathf.Max(
                 1,
                 Mathf.CeilToInt(pathLength /
@@ -1154,6 +1308,12 @@ namespace AnimalGame.MapTest
             hardStopProbeDistanceMeters = Mathf.Max(
                 0.25f,
                 hardStopProbeDistanceMeters);
+            robotObstacleCollisionRadiusMeters = Mathf.Max(
+                0.05f,
+                robotObstacleCollisionRadiusMeters);
+            obstacleContactSkinMeters = Mathf.Max(
+                0f,
+                obstacleContactSkinMeters);
         }
 
         private readonly struct SurfaceAnalysis

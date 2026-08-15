@@ -388,6 +388,7 @@ namespace AnimalGame.RobotMap
 
             Vector2 desiredVelocity = (Vector2)transform.up * CurrentSpeed
                                       + CurrentTerrainVelocity;
+            Vector2 desiredDisplacement = desiredVelocity * Time.deltaTime;
             if (desiredVelocity.sqrMagnitude > 0.000001f && traversalEvaluator != null)
             {
                 SlopeTraversalResult actualPathResult =
@@ -403,9 +404,20 @@ namespace AnimalGame.RobotMap
                     HardStop(actualPathResult);
                     return;
                 }
+
+                SlopeTraversalResult mapObstacleResult =
+                    traversalEvaluator.EvaluateObstacleSweep(
+                        transform.position,
+                        (Vector2)transform.position + desiredDisplacement);
+                if (mapObstacleResult.HasData
+                    && mapObstacleResult.RequiresHardStop)
+                {
+                    HardStop(mapObstacleResult);
+                    return;
+                }
             }
 
-            transform.position += (Vector3)(desiredVelocity * Time.deltaTime);
+            transform.position += (Vector3)desiredDisplacement;
             transform.Rotate(
                 0f,
                 0f,

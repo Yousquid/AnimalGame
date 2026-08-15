@@ -9,14 +9,22 @@ namespace AnimalGame.RobotMap
         [SerializeField] private Sprite robotBodySprite;
         [Tooltip("Filled silhouette drawn directly beneath robot_body. Use Arts/robot_body_fill so both sprites share the same canvas, pivot and scale.")]
         [SerializeField] private Sprite robotBodyFillSprite;
+        [Tooltip("Reference chassis diameter used by existing gameplay-relative visuals and conversions. Keep this unchanged when only resizing the rendered artwork.")]
         [SerializeField, Min(0.1f)] private float bodyDiameter = 0.72f;
+        [Tooltip("Rendered body diameter relative to Body Diameter. This changes only the visible chassis and its attached surface effects; gameplay dimensions remain unchanged.")]
+        [SerializeField, Range(0.5f, 1.25f)]
+        private float visualBodyDiameterRatio = 0.85f;
         [Tooltip("Visible ring diameter in the source robot_body sprite, excluding transparent padding.")]
-        [SerializeField, Min(1f)] private float bodyArtworkVisibleDiameterPixels = 85.4f;
+        [SerializeField, Min(1f)] private float bodyArtworkVisibleDiameterPixels = 72.5f;
+
+        [Tooltip("Visible filled-circle diameter in the source robot_body_fill sprite, excluding transparent padding. This lets the unchanged fill artwork fit a differently sized body sprite.")]
+        [SerializeField, Min(1f)]
+        private float bodyFillArtworkVisibleDiameterPixels = 82.5f;
 
         [Tooltip("Keeps the complete robot marker at a stable pixel size when build resolution or camera zoom changes. Disable to use Body Diameter as a fixed world-space size.")]
         [SerializeField] private bool keepMarkerSizeConstantOnScreen = true;
 
-        [Tooltip("Visible robot body diameter in rendered screen pixels while Keep Marker Size Constant On Screen is enabled.")]
+        [Tooltip("Screen-pixel size of the reference Body Diameter while Keep Marker Size Constant On Screen is enabled. The rendered chassis is this value multiplied by Visual Body Diameter Ratio.")]
         [SerializeField, Min(1f)] private float bodyScreenDiameterPixels = 45f;
 
         [SerializeField, Range(0.1f, 1f)] private float bodyFillDiameterRatio = 1f;
@@ -162,6 +170,7 @@ namespace AnimalGame.RobotMap
         public bool ShowDriveBob => showDriveBob;
         public Transform MarkerVisualRoot => markerVisualRoot;
         public float BodyDiameter => bodyDiameter;
+        public float VisualBodyDiameter => bodyDiameter * visualBodyDiameterRatio;
         public Material ForegroundSpriteMaterial => foregroundSpriteMaterial;
         public Sprite RolloverSignSprite => rolloverSignSprite;
         public float RolloverSignVisibleDiameterPixels =>
@@ -465,7 +474,16 @@ namespace AnimalGame.RobotMap
                     this);
             }
 
-            float sharedArtworkScale = CalculateBodyArtworkScale();
+            float bodyArtworkScale = CalculateArtworkScale(
+                robotBodySprite,
+                bodyArtworkVisibleDiameterPixels,
+                VisualBodyDiameter);
+            float targetFillDiameter = VisualBodyDiameter
+                                       * bodyFillDiameterRatio;
+            float bodyFillArtworkScale = CalculateArtworkScale(
+                fillSprite,
+                bodyFillArtworkVisibleDiameterPixels,
+                targetFillDiameter);
 
             var fillObject = new GameObject("Body Fill (robot_body_fill)");
             fillObject.transform.SetParent(bodyVisualRoot, false);
@@ -476,8 +494,8 @@ namespace AnimalGame.RobotMap
             if (foregroundSpriteMaterial != null)
                 bodyFill.sharedMaterial = foregroundSpriteMaterial;
             bodyFill.transform.localScale = robotBodyFillSprite != null
-                ? Vector3.one * (sharedArtworkScale * bodyFillDiameterRatio)
-                : Vector3.one * (bodyDiameter * bodyFillDiameterRatio);
+                ? Vector3.one * bodyFillArtworkScale
+                : Vector3.one * targetFillDiameter;
 
             var artworkObject = new GameObject("Body Artwork");
             artworkObject.transform.SetParent(bodyVisualRoot, false);
@@ -490,7 +508,7 @@ namespace AnimalGame.RobotMap
 
             if (robotBodySprite != null)
             {
-                bodyArtwork.transform.localScale = Vector3.one * sharedArtworkScale;
+                bodyArtwork.transform.localScale = Vector3.one * bodyArtworkScale;
             }
             else
             {
@@ -500,14 +518,18 @@ namespace AnimalGame.RobotMap
             }
         }
 
-        private float CalculateBodyArtworkScale()
+        private static float CalculateArtworkScale(
+            Sprite sprite,
+            float visibleDiameterPixels,
+            float targetDiameter)
         {
-            if (robotBodySprite == null)
-                return bodyDiameter;
+            if (sprite == null)
+                return Mathf.Max(0f, targetDiameter);
 
-            float artworkDiameter = bodyArtworkVisibleDiameterPixels /
-                Mathf.Max(1f, robotBodySprite.pixelsPerUnit);
-            return bodyDiameter / Mathf.Max(0.0001f, artworkDiameter);
+            float artworkDiameter = visibleDiameterPixels /
+                Mathf.Max(1f, sprite.pixelsPerUnit);
+            return Mathf.Max(0f, targetDiameter)
+                   / Mathf.Max(0.0001f, artworkDiameter);
         }
 
         private void SynchronizeBodyFillColor()
@@ -649,7 +671,7 @@ namespace AnimalGame.RobotMap
                 localDirection.Normalize();
 
             return localDirection
-                   * bodyDiameter
+                   * VisualBodyDiameter
                    * finalRockVisualOffsetRatio
                    * tumble.FinalRockNormalizedOffset;
         }
@@ -745,7 +767,7 @@ namespace AnimalGame.RobotMap
             directionIndicator.transform.localScale = scale;
             directionIndicator.transform.localPosition =
                 (Vector3)(localTumbleDirection
-                          * bodyDiameter
+                          * VisualBodyDiameter
                           * indicatorTumbleEdgeOffsetRatio
                           * Mathf.Clamp(edgeProjection, -1f, 1f));
             Color projectedColor = indicatorColor;
@@ -776,7 +798,8 @@ namespace AnimalGame.RobotMap
                                               / Mathf.Max(
                                                   1f,
                                                   rolloverSignSprite.pixelsPerUnit);
-                float targetDiameter = bodyDiameter * rolloverSignDiameterRatio;
+                float targetDiameter = VisualBodyDiameter
+                                       * rolloverSignDiameterRatio;
                 rolloverObject.transform.localScale = Vector3.one
                                                      * (targetDiameter
                                                         / Mathf.Max(
@@ -820,7 +843,14 @@ namespace AnimalGame.RobotMap
         private void OnValidate()
         {
             bodyDiameter = Mathf.Max(0.1f, bodyDiameter);
+            visualBodyDiameterRatio = Mathf.Clamp(
+                visualBodyDiameterRatio,
+                0.5f,
+                1.25f);
             bodyArtworkVisibleDiameterPixels = Mathf.Max(1f, bodyArtworkVisibleDiameterPixels);
+            bodyFillArtworkVisibleDiameterPixels = Mathf.Max(
+                1f,
+                bodyFillArtworkVisibleDiameterPixels);
             bodyScreenDiameterPixels = Mathf.Max(1f, bodyScreenDiameterPixels);
             bodyFillDiameterRatio = Mathf.Clamp(bodyFillDiameterRatio, 0.1f, 1f);
             indicatorScale = Mathf.Max(0.1f, indicatorScale);

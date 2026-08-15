@@ -290,10 +290,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9872b6121e68dda46b20083085d5b46d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  robotBodySprite: {fileID: 21300000, guid: 9f95effeee85ff141a7551056e6263b0, type: 3}
+  robotBodySprite: {fileID: 21300000, guid: d8a7a1ecebca36f4ba3b3f2b2c222603, type: 3}
   robotBodyFillSprite: {fileID: 21300000, guid: b202381eb90f91040a281a4f4577b9e1, type: 3}
   bodyDiameter: 0.72
-  bodyArtworkVisibleDiameterPixels: 85.4
+  visualBodyDiameterRatio: 0.85
+  bodyArtworkVisibleDiameterPixels: 72.5
+  bodyFillArtworkVisibleDiameterPixels: 82.5
   keepMarkerSizeConstantOnScreen: 1
   bodyScreenDiameterPixels: 45
   bodyFillDiameterRatio: 1
@@ -301,7 +303,7 @@ MonoBehaviour:
   matchBodyFillToCameraBackground: 1
   bodyOutlineColor: {r: 0.89622635, g: 0.97395486, b: 1, a: 1}
   visualDepthOffset: -0.1
-  indicatorSprite: {fileID: 21300000, guid: 7ebc16e768ef2ec49bf9b1a1bd364849, type: 3}
+  indicatorSprite: {fileID: 21300000, guid: 8855a116fe17eeb4c913dbee10e1dc04, type: 3}
   indicatorScale: 1.35
   indicatorRotationOffsetDegrees: 0
   indicatorColor: {r: 0.92, g: 0.98, b: 1, a: 1}
