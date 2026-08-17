@@ -39,6 +39,9 @@ namespace AnimalGame.RobotMap
         [SerializeField] private Sprite indicatorSprite;
         [SerializeField, Min(0.1f)] private float indicatorScale = 1.35f;
         [SerializeField] private float indicatorRotationOffsetDegrees;
+        [Tooltip("Moves the visible direction indicator inward toward the chassis, relative to the visible body diameter. This affects only artwork spacing.")]
+        [SerializeField, Range(0f, 0.5f)]
+        private float indicatorBodyInsetRatio = 0.2f;
         [SerializeField] private Color indicatorColor = new Color(0.92f, 0.98f, 1f, 1f);
 
         [Tooltip("Time used to fade the direction arrow out after entering arm-control mode.")]
@@ -765,11 +768,29 @@ namespace AnimalGame.RobotMap
             }
 
             directionIndicator.transform.localScale = scale;
+            Vector3 rotatedArtworkForward = Quaternion.Euler(
+                0f,
+                0f,
+                indicatorRotationOffsetDegrees) * Vector3.up;
+            Vector2 artworkForward = new Vector2(
+                rotatedArtworkForward.x,
+                rotatedArtworkForward.y);
+            float visibleSurfaceDirectionSign = forwardDirectionSign < 0f
+                ? -1f
+                : 1f;
+            Vector2 bodyInset = -artworkForward
+                                * VisualBodyDiameter
+                                * indicatorBodyInsetRatio
+                                * visibleSurfaceDirectionSign;
+            Vector2 tumbleEdgeOffset = localTumbleDirection
+                                       * VisualBodyDiameter
+                                       * indicatorTumbleEdgeOffsetRatio
+                                       * Mathf.Clamp(
+                                           edgeProjection,
+                                           -1f,
+                                           1f);
             directionIndicator.transform.localPosition =
-                (Vector3)(localTumbleDirection
-                          * VisualBodyDiameter
-                          * indicatorTumbleEdgeOffsetRatio
-                          * Mathf.Clamp(edgeProjection, -1f, 1f));
+                (Vector3)(bodyInset + tumbleEdgeOffset);
             Color projectedColor = indicatorColor;
             float combinedVisibility = safeVisibility
                                        * indicatorArmModeVisibility;
@@ -854,6 +875,10 @@ namespace AnimalGame.RobotMap
             bodyScreenDiameterPixels = Mathf.Max(1f, bodyScreenDiameterPixels);
             bodyFillDiameterRatio = Mathf.Clamp(bodyFillDiameterRatio, 0.1f, 1f);
             indicatorScale = Mathf.Max(0.1f, indicatorScale);
+            indicatorBodyInsetRatio = Mathf.Clamp(
+                indicatorBodyInsetRatio,
+                0f,
+                0.5f);
             indicatorArmModeFadeOutDuration = Mathf.Max(
                 0.01f,
                 indicatorArmModeFadeOutDuration);

@@ -306,6 +306,7 @@ MonoBehaviour:
   indicatorSprite: {fileID: 21300000, guid: 8855a116fe17eeb4c913dbee10e1dc04, type: 3}
   indicatorScale: 1.35
   indicatorRotationOffsetDegrees: 0
+  indicatorBodyInsetRatio: 0.2
   indicatorColor: {r: 0.92, g: 0.98, b: 1, a: 1}
   indicatorArmModeFadeOutDuration: 0.16
   indicatorArmModeFadeInDuration: 0.2

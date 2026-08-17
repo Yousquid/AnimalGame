@@ -151,6 +151,46 @@ namespace AnimalGame.RobotMap
         [Tooltip("Fraction of ground vibration retained while the height detector considers the robot airborne.")]
         [SerializeField, Range(0f, 1f)] private float airborneVibrationMultiplier = 0.18f;
 
+        [Header("Solid Obstacle Collision Impact")]
+        [Tooltip("Incoming planar speed that begins producing the dedicated solid-obstacle impact.")]
+        [SerializeField, Min(0f)] private float obstacleCollisionMinimumSpeed = 0.08f;
+
+        [Tooltip("Incoming planar speed mapped to full solid-obstacle impact strength.")]
+        [SerializeField, Min(0.01f)] private float obstacleCollisionFullSpeed = 3.4f;
+
+        [Tooltip("Minimum impact retained once a moving robot contacts a solid obstacle. Keep this low enough that a slow touch remains much weaker than a high-speed crash.")]
+        [SerializeField, Range(0f, 1f)]
+        private float obstacleCollisionMinimumStrength = 0.18f;
+
+        [Tooltip("Shapes impact strength between minimum and full collision speed. Values below one strengthen ordinary-speed contacts.")]
+        [SerializeField, Range(0.1f, 3f)]
+        private float obstacleCollisionStrengthExponent = 0.9f;
+
+        [SerializeField, Min(0f)] private float obstacleCollisionPositionImpact = 0.26f;
+        [SerializeField, Min(0f)] private float obstacleCollisionRotationImpactDegrees = 3.8f;
+        [SerializeField, Range(0f, 0.1f)]
+        private float obstacleCollisionZoomImpactFraction = 0.022f;
+
+        [Tooltip("Fraction of the obstacle impact applied immediately before the spring recoil. Higher values make contact feel harder and less delayed.")]
+        [SerializeField, Range(0f, 1f)]
+        private float obstacleCollisionImmediateImpactFraction = 0.45f;
+
+        [Header("Solid Obstacle Collision Gamepad Rumble")]
+        [SerializeField, Range(0f, 1f)]
+        private float obstacleCollisionLowFrequencyStrength = 0.95f;
+        [SerializeField, Range(0f, 1f)]
+        private float obstacleCollisionHighFrequencyStrength = 0.8f;
+        [SerializeField, Min(0f)]
+        private float obstacleCollisionRumblePeakHoldDuration = 0.12f;
+        [SerializeField, Min(0.01f)]
+        private float obstacleCollisionRumbleDuration = 0.55f;
+        [SerializeField, Range(0.5f, 4f)]
+        private float obstacleCollisionRumbleFalloffExponent = 1.15f;
+        [SerializeField, Range(0f, 1f)]
+        private float sonyObstacleMaximumLowFrequencyStrength = 0.9f;
+        [SerializeField, Range(0f, 1f)]
+        private float sonyObstacleMaximumHighFrequencyStrength = 0.75f;
+
         [Header("Step Collision Impact")]
         [SerializeField, Min(0f)] private float stepPositionImpact = 0.15f;
         [SerializeField, Min(0f)] private float stepRotationImpactDegrees = 1.7f;
@@ -366,6 +406,9 @@ namespace AnimalGame.RobotMap
         private float tumbleLandingRumbleStartTime = float.NegativeInfinity;
         private float tumbleLandingRumbleEndTime = float.NegativeInfinity;
         private float tumbleLandingRumbleStrength;
+        private float obstacleCollisionRumbleStartTime = float.NegativeInfinity;
+        private float obstacleCollisionRumbleEndTime = float.NegativeInfinity;
+        private float obstacleCollisionRumbleStrength;
 
         private void Awake()
         {
@@ -448,6 +491,10 @@ namespace AnimalGame.RobotMap
         private bool HasTumbleLandingRumble =>
             Time.time < tumbleLandingRumbleEndTime
             && tumbleLandingRumbleStrength > 0f;
+
+        private bool HasObstacleCollisionRumble =>
+            Time.time < obstacleCollisionRumbleEndTime
+            && obstacleCollisionRumbleStrength > 0f;
 
         private void SubscribeToTumbleEvents()
         {
@@ -662,7 +709,33 @@ namespace AnimalGame.RobotMap
                 && (!previousBlocked || traversal.BlockReason != previousBlockReason)
                 && Time.time >= nextDiscreteImpactTime)
             {
-                if (traversal.BlockReason == TraversalBlockReason.Step)
+                if (traversal.BlockReason == TraversalBlockReason.Obstacle)
+                {
+                    float incomingSpeed = previousWorldVelocity.magnitude;
+                    if (incomingSpeed >= obstacleCollisionMinimumSpeed)
+                    {
+                        float speedProgress = Mathf.InverseLerp(
+                            obstacleCollisionMinimumSpeed,
+                            Mathf.Max(
+                                obstacleCollisionMinimumSpeed + 0.01f,
+                                obstacleCollisionFullSpeed),
+                            incomingSpeed);
+                        float shapedSpeed = Mathf.Pow(
+                            Mathf.Clamp01(speedProgress),
+                            obstacleCollisionStrengthExponent);
+                        float strength = Mathf.Lerp(
+                            obstacleCollisionMinimumStrength,
+                            1f,
+                            shapedSpeed);
+                        AddObstacleCollisionImpact(
+                            GetReliableTravelDirection(
+                                previousWorldVelocity,
+                                transform.up),
+                            strength);
+                        triggeredMajorImpact = true;
+                    }
+                }
+                else if (traversal.BlockReason == TraversalBlockReason.Step)
                 {
                     Vector2 direction = GetReliableTravelDirection(
                         previousWorldVelocity,
@@ -988,6 +1061,34 @@ namespace AnimalGame.RobotMap
                 zoomAmplitudeFraction);
         }
 
+        private void AddObstacleCollisionImpact(
+            Vector2 worldDirection,
+            float strength01)
+        {
+            float strength = Mathf.Clamp01(strength01);
+            Vector2 localDirection = WorldToCameraLocalDirection(worldDirection);
+            if (localDirection.sqrMagnitude < 0.000001f)
+                localDirection = Vector2.up;
+
+            float immediateStrength = strength
+                                      * obstacleCollisionImmediateImpactFraction;
+            springPosition += localDirection
+                              * obstacleCollisionPositionImpact
+                              * immediateStrength;
+            springRotation += -localDirection.x
+                              * obstacleCollisionRotationImpactDegrees
+                              * immediateStrength;
+            springZoom += obstacleCollisionZoomImpactFraction
+                          * immediateStrength;
+            AddDirectionalImpact(
+                worldDirection,
+                strength,
+                obstacleCollisionPositionImpact,
+                obstacleCollisionRotationImpactDegrees,
+                obstacleCollisionZoomImpactFraction);
+            StartObstacleCollisionRumble(strength);
+        }
+
         private void StartTumbleAftershock(float strength)
         {
             tumbleAftershockStartTime = Time.time;
@@ -1213,6 +1314,7 @@ namespace AnimalGame.RobotMap
                 * imbalanceBoost
                 * landingBoost);
             ApplyTumbleRumble(ref targetLow, ref targetHigh);
+            ApplyObstacleCollisionRumble(ref targetLow, ref targetHigh);
             if (!IsTumbleFeedbackSuppressed
                 && enableSevereImbalanceRumble
                 && balanceMagnitude >= severeImbalanceRumbleThreshold)
@@ -1270,7 +1372,8 @@ namespace AnimalGame.RobotMap
                 outputLow,
                 outputHigh,
                 CreateSonyRumbleCalibration(
-                    IsActivelyTumbling || HasTumbleLandingRumble));
+                    IsActivelyTumbling || HasTumbleLandingRumble,
+                    HasObstacleCollisionRumble));
             lastSentLowFrequencyRumble = outputLow;
             lastSentHighFrequencyRumble = outputHigh;
             nextRumbleRefreshTime = Time.unscaledTime + 0.25f;
@@ -1310,6 +1413,9 @@ namespace AnimalGame.RobotMap
             rumbleWasSent = false;
             lastLandingRumbleTime = float.NegativeInfinity;
             lastLandingRumbleStrength = 0f;
+            obstacleCollisionRumbleStartTime = float.NegativeInfinity;
+            obstacleCollisionRumbleEndTime = float.NegativeInfinity;
+            obstacleCollisionRumbleStrength = 0f;
         }
 
         private void ApplyTumbleRumble(ref float targetLow, ref float targetHigh)
@@ -1375,28 +1481,97 @@ namespace AnimalGame.RobotMap
             tumbleLandingRumbleStrength = Mathf.Clamp01(strength);
         }
 
-        private SonyRumbleCalibration CreateSonyRumbleCalibration(
-            bool useTumbleCalibration)
+        private void ApplyObstacleCollisionRumble(
+            ref float targetLow,
+            ref float targetHigh)
         {
+            if (!HasObstacleCollisionRumble)
+                return;
+
+            float elapsed = Mathf.Max(
+                0f,
+                Time.time - obstacleCollisionRumbleStartTime);
+            float falloffDuration = Mathf.Max(
+                0.01f,
+                obstacleCollisionRumbleDuration
+                - obstacleCollisionRumblePeakHoldDuration);
+            float falloffProgress = Mathf.Clamp01(
+                (elapsed - obstacleCollisionRumblePeakHoldDuration)
+                / falloffDuration);
+            float envelope = elapsed <= obstacleCollisionRumblePeakHoldDuration
+                ? 1f
+                : Mathf.Pow(
+                    1f - falloffProgress,
+                    obstacleCollisionRumbleFalloffExponent);
+            float impactEnvelope = envelope
+                                   * obstacleCollisionRumbleStrength;
+            targetLow = Mathf.Max(
+                targetLow,
+                obstacleCollisionLowFrequencyStrength * impactEnvelope);
+            targetHigh = Mathf.Max(
+                targetHigh,
+                obstacleCollisionHighFrequencyStrength * impactEnvelope);
+
+            // A solid obstacle contact must be felt on its first frame rather
+            // than being weakened by the ordinary rumble attack smoothing.
+            currentLowFrequencyRumble = Mathf.Max(
+                currentLowFrequencyRumble,
+                targetLow);
+            currentHighFrequencyRumble = Mathf.Max(
+                currentHighFrequencyRumble,
+                targetHigh);
+        }
+
+        private void StartObstacleCollisionRumble(float strength)
+        {
+            obstacleCollisionRumbleStartTime = Time.time;
+            obstacleCollisionRumbleEndTime = Time.time
+                                              + obstacleCollisionRumbleDuration;
+            obstacleCollisionRumbleStrength = Mathf.Clamp01(strength);
+        }
+
+        private SonyRumbleCalibration CreateSonyRumbleCalibration(
+            bool useTumbleCalibration,
+            bool useObstacleCalibration = false)
+        {
+            bool useDedicatedImpactCalibration = useTumbleCalibration
+                                                  || useObstacleCalibration;
+            float maximumLowFrequencyStrength =
+                sonyMaximumLowFrequencyStrength;
+            float maximumHighFrequencyStrength =
+                sonyMaximumHighFrequencyStrength;
+            if (useTumbleCalibration)
+            {
+                maximumLowFrequencyStrength = Mathf.Max(
+                    maximumLowFrequencyStrength,
+                    sonyTumbleMaximumLowFrequencyStrength);
+                maximumHighFrequencyStrength = Mathf.Max(
+                    maximumHighFrequencyStrength,
+                    sonyTumbleMaximumHighFrequencyStrength);
+            }
+            if (useObstacleCalibration)
+            {
+                maximumLowFrequencyStrength = Mathf.Max(
+                    maximumLowFrequencyStrength,
+                    sonyObstacleMaximumLowFrequencyStrength);
+                maximumHighFrequencyStrength = Mathf.Max(
+                    maximumHighFrequencyStrength,
+                    sonyObstacleMaximumHighFrequencyStrength);
+            }
+
             return new SonyRumbleCalibration(
                 enableSonyRumbleCalibration,
-                useTumbleCalibration
+                useDedicatedImpactCalibration
                     ? 1f
                     : sonyLowFrequencyMultiplier,
-                useTumbleCalibration
+                useDedicatedImpactCalibration
                     ? 1f
                     : sonyHighFrequencyMultiplier,
-                useTumbleCalibration ? 1f : sonyRumbleResponseExponent,
-                useTumbleCalibration
-                    ? Mathf.Max(
-                        sonyMaximumLowFrequencyStrength,
-                        sonyTumbleMaximumLowFrequencyStrength)
-                    : sonyMaximumLowFrequencyStrength,
-                useTumbleCalibration
-                    ? Mathf.Max(
-                        sonyMaximumHighFrequencyStrength,
-                        sonyTumbleMaximumHighFrequencyStrength)
-                    : sonyMaximumHighFrequencyStrength,
+                useDedicatedImpactCalibration
+                    ? 1f
+                    : sonyRumbleResponseExponent,
+                maximumLowFrequencyStrength,
+                maximumHighFrequencyStrength,
                 sonyMinimumRumbleOutput);
         }
 
@@ -1564,6 +1739,48 @@ namespace AnimalGame.RobotMap
             maximumPositionOffset = Mathf.Max(0f, maximumPositionOffset);
             maximumRotationDegrees = Mathf.Clamp(maximumRotationDegrees, 0f, 12f);
             maximumZoomFraction = Mathf.Clamp(maximumZoomFraction, 0f, 0.1f);
+            obstacleCollisionMinimumSpeed = Mathf.Max(
+                0f,
+                obstacleCollisionMinimumSpeed);
+            obstacleCollisionFullSpeed = Mathf.Max(
+                obstacleCollisionMinimumSpeed + 0.01f,
+                obstacleCollisionFullSpeed);
+            obstacleCollisionMinimumStrength = Mathf.Clamp01(
+                obstacleCollisionMinimumStrength);
+            obstacleCollisionStrengthExponent = Mathf.Clamp(
+                obstacleCollisionStrengthExponent,
+                0.1f,
+                3f);
+            obstacleCollisionPositionImpact = Mathf.Max(
+                0f,
+                obstacleCollisionPositionImpact);
+            obstacleCollisionRotationImpactDegrees = Mathf.Max(
+                0f,
+                obstacleCollisionRotationImpactDegrees);
+            obstacleCollisionZoomImpactFraction = Mathf.Clamp(
+                obstacleCollisionZoomImpactFraction,
+                0f,
+                0.1f);
+            obstacleCollisionImmediateImpactFraction = Mathf.Clamp01(
+                obstacleCollisionImmediateImpactFraction);
+            obstacleCollisionLowFrequencyStrength = Mathf.Clamp01(
+                obstacleCollisionLowFrequencyStrength);
+            obstacleCollisionHighFrequencyStrength = Mathf.Clamp01(
+                obstacleCollisionHighFrequencyStrength);
+            obstacleCollisionRumblePeakHoldDuration = Mathf.Max(
+                0f,
+                obstacleCollisionRumblePeakHoldDuration);
+            obstacleCollisionRumbleDuration = Mathf.Max(
+                obstacleCollisionRumblePeakHoldDuration + 0.01f,
+                obstacleCollisionRumbleDuration);
+            obstacleCollisionRumbleFalloffExponent = Mathf.Clamp(
+                obstacleCollisionRumbleFalloffExponent,
+                0.5f,
+                4f);
+            sonyObstacleMaximumLowFrequencyStrength = Mathf.Clamp01(
+                sonyObstacleMaximumLowFrequencyStrength);
+            sonyObstacleMaximumHighFrequencyStrength = Mathf.Clamp01(
+                sonyObstacleMaximumHighFrequencyStrength);
             tumbleStartPositionImpact = Mathf.Max(
                 0f,
                 tumbleStartPositionImpact);

@@ -166,6 +166,21 @@ MonoBehaviour:
   roughnessAtFullVibration: 0.35
   roughnessVibrationInfluence: 0.75
   airborneVibrationMultiplier: 0.18
+  obstacleCollisionMinimumSpeed: 0.08
+  obstacleCollisionFullSpeed: 3.4
+  obstacleCollisionMinimumStrength: 0.18
+  obstacleCollisionStrengthExponent: 0.9
+  obstacleCollisionPositionImpact: 0.26
+  obstacleCollisionRotationImpactDegrees: 3.8
+  obstacleCollisionZoomImpactFraction: 0.022
+  obstacleCollisionImmediateImpactFraction: 0.45
+  obstacleCollisionLowFrequencyStrength: 0.95
+  obstacleCollisionHighFrequencyStrength: 0.8
+  obstacleCollisionRumblePeakHoldDuration: 0.12
+  obstacleCollisionRumbleDuration: 0.55
+  obstacleCollisionRumbleFalloffExponent: 1.15
+  sonyObstacleMaximumLowFrequencyStrength: 0.9
+  sonyObstacleMaximumHighFrequencyStrength: 0.75
   stepPositionImpact: 0.15
   stepRotationImpactDegrees: 1.7
   stepZoomImpactFraction: 0.01
