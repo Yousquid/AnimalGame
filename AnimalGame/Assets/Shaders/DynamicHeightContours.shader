@@ -4,6 +4,11 @@ Shader "AnimalGame/Dynamic Height Contours"
     {
         [PerRendererData] _MainTex ("Base Map", 2D) = "white" {}
         _HeightTex ("Height Map", 2D) = "black" {}
+        _SurfaceTex ("Editor-Baked Terrain Surface", 2D) = "black" {}
+        _SurfaceEnabled ("Surface Enabled", Float) = 0
+        _SurfaceRevealEnabled ("Surface UI Reveal Enabled", Float) = 0
+        _SurfaceRevealRadiusPixels ("Surface UI Radius", Float) = 430
+        _SurfaceRevealEdgePixels ("Surface UI Edge", Float) = 4
         _ContourColor ("Contour Color", Color) = (1, 1, 1, 1)
         _MinimumHeight ("Minimum Height", Float) = 0
         _MaximumHeight ("Maximum Height", Float) = 200
@@ -53,10 +58,16 @@ Shader "AnimalGame/Dynamic Height Contours"
                 float4 vertex : SV_POSITION;
                 float2 uv : TEXCOORD0;
                 fixed4 color : COLOR;
+                float4 screenPosition : TEXCOORD1;
             };
 
             sampler2D _MainTex;
             sampler2D _HeightTex;
+            sampler2D _SurfaceTex;
+            float _SurfaceEnabled;
+            float _SurfaceRevealEnabled;
+            float _SurfaceRevealRadiusPixels;
+            float _SurfaceRevealEdgePixels;
             fixed4 _ContourColor;
             float _MinimumHeight;
             float _MaximumHeight;
@@ -76,12 +87,50 @@ Shader "AnimalGame/Dynamic Height Contours"
                 output.vertex = UnityObjectToClipPos(input.vertex);
                 output.uv = input.uv;
                 output.color = input.color;
+                output.screenPosition = ComputeScreenPos(output.vertex);
                 return output;
             }
 
             fixed4 frag(v2f input) : SV_Target
             {
                 fixed4 baseColor = tex2D(_MainTex, input.uv) * input.color;
+
+                // The terrain artwork is permanently composed into one RGBA asset
+                // by the Editor. Runtime performs no tiling, painting, region lookup,
+                // or texture generation: this is one static lookup in the map's
+                // existing draw call. Only its player-UI cutoff remains dynamic.
+                if (_SurfaceEnabled > 0.5)
+                {
+                    float revealMask = 1.0;
+                    if (_SurfaceRevealEnabled > 0.5)
+                    {
+                        float2 screenUv = input.screenPosition.xy
+                                          / max(input.screenPosition.w, 0.00001);
+                        float2 pixelPosition = screenUv * _ScreenParams.xy;
+                        float distanceFromUiCentre = distance(
+                            pixelPosition,
+                            _ScreenParams.xy * 0.5);
+                        float revealRadius = max(1.0, _SurfaceRevealRadiusPixels);
+                        float revealEdge = min(
+                            max(0.0, _SurfaceRevealEdgePixels),
+                            revealRadius);
+                        revealMask = revealEdge > 0.0001
+                            ? 1.0 - smoothstep(
+                                revealRadius - revealEdge,
+                                revealRadius,
+                                distanceFromUiCentre)
+                            : step(distanceFromUiCentre, revealRadius);
+                    }
+
+                    fixed4 bakedSurface = tex2D(_SurfaceTex, input.uv);
+                    float surfaceBlend = saturate(
+                        bakedSurface.a * revealMask);
+                    baseColor.rgb = lerp(
+                        baseColor.rgb,
+                        bakedSurface.rgb,
+                        surfaceBlend);
+                }
+
                 // This texture is the same normalized physical surface sampled by
                 // movement and traversal UI. Only screen-space antialiasing below may
                 // alter presentation; contour positions never use a separate blur/LOD.

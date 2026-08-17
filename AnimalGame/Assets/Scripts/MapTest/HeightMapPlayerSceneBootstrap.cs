@@ -108,6 +108,7 @@ namespace AnimalGame.MapTest
 
             robot.transform.position = map.MapPositionToWorld(playerSpawnMapPositionMeters);
             map.UseCamera(camera);
+            map.UseSurfaceRevealUi(scanChargeUi);
             cameraFollow.FollowBalanceTarget(balance);
             cameraFollow.SnapToTarget();
             traversalEvaluator.Initialize(map);

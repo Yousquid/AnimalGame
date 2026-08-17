@@ -1,3 +1,4 @@
+using AnimalGame.RobotMap;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -9,6 +10,7 @@ namespace AnimalGame.MapTest
     {
         private const float LowestVisibleContourOpacity = 0.15f;
         private const float HighestVisibleContourOpacity = 1f;
+        private const float DefaultSurfaceRevealRadiusPixels = 430f;
 
         [Header("Fixed Level Asset")]
         [Tooltip("Persistent map definition used by this scene. When assigned, its terrain and presentation settings override the legacy fields below.")]
@@ -96,11 +98,22 @@ namespace AnimalGame.MapTest
         private SpriteRenderer mapRenderer;
         private BakedHeightField heightField;
         private Material contourMaterial;
+        private Texture2D bakedSurfaceVisual;
+        private float surfaceRevealEdgePixels = 4f;
+        private ScanChargeUI surfaceRevealUi;
+        private Canvas surfaceRevealCanvas;
+        private Material surfaceSettingsMaterial;
+        private Texture2D appliedSurfaceVisual;
+        private float appliedSurfaceRadiusPixels = float.NaN;
+        private float appliedSurfaceEdgePixels = float.NaN;
+        private bool appliedSurfaceEnabled;
+        private bool appliedSurfaceRevealEnabled;
         private Texture2D generatedPreviewTexture;
         private Sprite generatedMapSprite;
         private GameObject generatedMapObject;
         private int lastViewportUpdateFrame = -1;
         private int editorConfigurationHash = int.MinValue;
+        private int editorSurfacePresentationHash = int.MinValue;
         private bool rebuildingMap;
         private bool generatedForPlayMode;
 
@@ -157,6 +170,7 @@ namespace AnimalGame.MapTest
             if (Application.isPlaying || rebuildingMap)
                 return;
 
+            RefreshEditorSurfaceIfChanged();
             int configurationHash = CalculateEditorConfigurationHash();
             if (!HasGeneratedMap
                 || generatedForPlayMode
@@ -318,6 +332,16 @@ namespace AnimalGame.MapTest
             mapCamera = cameraToUse;
             mapCamera.backgroundColor = backgroundColor;
             UpdateVisibleContourRange(mapCamera);
+            RefreshSurfaceMaterialSettings();
+        }
+
+        public void UseSurfaceRevealUi(ScanChargeUI scanUi)
+        {
+            surfaceRevealUi = scanUi;
+            surfaceRevealCanvas = scanUi != null
+                ? scanUi.GetComponentInParent<Canvas>()
+                : null;
+            RefreshSurfaceMaterialSettings();
         }
 
         private void RebuildGeneratedMap()
@@ -388,6 +412,9 @@ namespace AnimalGame.MapTest
             maximumContourCoverage = levelAsset.MaximumContourCoverage;
             contourEdgeSoftness = levelAsset.ContourEdgeSoftness;
             viewportHeightSamples = levelAsset.ViewportHeightSamples;
+            bakedSurfaceVisual = levelAsset.BakedSurfaceVisual;
+            surfaceRevealEdgePixels = levelAsset.SurfaceRevealEdgePixels;
+            editorSurfacePresentationHash = levelAsset.SurfacePresentationHash;
             backgroundColor = levelAsset.BackgroundColor;
             lowHeightColor = levelAsset.LowHeightColor;
             middleHeightColor = levelAsset.MiddleHeightColor;
@@ -411,6 +438,21 @@ namespace AnimalGame.MapTest
                 hash = hash * 397 ^ transform.lossyScale.GetHashCode();
                 return hash;
             }
+        }
+
+        private void RefreshEditorSurfaceIfChanged()
+        {
+            if (levelAsset == null)
+                return;
+
+            int presentationHash = levelAsset.SurfacePresentationHash;
+            if (presentationHash == editorSurfacePresentationHash)
+                return;
+
+            bakedSurfaceVisual = levelAsset.BakedSurfaceVisual;
+            surfaceRevealEdgePixels = levelAsset.SurfaceRevealEdgePixels;
+            editorSurfacePresentationHash = presentationHash;
+            RefreshSurfaceMaterialSettings();
         }
 
         private void BakePhysicalHeightField()
@@ -541,6 +583,7 @@ namespace AnimalGame.MapTest
             contourMaterial.SetFloat("_ContourInterval", contourIntervalMeters);
             contourMaterial.SetColor("_ContourColor", contourColor);
             RefreshContourMaterialSettings();
+            RefreshSurfaceMaterialSettings();
             mapRenderer.material = contourMaterial;
         }
 
@@ -579,6 +622,7 @@ namespace AnimalGame.MapTest
 
             lastViewportUpdateFrame = Time.frameCount;
             UpdateVisibleContourRange(cameraToRender);
+            RefreshSurfaceMaterialSettings();
         }
 
         private void UpdateVisibleContourRange(Camera cameraToSample)
@@ -717,6 +761,51 @@ namespace AnimalGame.MapTest
             contourMaterial.SetFloat("_MaximumOpacity", HighestVisibleContourOpacity);
         }
 
+        private void RefreshSurfaceMaterialSettings()
+        {
+            if (contourMaterial == null)
+                return;
+
+            bool hasSurface = bakedSurfaceVisual != null;
+            // In Edit Mode the complete baked layer remains visible so the Scene
+            // painter can author the fixed map. The player build applies the one
+            // inexpensive screen-space cutoff to the otherwise static texture.
+            bool revealEnabled = Application.isPlaying && hasSurface;
+            float radiusPixels = surfaceRevealUi != null
+                ? surfaceRevealUi.UiRingRadiusPixels
+                  * (surfaceRevealCanvas != null
+                      ? surfaceRevealCanvas.scaleFactor
+                      : 1f)
+                : DefaultSurfaceRevealRadiusPixels;
+            radiusPixels = Mathf.Max(1f, radiusPixels);
+            float edgePixels = Mathf.Max(0f, surfaceRevealEdgePixels);
+            if (surfaceSettingsMaterial == contourMaterial
+                && appliedSurfaceVisual == bakedSurfaceVisual
+                && appliedSurfaceEnabled == hasSurface
+                && appliedSurfaceRevealEnabled == revealEnabled
+                && Mathf.Approximately(appliedSurfaceRadiusPixels, radiusPixels)
+                && Mathf.Approximately(appliedSurfaceEdgePixels, edgePixels))
+            {
+                return;
+            }
+
+            contourMaterial.SetTexture(
+                "_SurfaceTex",
+                hasSurface ? bakedSurfaceVisual : Texture2D.blackTexture);
+            contourMaterial.SetFloat("_SurfaceEnabled", hasSurface ? 1f : 0f);
+            contourMaterial.SetFloat(
+                "_SurfaceRevealEnabled",
+                revealEnabled ? 1f : 0f);
+            contourMaterial.SetFloat("_SurfaceRevealRadiusPixels", radiusPixels);
+            contourMaterial.SetFloat("_SurfaceRevealEdgePixels", edgePixels);
+            surfaceSettingsMaterial = contourMaterial;
+            appliedSurfaceVisual = bakedSurfaceVisual;
+            appliedSurfaceEnabled = hasSurface;
+            appliedSurfaceRevealEnabled = revealEnabled;
+            appliedSurfaceRadiusPixels = radiusPixels;
+            appliedSurfaceEdgePixels = edgePixels;
+        }
+
         private Color EvaluateHeightColor(float height)
         {
             return height < 0.55f
@@ -737,6 +826,7 @@ namespace AnimalGame.MapTest
             if (contourMaterial != null)
                 DestroyGeneratedObject(contourMaterial);
             contourMaterial = null;
+            surfaceSettingsMaterial = null;
 
             if (generatedMapSprite != null)
                 DestroyGeneratedObject(generatedMapSprite);
