@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.IO;
 using AnimalGame.MapTest;
 using UnityEditor;
@@ -27,22 +29,26 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
 
     private HeightMapLevelAsset levelAsset;
     private MapTestSceneController mapController;
+    private Vector2 scrollPosition;
     private float brushRadiusMeters = DefaultBrushRadiusMeters;
+    private int selectedTerrainId = 1;
     private bool paintInScene = true;
     private bool strokeActive;
-    private bool strokeErase;
+    private int strokeTerrainId;
     private bool strokeChanged;
     private bool hasLastStrokePosition;
     private Vector2 lastStrokeMapPosition;
     private int strokeUndoGroup = -1;
     private int lastObservedAuthoringHash;
+    private bool delayedUpgradeBakeQueued;
+    private SerializedObject serializedLevel;
 
     [MenuItem("Animal Game/Level/Terrain Surface Painter")]
     public static void Open()
     {
         var window = GetWindow<HeightMapSurfacePainterWindow>();
         window.titleContent = new GUIContent("Surface Painter");
-        window.minSize = new Vector2(370f, 430f);
+        window.minSize = new Vector2(390f, 520f);
         window.TryAdoptCurrentSelection();
         window.Show();
     }
@@ -58,11 +64,12 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
     private void OnEnable()
     {
         titleContent = new GUIContent("Surface Painter");
-        minSize = new Vector2(370f, 430f);
+        minSize = new Vector2(390f, 520f);
         SceneView.duringSceneGui += HandleSceneGui;
         Undo.undoRedoPerformed += HandleUndoRedo;
         if (levelAsset == null)
             TryAdoptCurrentSelection();
+        QueueBakeUpgradeIfNeeded();
     }
 
     private void OnDisable()
@@ -72,6 +79,9 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
 
         SceneView.duringSceneGui -= HandleSceneGui;
         Undo.undoRedoPerformed -= HandleUndoRedo;
+        EditorApplication.delayCall -= HandleDelayedUpgradeBake;
+        delayedUpgradeBakeQueued = false;
+        serializedLevel = null;
     }
 
     private void OnFocus()
@@ -88,13 +98,14 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
 
     private void OnGUI()
     {
+        scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
         EditorGUILayout.LabelField(
-            "Permanent Single-Surface Terrain",
+            "Permanent Multi-Terrain Surface",
             EditorStyles.boldLabel);
         EditorGUILayout.HelpBox(
-            "Paints a binary area mask into the fixed map asset. At the end of " +
-            "each stroke, the Editor permanently bakes the repeated source pattern " +
-            "into one static PNG. Runtime never rebuilds or tiles this artwork.",
+            "Paints stable terrain IDs directly into the fixed map asset. " +
+            "The Editor bakes every pattern and transition into one static PNG; " +
+            "runtime only displays that finished image inside the robot UI range.",
             MessageType.Info);
 
         EditorGUI.BeginChangeCheck();
@@ -119,13 +130,15 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
         if (levelAsset == null)
         {
             EditorGUILayout.HelpBox(
-                "Select MainHeightMapLevel or a scene MapTestController, then open " +
-                "this window again.",
+                "Select MainHeightMapLevel or a scene MapTestController, then " +
+                "open this window again.",
                 MessageType.Warning);
+            EditorGUILayout.EndScrollView();
             return;
         }
 
         DrawSurfaceSettings();
+        DrawPaletteSelector();
 
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Brush", EditorStyles.boldLabel);
@@ -139,90 +152,200 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
             paintInScene ? "Scene Painting Enabled" : "Scene Painting Disabled",
             "Button");
 
+        TerrainSurfaceDefinition selectedDefinition =
+            levelAsset.GetSurfaceDefinition(selectedTerrainId);
+        bool canPaintSelected = selectedDefinition != null
+                                && selectedDefinition.IsUsable;
         using (new EditorGUI.DisabledScope(
-                   levelAsset.SurfacePatternTexture == null))
+                   !levelAsset.HasUsableSurfaceDefinitions))
         {
-            if (GUILayout.Button("Bake Current Painted Area"))
+            if (GUILayout.Button("Bake Current Terrain Map"))
                 BakeAndObserve(true);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (GUILayout.Button("Fill Entire Map"))
-                    FillMask(true);
-                if (GUILayout.Button("Clear Painted Area"))
-                    FillMask(false);
+                using (new EditorGUI.DisabledScope(!canPaintSelected))
+                {
+                    if (GUILayout.Button("Fill With Selected"))
+                        FillType(selectedTerrainId);
+                }
+
+                if (GUILayout.Button("Clear All Terrain"))
+                    FillType(0);
             }
         }
 
-        if (levelAsset.SurfacePatternTexture == null)
+        if (!levelAsset.HasUsableSurfaceDefinitions)
         {
             EditorGUILayout.HelpBox(
-                "Assign a Source Pattern before painting or baking.",
+                "Add at least one Palette entry with a Pattern Texture before " +
+                "painting or baking.",
                 MessageType.Error);
+        }
+        else if (!canPaintSelected)
+        {
+            EditorGUILayout.HelpBox(
+                "The selected terrain has no Pattern Texture. Assign one or " +
+                "select another Palette entry.",
+                MessageType.Warning);
         }
         else if (mapController == null)
         {
             EditorGUILayout.HelpBox(
-                "The selected level is not present in the open scene. Baking still " +
-                "works, but Scene painting needs its MapTestController.",
+                "The selected level is not present in the open scene. Baking " +
+                "still works, but Scene painting needs its MapTestController.",
                 MessageType.Warning);
         }
 
         EditorGUILayout.Space();
         EditorGUILayout.HelpBox(
             "Scene controls\n" +
-            "• Left-drag: paint the test terrain\n" +
-            "• Shift + left-drag: erase\n" +
+            "• Choose a terrain ID above, then left-drag to paint it\n" +
+            "• Shift + left-drag: erase to ID 0\n" +
             "• Alt + mouse: normal Scene camera navigation\n" +
             "• Ctrl+Z / Ctrl+Y: undo or redo and automatically rebake",
             MessageType.None);
 
+        EditorGUILayout.EndScrollView();
         if (GUI.changed)
             SceneView.RepaintAll();
     }
 
     private void DrawSurfaceSettings()
     {
-        var serializedLevel = new SerializedObject(levelAsset);
-        SerializedProperty pattern = serializedLevel.FindProperty(
-            "surfacePatternTexture");
-        SerializedProperty tint = serializedLevel.FindProperty("surfaceTint");
-        SerializedProperty opacity = serializedLevel.FindProperty("surfaceOpacity");
-        SerializedProperty tileSize = serializedLevel.FindProperty(
-            "surfaceTileSizeMeters");
+        if (serializedLevel == null
+            || serializedLevel.targetObject != levelAsset)
+        {
+            serializedLevel = new SerializedObject(levelAsset);
+        }
+
+        SerializedProperty palette = serializedLevel.FindProperty(
+            "surfacePalette");
+        SerializedProperty transitionWidth = serializedLevel.FindProperty(
+            "surfaceTransitionWidthMeters");
+        SerializedProperty alphaCoreWidth = serializedLevel.FindProperty(
+            "surfaceAlphaCoreWidthMeters");
+        SerializedProperty alphaBlendShare = serializedLevel.FindProperty(
+            "surfaceAlphaBlendShare");
+        SerializedProperty boundaryNoiseScale = serializedLevel.FindProperty(
+            "surfaceBoundaryNoiseScaleMeters");
+        SerializedProperty boundaryNoiseAmplitude = serializedLevel.FindProperty(
+            "surfaceBoundaryNoiseAmplitudeMeters");
+        SerializedProperty scatterCellSize = serializedLevel.FindProperty(
+            "surfaceScatterCellSizeMeters");
+        SerializedProperty scatterStrength = serializedLevel.FindProperty(
+            "surfaceScatterStrength");
+        SerializedProperty noiseSeed = serializedLevel.FindProperty(
+            "surfaceNoiseSeed");
         SerializedProperty bakeResolution = serializedLevel.FindProperty(
             "surfaceBakeResolution");
         SerializedProperty maskResolution = serializedLevel.FindProperty(
             "surfaceMaskResolution");
+        SerializedProperty closedContourAlphaEnabled =
+            serializedLevel.FindProperty(
+                "surfaceClosedContourAlphaEnabled");
+        SerializedProperty closedContourAlphaResolution =
+            serializedLevel.FindProperty(
+                "surfaceClosedContourAlphaResolution");
+        SerializedProperty closedContourEdgeAlpha =
+            serializedLevel.FindProperty(
+                "surfaceClosedContourEdgeAlphaMultiplier");
+        SerializedProperty closedContourCenterAlpha =
+            serializedLevel.FindProperty(
+                "surfaceClosedContourCenterAlphaMultiplier");
+        SerializedProperty closedContourDistanceCurve =
+            serializedLevel.FindProperty(
+                "surfaceClosedContourDistanceCurve");
+        SerializedProperty closedContourMinimumArea =
+            serializedLevel.FindProperty(
+                "surfaceClosedContourMinimumAreaSquareMeters");
+        SerializedProperty outsideClosedContourAlpha =
+            serializedLevel.FindProperty(
+                "surfaceOutsideClosedContourAlphaMultiplier");
         SerializedProperty revealEdge = serializedLevel.FindProperty(
             "surfaceRevealEdgePixels");
 
         EditorGUILayout.Space();
-        EditorGUILayout.LabelField("Baked Surface Settings", EditorStyles.boldLabel);
-        serializedLevel.Update();
+        EditorGUILayout.LabelField("Terrain Palette", EditorStyles.boldLabel);
+        // Keep the same SerializedObject alive while a text field owns keyboard
+        // focus. Recreating it every IMGUI repaint discarded an unfinished
+        // numeric edit and made text-only values such as Tile Size Meters snap
+        // back to their previous serialized value (usually the default 8).
+        serializedLevel.UpdateIfRequiredOrScript();
         EditorGUI.BeginChangeCheck();
-        EditorGUILayout.PropertyField(pattern, new GUIContent("Source Pattern"));
-        EditorGUILayout.PropertyField(tint, new GUIContent("Tint"));
-        EditorGUILayout.PropertyField(opacity, new GUIContent("Opacity"));
-        EditorGUILayout.PropertyField(tileSize, new GUIContent("Tile Size (metres)"));
+        EditorGUILayout.PropertyField(palette, true);
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField(
+            "Baked Transition Settings",
+            EditorStyles.boldLabel);
+        EditorGUILayout.PropertyField(transitionWidth);
+        EditorGUILayout.PropertyField(alphaCoreWidth);
+        EditorGUILayout.PropertyField(alphaBlendShare);
+        EditorGUILayout.PropertyField(boundaryNoiseScale);
+        EditorGUILayout.PropertyField(boundaryNoiseAmplitude);
+        EditorGUILayout.PropertyField(
+            scatterCellSize,
+            new GUIContent("Boundary Detail Scale (metres)"));
+        EditorGUILayout.PropertyField(
+            scatterStrength,
+            new GUIContent("Boundary Detail Strength"));
+        EditorGUILayout.PropertyField(noiseSeed);
         EditorGUILayout.PropertyField(
             bakeResolution,
             new GUIContent("Baked Texture Resolution"));
         EditorGUILayout.PropertyField(
             maskResolution,
-            new GUIContent("Paint Mask Resolution"));
+            new GUIContent("Terrain ID Map Resolution"));
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField(
+            "Static Closed-Contour Alpha",
+            EditorStyles.boldLabel);
+        EditorGUILayout.HelpBox(
+            "This gradient is calculated only when the fixed map is baked. " +
+            "It is stored permanently in the runtime texture and never reads " +
+            "the player position or changes during gameplay. The map's four " +
+            "straight sides close contour lines that reach an edge.",
+            MessageType.Info);
+        EditorGUILayout.PropertyField(
+            closedContourAlphaEnabled,
+            new GUIContent("Enable Static Contour Alpha"));
+        using (new EditorGUI.DisabledScope(
+                   !closedContourAlphaEnabled.boolValue))
+        {
+            EditorGUILayout.PropertyField(
+                closedContourAlphaResolution,
+                new GUIContent("Contour Analysis Resolution"));
+            EditorGUILayout.PropertyField(
+                closedContourEdgeAlpha,
+                new GUIContent("Boundary Alpha Multiplier"));
+            EditorGUILayout.PropertyField(
+                closedContourCenterAlpha,
+                new GUIContent("Centre Alpha Multiplier"));
+            EditorGUILayout.PropertyField(
+                closedContourDistanceCurve,
+                new GUIContent("Boundary-to-Centre Curve"));
+            EditorGUILayout.PropertyField(
+                closedContourMinimumArea,
+                new GUIContent("Minimum Region Area (m²)"));
+            EditorGUILayout.PropertyField(
+                outsideClosedContourAlpha,
+                new GUIContent("Outside Region Alpha Multiplier"));
+        }
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Runtime Reveal", EditorStyles.boldLabel);
         EditorGUILayout.PropertyField(
             revealEdge,
             new GUIContent("UI Reveal Edge (pixels)"));
-        if (EditorGUI.EndChangeCheck())
-        {
-            serializedLevel.ApplyModifiedProperties();
+        bool propertiesChanged = EditorGUI.EndChangeCheck();
+        serializedLevel.ApplyModifiedProperties();
+
+        bool normalized = levelAsset.EnsureSurfaceAuthoringData();
+        if (propertiesChanged || normalized)
             EditorUtility.SetDirty(levelAsset);
-        }
-        else
-        {
-            serializedLevel.ApplyModifiedProperties();
-        }
+        EnsureSelectedTerrain();
 
         using (new EditorGUI.DisabledScope(true))
         {
@@ -234,12 +357,73 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
         }
     }
 
+    private void DrawPaletteSelector()
+    {
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Paint Terrain", EditorStyles.boldLabel);
+        IReadOnlyList<TerrainSurfaceDefinition> palette =
+            levelAsset.SurfacePalette;
+        if (palette == null || palette.Count == 0)
+            return;
+
+        foreach (TerrainSurfaceDefinition definition in palette)
+        {
+            if (definition == null)
+                continue;
+
+            Color previousBackground = GUI.backgroundColor;
+            Color buttonColor = definition.Tint;
+            buttonColor.a = 1f;
+            GUI.backgroundColor = buttonColor;
+            bool selected = definition.TerrainId == selectedTerrainId;
+            string textureStatus = definition.PatternTexture != null
+                ? string.Empty
+                : " (texture missing)";
+            if (GUILayout.Toggle(
+                    selected,
+                    $"ID {definition.TerrainId}: {definition.DisplayName}" +
+                    textureStatus,
+                    "Button"))
+            {
+                selectedTerrainId = definition.TerrainId;
+            }
+
+            GUI.backgroundColor = previousBackground;
+        }
+    }
+
+    private void EnsureSelectedTerrain()
+    {
+        if (levelAsset == null)
+            return;
+        if (levelAsset.GetSurfaceDefinition(selectedTerrainId) != null)
+            return;
+
+        IReadOnlyList<TerrainSurfaceDefinition> palette =
+            levelAsset.SurfacePalette;
+        if (palette == null)
+            return;
+
+        foreach (TerrainSurfaceDefinition definition in palette)
+        {
+            if (definition == null)
+                continue;
+
+            selectedTerrainId = definition.TerrainId;
+            return;
+        }
+    }
+
     private void HandleSceneGui(SceneView sceneView)
     {
+        TerrainSurfaceDefinition selectedDefinition = levelAsset != null
+            ? levelAsset.GetSurfaceDefinition(selectedTerrainId)
+            : null;
         if (!paintInScene
             || levelAsset == null
             || mapController == null
-            || levelAsset.SurfacePatternTexture == null
+            || selectedDefinition == null
+            || !selectedDefinition.IsUsable
             || !mapController.HasGeneratedMap)
         {
             return;
@@ -313,25 +497,46 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
             points[index] = mapController.MapPositionToWorld(mapPoint);
         }
 
-        Handles.color = erase
-            ? new Color(1f, 0.28f, 0.2f, 0.95f)
-            : new Color(1f, 0.84f, 0.22f, 0.95f);
+        Color outlineColor;
+        if (erase)
+        {
+            outlineColor = new Color(1f, 0.28f, 0.2f, 0.95f);
+        }
+        else
+        {
+            TerrainSurfaceDefinition definition =
+                levelAsset.GetSurfaceDefinition(selectedTerrainId);
+            outlineColor = definition != null
+                ? definition.Tint
+                : new Color(1f, 0.84f, 0.22f, 1f);
+            outlineColor.a = 0.95f;
+        }
+
+        Handles.color = outlineColor;
         Handles.DrawAAPolyLine(3f, points);
     }
 
     private void BeginStroke(Vector2 mapPosition, bool erase)
     {
+        strokeTerrainId = erase ? 0 : selectedTerrainId;
+        if (strokeTerrainId != 0)
+        {
+            TerrainSurfaceDefinition definition =
+                levelAsset.GetSurfaceDefinition(strokeTerrainId);
+            if (definition == null || !definition.IsUsable)
+                return;
+        }
+
         strokeActive = true;
-        strokeErase = erase;
         strokeChanged = false;
         hasLastStrokePosition = false;
         Undo.IncrementCurrentGroup();
         strokeUndoGroup = Undo.GetCurrentGroup();
-        Undo.SetCurrentGroupName(
-            erase ? "Erase Terrain Surface" : "Paint Terrain Surface");
-        Undo.RegisterCompleteObjectUndo(
-            levelAsset,
-            erase ? "Erase Terrain Surface" : "Paint Terrain Surface");
+        string operationName = erase
+            ? "Erase Terrain Surface"
+            : $"Paint {levelAsset.GetSurfaceDefinition(strokeTerrainId).DisplayName}";
+        Undo.SetCurrentGroupName(operationName);
+        Undo.RegisterCompleteObjectUndo(levelAsset, operationName);
         PaintStrokeTo(mapPosition);
     }
 
@@ -364,10 +569,10 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
 
     private void PaintDab(Vector2 mapPosition)
     {
-        if (!levelAsset.PaintSurfaceMask(
+        if (!levelAsset.PaintSurfaceType(
                 mapPosition,
                 brushRadiusMeters,
-                strokeErase))
+                strokeTerrainId))
         {
             return;
         }
@@ -393,16 +598,16 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
         Repaint();
     }
 
-    private void FillMask(bool painted)
+    private void FillType(int terrainId)
     {
         Undo.IncrementCurrentGroup();
         int undoGroup = Undo.GetCurrentGroup();
-        string operationName = painted
-            ? "Fill Terrain Surface"
-            : "Clear Terrain Surface";
+        string operationName = terrainId == 0
+            ? "Clear Terrain Surface"
+            : "Fill Terrain Surface";
         Undo.SetCurrentGroupName(operationName);
         Undo.RegisterCompleteObjectUndo(levelAsset, operationName);
-        if (levelAsset.FillSurfaceMask(painted))
+        if (levelAsset.FillSurfaceType(terrainId))
         {
             EditorUtility.SetDirty(levelAsset);
             BakeAndObserve(false);
@@ -427,6 +632,7 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
         if (levelAsset == null)
             return;
 
+        levelAsset.EnsureSurfaceAuthoringData();
         int currentHash = levelAsset.CalculateSurfaceAuthoringHash();
         if (currentHash == lastObservedAuthoringHash)
             return;
@@ -456,7 +662,7 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
         }
 
         MapTestSceneController[] openMaps =
-            Object.FindObjectsOfType<MapTestSceneController>(true);
+            UnityEngine.Object.FindObjectsOfType<MapTestSceneController>(true);
         if (openMaps.Length > 0)
             SetLevelAsset(openMaps[0].LevelAsset);
     }
@@ -467,12 +673,51 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
             return;
 
         levelAsset = asset;
+        serializedLevel = levelAsset != null
+            ? new SerializedObject(levelAsset)
+            : null;
+        if (levelAsset != null && levelAsset.EnsureSurfaceAuthoringData())
+        {
+            EditorUtility.SetDirty(levelAsset);
+            AssetDatabase.SaveAssets();
+        }
+
+        EnsureSelectedTerrain();
         ResolveSceneMap();
         lastObservedAuthoringHash = levelAsset != null
             ? levelAsset.CalculateSurfaceAuthoringHash()
             : 0;
+        QueueBakeUpgradeIfNeeded();
         Repaint();
         SceneView.RepaintAll();
+    }
+
+    private void QueueBakeUpgradeIfNeeded()
+    {
+        if (delayedUpgradeBakeQueued
+            || levelAsset == null
+            || !levelAsset.HasUsableSurfaceDefinitions
+            || !levelAsset.SurfaceBakeNeedsUpgrade)
+        {
+            return;
+        }
+
+        delayedUpgradeBakeQueued = true;
+        EditorApplication.delayCall += HandleDelayedUpgradeBake;
+    }
+
+    private void HandleDelayedUpgradeBake()
+    {
+        EditorApplication.delayCall -= HandleDelayedUpgradeBake;
+        delayedUpgradeBakeQueued = false;
+        if (levelAsset == null
+            || !levelAsset.HasUsableSurfaceDefinitions
+            || !levelAsset.SurfaceBakeNeedsUpgrade)
+        {
+            return;
+        }
+
+        BakeAndObserve(false);
     }
 
     private void ResolveSceneMap()
@@ -482,7 +727,7 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
             return;
 
         MapTestSceneController[] openMaps =
-            Object.FindObjectsOfType<MapTestSceneController>(true);
+            UnityEngine.Object.FindObjectsOfType<MapTestSceneController>(true);
         foreach (MapTestSceneController candidate in openMaps)
         {
             if (candidate != null
@@ -496,17 +741,70 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
     }
 }
 
+[InitializeOnLoad]
+internal static class HeightMapSurfaceBakeUpgrade
+{
+    static HeightMapSurfaceBakeUpgrade()
+    {
+        EditorApplication.delayCall += UpgradeOutdatedBakes;
+    }
+
+    private static void UpgradeOutdatedBakes()
+    {
+        EditorApplication.delayCall -= UpgradeOutdatedBakes;
+        if (EditorApplication.isPlayingOrWillChangePlaymode)
+            return;
+
+        string[] levelGuids = AssetDatabase.FindAssets(
+            "t:HeightMapLevelAsset");
+        foreach (string levelGuid in levelGuids)
+        {
+            string assetPath = AssetDatabase.GUIDToAssetPath(levelGuid);
+            HeightMapLevelAsset level =
+                AssetDatabase.LoadAssetAtPath<HeightMapLevelAsset>(assetPath);
+            if (level == null
+                || !level.HasUsableSurfaceDefinitions
+                || !level.SurfaceBakeNeedsUpgrade)
+            {
+                continue;
+            }
+
+            HeightMapSurfaceBaker.Bake(level, false);
+        }
+    }
+}
+
 internal static class HeightMapSurfaceBaker
 {
     private const string BakeShaderName =
-        "Hidden/AnimalGame/Bake Single Terrain Surface";
+        "Hidden/AnimalGame/Bake Terrain Surface Palette";
+    private const int PaletteSize = 256;
+    private const int AtlasGridSize = 16;
+    private const int AtlasCellSize = 128;
+    private const int AtlasPadding = 2;
+    private const int AtlasSize = AtlasGridSize * AtlasCellSize;
+
+    private static readonly int[] NeighbourX =
+        { -1, 0, 1, -1, 1, -1, 0, 1 };
+    private static readonly int[] NeighbourY =
+        { -1, -1, -1, 0, 0, 1, 1, 1 };
 
     public static bool Bake(HeightMapLevelAsset level, bool registerUndo)
     {
-        if (level == null || level.SurfacePatternTexture == null)
+        if (level == null)
         {
             Debug.LogError(
-                "Terrain surface baking requires a fixed map asset and Source Pattern.");
+                "Terrain surface baking requires a fixed map asset.");
+            return false;
+        }
+
+        if (level.EnsureSurfaceAuthoringData())
+            EditorUtility.SetDirty(level);
+        if (!level.HasUsableSurfaceDefinitions)
+        {
+            Debug.LogError(
+                "Terrain surface baking requires at least one Palette entry " +
+                "with a Pattern Texture.");
             return false;
         }
 
@@ -524,10 +822,14 @@ internal static class HeightMapSurfaceBaker
             return false;
         }
 
-        byte[] maskData = level.GetOrCreateSurfaceMask();
-        int maskResolution = level.SurfaceMaskResolution;
+        byte[] typeMap = level.GetOrCreateSurfaceTypeMap();
         int bakeResolution = level.SurfaceBakeResolution;
-        Texture2D maskTexture = null;
+        float maximumBoundaryDistance = CalculateMaximumBoundaryDistance(level);
+        Texture2D patternAtlas = null;
+        Texture2D pairTexture = null;
+        Texture2D staticContourAlphaTexture = null;
+        Texture2D paletteTintTexture = null;
+        Texture2D paletteSettingsTexture = null;
         Texture2D readableOutput = null;
         Material bakeMaterial = null;
         RenderTexture renderTarget = null;
@@ -535,28 +837,39 @@ internal static class HeightMapSurfaceBaker
 
         try
         {
-            maskTexture = new Texture2D(
-                maskResolution,
-                maskResolution,
-                TextureFormat.R8,
-                false,
-                true)
+            patternAtlas = BuildPatternAtlas(level);
+            pairTexture = BuildPairTexture(
+                level,
+                typeMap,
+                maximumBoundaryDistance);
+            if (level.SurfaceClosedContourAlphaEnabled)
             {
-                name = "Temporary Terrain Surface Mask",
-                filterMode = FilterMode.Point,
-                wrapMode = TextureWrapMode.Clamp
-            };
-            maskTexture.LoadRawTextureData(maskData);
-            maskTexture.Apply(false, true);
+                staticContourAlphaTexture =
+                    StaticClosedContourAlphaBuilder.Build(level);
+            }
+            BuildPaletteTextures(
+                level,
+                out paletteTintTexture,
+                out paletteSettingsTexture);
 
             bakeMaterial = new Material(bakeShader)
             {
                 hideFlags = HideFlags.HideAndDontSave
             };
-            bakeMaterial.SetTexture("_PatternTex", level.SurfacePatternTexture);
-            bakeMaterial.SetTexture("_MaskTex", maskTexture);
-            bakeMaterial.SetColor("_Tint", level.SurfaceTint);
-            bakeMaterial.SetFloat("_Opacity", level.SurfaceOpacity);
+            bakeMaterial.SetTexture("_PatternAtlas", patternAtlas);
+            bakeMaterial.SetTexture("_TerrainPairTex", pairTexture);
+            bakeMaterial.SetTexture(
+                "_StaticContourAlphaTex",
+                staticContourAlphaTexture != null
+                    ? staticContourAlphaTexture
+                    : Texture2D.whiteTexture);
+            bakeMaterial.SetFloat(
+                "_StaticContourAlphaEnabled",
+                staticContourAlphaTexture != null ? 1f : 0f);
+            bakeMaterial.SetTexture("_PaletteTintTex", paletteTintTexture);
+            bakeMaterial.SetTexture(
+                "_PaletteSettingsTex",
+                paletteSettingsTexture);
             bakeMaterial.SetVector(
                 "_MapSizeMeters",
                 new Vector4(
@@ -565,8 +878,30 @@ internal static class HeightMapSurfaceBaker
                     0f,
                     0f));
             bakeMaterial.SetFloat(
-                "_TileSizeMeters",
-                level.SurfaceTileSizeMeters);
+                "_MaximumBoundaryDistanceMeters",
+                maximumBoundaryDistance);
+            bakeMaterial.SetFloat(
+                "_TransitionWidthMeters",
+                level.SurfaceTransitionWidthMeters);
+            bakeMaterial.SetFloat(
+                "_AlphaCoreWidthMeters",
+                level.SurfaceAlphaCoreWidthMeters);
+            bakeMaterial.SetFloat(
+                "_AlphaBlendShare",
+                level.SurfaceAlphaBlendShare);
+            bakeMaterial.SetFloat(
+                "_BoundaryNoiseScaleMeters",
+                level.SurfaceBoundaryNoiseScaleMeters);
+            bakeMaterial.SetFloat(
+                "_BoundaryNoiseAmplitudeMeters",
+                level.SurfaceBoundaryNoiseAmplitudeMeters);
+            bakeMaterial.SetFloat(
+                "_ScatterCellSizeMeters",
+                level.SurfaceScatterCellSizeMeters);
+            bakeMaterial.SetFloat(
+                "_ScatterStrength",
+                level.SurfaceScatterStrength);
+            bakeMaterial.SetFloat("_NoiseSeed", level.SurfaceNoiseSeed);
 
             renderTarget = RenderTexture.GetTemporary(
                 bakeResolution,
@@ -623,7 +958,7 @@ internal static class HeightMapSurfaceBaker
             EditorUtility.SetDirty(level);
             AssetDatabase.SaveAssets();
             Debug.Log(
-                $"Baked permanent terrain surface: {outputPath}",
+                $"Baked permanent multi-terrain surface: {outputPath}",
                 level);
             return true;
         }
@@ -632,13 +967,394 @@ internal static class HeightMapSurfaceBaker
             RenderTexture.active = previousTarget;
             if (renderTarget != null)
                 RenderTexture.ReleaseTemporary(renderTarget);
-            if (bakeMaterial != null)
-                Object.DestroyImmediate(bakeMaterial);
-            if (maskTexture != null)
-                Object.DestroyImmediate(maskTexture);
-            if (readableOutput != null)
-                Object.DestroyImmediate(readableOutput);
+            DestroyTemporary(bakeMaterial);
+            DestroyTemporary(patternAtlas);
+            DestroyTemporary(pairTexture);
+            DestroyTemporary(staticContourAlphaTexture);
+            DestroyTemporary(paletteTintTexture);
+            DestroyTemporary(paletteSettingsTexture);
+            DestroyTemporary(readableOutput);
         }
+    }
+
+    private static Texture2D BuildPatternAtlas(HeightMapLevelAsset level)
+    {
+        var atlasPixels = new Color32[AtlasSize * AtlasSize];
+        IReadOnlyList<TerrainSurfaceDefinition> palette = level.SurfacePalette;
+        if (palette != null)
+        {
+            foreach (TerrainSurfaceDefinition definition in palette)
+            {
+                if (definition == null || !definition.IsUsable)
+                    continue;
+
+                Texture2D readable = CreateReadableCopy(
+                    definition.PatternTexture);
+                try
+                {
+                    CopyRepeatedPatternIntoAtlas(
+                        readable,
+                        atlasPixels,
+                        definition.TerrainId);
+                }
+                finally
+                {
+                    DestroyTemporary(readable);
+                }
+            }
+        }
+
+        var atlas = new Texture2D(
+            AtlasSize,
+            AtlasSize,
+            TextureFormat.RGBA32,
+            false,
+            false)
+        {
+            name = "Temporary Terrain Pattern Atlas",
+            filterMode = FilterMode.Bilinear,
+            wrapMode = TextureWrapMode.Clamp
+        };
+        atlas.SetPixels32(atlasPixels);
+        atlas.Apply(false, true);
+        return atlas;
+    }
+
+    private static void CopyRepeatedPatternIntoAtlas(
+        Texture2D source,
+        Color32[] atlasPixels,
+        int terrainId)
+    {
+        int cellX = terrainId % AtlasGridSize;
+        int cellY = terrainId / AtlasGridSize;
+        int cellOriginX = cellX * AtlasCellSize;
+        int cellOriginY = cellY * AtlasCellSize;
+        int interiorSize = AtlasCellSize - AtlasPadding * 2;
+
+        for (int y = 0; y < AtlasCellSize; y++)
+        {
+            float sourceV = Mathf.Repeat(
+                (y - AtlasPadding + 0.5f) / interiorSize,
+                1f);
+            for (int x = 0; x < AtlasCellSize; x++)
+            {
+                float sourceU = Mathf.Repeat(
+                    (x - AtlasPadding + 0.5f) / interiorSize,
+                    1f);
+                Color sampled = source.GetPixelBilinear(sourceU, sourceV);
+                int targetX = cellOriginX + x;
+                int targetY = cellOriginY + y;
+                atlasPixels[targetY * AtlasSize + targetX] = sampled;
+            }
+        }
+    }
+
+    private static Texture2D CreateReadableCopy(Texture2D source)
+    {
+        RenderTexture temporary = RenderTexture.GetTemporary(
+            source.width,
+            source.height,
+            0,
+            RenderTextureFormat.ARGB32,
+            RenderTextureReadWrite.sRGB);
+        RenderTexture previous = RenderTexture.active;
+        Texture2D readable = null;
+        try
+        {
+            Graphics.Blit(source, temporary);
+            RenderTexture.active = temporary;
+            readable = new Texture2D(
+                source.width,
+                source.height,
+                TextureFormat.RGBA32,
+                false,
+                false)
+            {
+                name = $"Readable Copy of {source.name}",
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Repeat
+            };
+            readable.ReadPixels(
+                new Rect(0f, 0f, source.width, source.height),
+                0,
+                0,
+                false);
+            readable.Apply(false, false);
+            return readable;
+        }
+        catch
+        {
+            DestroyTemporary(readable);
+            throw;
+        }
+        finally
+        {
+            RenderTexture.active = previous;
+            RenderTexture.ReleaseTemporary(temporary);
+        }
+    }
+
+    private static void BuildPaletteTextures(
+        HeightMapLevelAsset level,
+        out Texture2D tintTexture,
+        out Texture2D settingsTexture)
+    {
+        var tints = new Color[PaletteSize];
+        var settings = new Color[PaletteSize];
+        settings[0] = new Color(1f, 0f, 1f, 1f);
+
+        IReadOnlyList<TerrainSurfaceDefinition> palette = level.SurfacePalette;
+        if (palette != null)
+        {
+            foreach (TerrainSurfaceDefinition definition in palette)
+            {
+                if (definition == null)
+                    continue;
+
+                int id = Mathf.Clamp(definition.TerrainId, 1, 255);
+                Color tint = definition.Tint;
+                tint.a *= definition.Opacity;
+                if (!definition.IsUsable)
+                    tint.a = 0f;
+                tints[id] = tint;
+                settings[id] = new Color(
+                    definition.TileSizeMeters,
+                    (float)definition.TransitionMode,
+                    definition.TransitionWidthMultiplier,
+                    definition.NoiseStrengthMultiplier);
+            }
+        }
+
+        tintTexture = new Texture2D(
+            PaletteSize,
+            1,
+            TextureFormat.RGBAFloat,
+            false,
+            true)
+        {
+            name = "Temporary Terrain Palette Tint",
+            filterMode = FilterMode.Point,
+            wrapMode = TextureWrapMode.Clamp
+        };
+        tintTexture.SetPixels(tints);
+        tintTexture.Apply(false, true);
+
+        settingsTexture = new Texture2D(
+            PaletteSize,
+            1,
+            TextureFormat.RGBAFloat,
+            false,
+            true)
+        {
+            name = "Temporary Terrain Palette Settings",
+            filterMode = FilterMode.Point,
+            wrapMode = TextureWrapMode.Clamp
+        };
+        settingsTexture.SetPixels(settings);
+        settingsTexture.Apply(false, true);
+    }
+
+    private static Texture2D BuildPairTexture(
+        HeightMapLevelAsset level,
+        byte[] typeMap,
+        float maximumDistanceMeters)
+    {
+        int resolution = level.SurfaceMaskResolution;
+        int pixelCount = resolution * resolution;
+        var distances = new float[pixelCount];
+        var secondaryTypes = new byte[pixelCount];
+        for (int index = 0; index < pixelCount; index++)
+            distances[index] = float.PositiveInfinity;
+
+        Vector2 mapSize = level.MapSizeMeters;
+        float pixelWidth = mapSize.x / resolution;
+        float pixelHeight = mapSize.y / resolution;
+        var heap = new DistanceHeap(Mathf.Max(1024, pixelCount / 8));
+
+        for (int y = 0; y < resolution; y++)
+        {
+            for (int x = 0; x < resolution; x++)
+            {
+                int index = y * resolution + x;
+                byte primaryType = typeMap[index];
+                for (int neighbour = 0;
+                     neighbour < NeighbourX.Length;
+                     neighbour++)
+                {
+                    int neighbourX = x + NeighbourX[neighbour];
+                    int neighbourY = y + NeighbourY[neighbour];
+                    if (neighbourX < 0
+                        || neighbourX >= resolution
+                        || neighbourY < 0
+                        || neighbourY >= resolution)
+                    {
+                        continue;
+                    }
+
+                    int neighbourIndex = neighbourY * resolution + neighbourX;
+                    byte otherType = typeMap[neighbourIndex];
+                    if (otherType == primaryType)
+                        continue;
+
+                    float deltaX = NeighbourX[neighbour] * pixelWidth;
+                    float deltaY = NeighbourY[neighbour] * pixelHeight;
+                    float candidateDistance = 0.5f * Mathf.Sqrt(
+                        deltaX * deltaX + deltaY * deltaY);
+                    if (!IsBetterPair(
+                            candidateDistance,
+                            otherType,
+                            distances[index],
+                            secondaryTypes[index]))
+                    {
+                        continue;
+                    }
+
+                    distances[index] = candidateDistance;
+                    secondaryTypes[index] = otherType;
+                    heap.Push(index, candidateDistance, otherType);
+                }
+            }
+        }
+
+        while (heap.Count > 0)
+        {
+            DistanceNode node = heap.Pop();
+            if (node.Distance > maximumDistanceMeters)
+                continue;
+            if (node.Distance > distances[node.Index] + 0.0001f
+                || secondaryTypes[node.Index] != node.SecondaryType)
+            {
+                continue;
+            }
+
+            int x = node.Index % resolution;
+            int y = node.Index / resolution;
+            byte primaryType = typeMap[node.Index];
+            for (int neighbour = 0;
+                 neighbour < NeighbourX.Length;
+                 neighbour++)
+            {
+                int neighbourX = x + NeighbourX[neighbour];
+                int neighbourY = y + NeighbourY[neighbour];
+                if (neighbourX < 0
+                    || neighbourX >= resolution
+                    || neighbourY < 0
+                    || neighbourY >= resolution)
+                {
+                    continue;
+                }
+
+                int neighbourIndex = neighbourY * resolution + neighbourX;
+                if (typeMap[neighbourIndex] != primaryType)
+                    continue;
+
+                float deltaX = NeighbourX[neighbour] * pixelWidth;
+                float deltaY = NeighbourY[neighbour] * pixelHeight;
+                float candidateDistance = node.Distance + Mathf.Sqrt(
+                    deltaX * deltaX + deltaY * deltaY);
+                if (candidateDistance > maximumDistanceMeters
+                    || !IsBetterPair(
+                        candidateDistance,
+                        node.SecondaryType,
+                        distances[neighbourIndex],
+                        secondaryTypes[neighbourIndex]))
+                {
+                    continue;
+                }
+
+                distances[neighbourIndex] = candidateDistance;
+                secondaryTypes[neighbourIndex] = node.SecondaryType;
+                heap.Push(
+                    neighbourIndex,
+                    candidateDistance,
+                    node.SecondaryType);
+            }
+        }
+
+        var pairPixels = new Color32[pixelCount];
+        float inverseMaximumDistance = 1f / Mathf.Max(
+            0.0001f,
+            maximumDistanceMeters);
+        for (int index = 0; index < pixelCount; index++)
+        {
+            bool hasPair = !float.IsInfinity(distances[index]);
+            byte encodedDistance = hasPair
+                ? (byte)Mathf.RoundToInt(Mathf.Clamp01(
+                    distances[index] * inverseMaximumDistance) * 255f)
+                : (byte)255;
+            pairPixels[index] = new Color32(
+                typeMap[index],
+                secondaryTypes[index],
+                encodedDistance,
+                hasPair ? (byte)255 : (byte)0);
+        }
+
+        var pairTexture = new Texture2D(
+            resolution,
+            resolution,
+            TextureFormat.RGBA32,
+            false,
+            true)
+        {
+            name = "Temporary Terrain Pair Distance Map",
+            filterMode = FilterMode.Point,
+            wrapMode = TextureWrapMode.Clamp
+        };
+        pairTexture.SetPixels32(pairPixels);
+        pairTexture.Apply(false, true);
+        return pairTexture;
+    }
+
+    private static bool IsBetterPair(
+        float candidateDistance,
+        byte candidateType,
+        float currentDistance,
+        byte currentType)
+    {
+        if (candidateDistance < currentDistance - 0.0001f)
+            return true;
+
+        return Mathf.Abs(candidateDistance - currentDistance) <= 0.0001f
+               && candidateType < currentType;
+    }
+
+    private static float CalculateMaximumBoundaryDistance(
+        HeightMapLevelAsset level)
+    {
+        float maximumWidthMultiplier = 1f;
+        float maximumNoiseMultiplier = 1f;
+        IReadOnlyList<TerrainSurfaceDefinition> palette = level.SurfacePalette;
+        if (palette != null)
+        {
+            foreach (TerrainSurfaceDefinition definition in palette)
+            {
+                if (definition == null)
+                    continue;
+
+                maximumWidthMultiplier = Mathf.Max(
+                    maximumWidthMultiplier,
+                    definition.TransitionWidthMultiplier);
+                maximumNoiseMultiplier = Mathf.Max(
+                    maximumNoiseMultiplier,
+                    definition.NoiseStrengthMultiplier);
+            }
+        }
+
+        float pixelWidth = level.MapSizeMeters.x
+                           / level.SurfaceMaskResolution;
+        float pixelHeight = level.MapSizeMeters.y
+                            / level.SurfaceMaskResolution;
+        float pixelDiagonal = Mathf.Sqrt(
+            pixelWidth * pixelWidth + pixelHeight * pixelHeight);
+        return Mathf.Max(
+            pixelDiagonal,
+            level.SurfaceTransitionWidthMeters
+            * 0.5f
+            * maximumWidthMultiplier
+            + level.SurfaceBoundaryNoiseAmplitudeMeters
+            * maximumNoiseMultiplier
+            * (1f + level.SurfaceScatterStrength * 0.35f)
+            + pixelDiagonal);
     }
 
     private static void ConfigureBakedTextureImporter(
@@ -664,5 +1380,564 @@ internal static class HeightMapSurfaceBaker
             256,
             8192);
         importer.SaveAndReimport();
+    }
+
+    private static void DestroyTemporary(UnityEngine.Object temporary)
+    {
+        if (temporary != null)
+            UnityEngine.Object.DestroyImmediate(temporary);
+    }
+
+    private readonly struct DistanceNode
+    {
+        public readonly int Index;
+        public readonly float Distance;
+        public readonly byte SecondaryType;
+
+        public DistanceNode(int index, float distance, byte secondaryType)
+        {
+            Index = index;
+            Distance = distance;
+            SecondaryType = secondaryType;
+        }
+    }
+
+    private sealed class DistanceHeap
+    {
+        private DistanceNode[] nodes;
+
+        public DistanceHeap(int initialCapacity)
+        {
+            nodes = new DistanceNode[Mathf.Max(4, initialCapacity)];
+        }
+
+        public int Count { get; private set; }
+
+        public void Push(int index, float distance, byte secondaryType)
+        {
+            if (Count == nodes.Length)
+                Array.Resize(ref nodes, nodes.Length * 2);
+
+            int insertionIndex = Count++;
+            var node = new DistanceNode(index, distance, secondaryType);
+            while (insertionIndex > 0)
+            {
+                int parentIndex = (insertionIndex - 1) / 2;
+                if (!ComesBefore(node, nodes[parentIndex]))
+                    break;
+
+                nodes[insertionIndex] = nodes[parentIndex];
+                insertionIndex = parentIndex;
+            }
+
+            nodes[insertionIndex] = node;
+        }
+
+        public DistanceNode Pop()
+        {
+            DistanceNode result = nodes[0];
+            DistanceNode tail = nodes[--Count];
+            if (Count == 0)
+                return result;
+
+            int index = 0;
+            while (true)
+            {
+                int left = index * 2 + 1;
+                if (left >= Count)
+                    break;
+
+                int right = left + 1;
+                int child = right < Count
+                            && ComesBefore(nodes[right], nodes[left])
+                    ? right
+                    : left;
+                if (!ComesBefore(nodes[child], tail))
+                    break;
+
+                nodes[index] = nodes[child];
+                index = child;
+            }
+
+            nodes[index] = tail;
+            return result;
+        }
+
+        private static bool ComesBefore(DistanceNode left, DistanceNode right)
+        {
+            if (left.Distance < right.Distance)
+                return true;
+            if (left.Distance > right.Distance)
+                return false;
+            if (left.SecondaryType < right.SecondaryType)
+                return true;
+            if (left.SecondaryType > right.SecondaryType)
+                return false;
+            return left.Index < right.Index;
+        }
+    }
+}
+
+/// <summary>
+/// Builds a temporary, Editor-only alpha multiplier field from the fixed map's
+/// smoothed height data. The result is consumed by the surface bake shader and
+/// written permanently into the baked PNG; none of this work exists at runtime.
+/// </summary>
+internal static class StaticClosedContourAlphaBuilder
+{
+    private static readonly int[] CardinalX = { -1, 1, 0, 0 };
+    private static readonly int[] CardinalY = { 0, 0, -1, 1 };
+    private static readonly int[] NeighbourX =
+        { -1, 0, 1, -1, 1, -1, 0, 1 };
+    private static readonly int[] NeighbourY =
+        { -1, -1, -1, 0, 0, 1, 1, 1 };
+
+    public static Texture2D Build(HeightMapLevelAsset level)
+    {
+        if (level == null || !level.IsValid)
+        {
+            throw new InvalidOperationException(
+                "Static closed-contour alpha requires a valid fixed height map.");
+        }
+
+        int resolution = Mathf.Clamp(
+            level.SurfaceClosedContourAlphaResolution,
+            128,
+            1024);
+        int pixelCount = resolution * resolution;
+        var heights = new float[pixelCount];
+
+        using (BakedHeightField heightField = BakedHeightField.Bake(
+                   level.HeightMap,
+                   resolution,
+                   level.MapSizeMeters,
+                   level.MinimumHeightMeters,
+                   level.MaximumHeightMeters,
+                   level.NormalizeSourceRange,
+                   level.SurfaceSmoothingSigmaMeters))
+        {
+            for (int y = 0; y < resolution; y++)
+            {
+                int row = y * resolution;
+                for (int x = 0; x < resolution; x++)
+                {
+                    heights[row + x] =
+                        heightField.GetSurfaceHeightSample(x, y);
+                }
+            }
+        }
+
+        var smallestContainingArea = new float[pixelCount];
+        var distanceWithinSmallestRegion = new float[pixelCount];
+        var labels = new int[pixelCount];
+        var floodQueue = new int[pixelCount];
+        var distances = new float[pixelCount];
+        var distanceHeap = new ContourDistanceHeap(
+            Mathf.Max(1024, pixelCount / 8));
+        for (int index = 0; index < pixelCount; index++)
+            smallestContainingArea[index] = float.PositiveInfinity;
+
+        float interval = Mathf.Max(0.0001f, level.ContourIntervalMeters);
+        float minimumHeight = level.MinimumHeightMeters;
+        float maximumHeight = level.MaximumHeightMeters;
+        int contourCount = Mathf.FloorToInt(
+            (maximumHeight - minimumHeight) / interval);
+        float maximumThreshold = maximumHeight - 0.0001f;
+        for (int contourIndex = 1;
+             contourIndex <= contourCount;
+             contourIndex++)
+        {
+            float threshold = minimumHeight + contourIndex * interval;
+            if (threshold >= maximumThreshold)
+                break;
+
+            // A contour region can surround either a hill (highland component)
+            // or a depression (lowland component), so both sides are indexed.
+            // Lines reaching the rectangular map border are closed by that border.
+            AccumulateClosedComponents(
+                heights,
+                resolution,
+                level.MapSizeMeters,
+                threshold,
+                true,
+                level.SurfaceClosedContourMinimumAreaSquareMeters,
+                labels,
+                floodQueue,
+                distances,
+                distanceHeap,
+                smallestContainingArea,
+                distanceWithinSmallestRegion);
+            AccumulateClosedComponents(
+                heights,
+                resolution,
+                level.MapSizeMeters,
+                threshold,
+                false,
+                level.SurfaceClosedContourMinimumAreaSquareMeters,
+                labels,
+                floodQueue,
+                distances,
+                distanceHeap,
+                smallestContainingArea,
+                distanceWithinSmallestRegion);
+        }
+
+        float edgeMultiplier =
+            level.SurfaceClosedContourEdgeAlphaMultiplier;
+        float centreMultiplier =
+            level.SurfaceClosedContourCenterAlphaMultiplier;
+        float outsideMultiplier =
+            level.SurfaceOutsideClosedContourAlphaMultiplier;
+        float curve = Mathf.Max(
+            0.1f,
+            level.SurfaceClosedContourDistanceCurve);
+        var multipliers = new float[pixelCount];
+        for (int index = 0; index < pixelCount; index++)
+        {
+            if (float.IsPositiveInfinity(smallestContainingArea[index]))
+            {
+                multipliers[index] = outsideMultiplier;
+                continue;
+            }
+
+            float curvedDistance = Mathf.Pow(
+                Mathf.Clamp01(distanceWithinSmallestRegion[index]),
+                curve);
+            multipliers[index] = Mathf.Lerp(
+                edgeMultiplier,
+                centreMultiplier,
+                curvedDistance);
+        }
+
+        var texture = new Texture2D(
+            resolution,
+            resolution,
+            TextureFormat.RFloat,
+            false,
+            true)
+        {
+            name = "Temporary Static Closed-Contour Alpha",
+            filterMode = FilterMode.Bilinear,
+            wrapMode = TextureWrapMode.Clamp,
+            hideFlags = HideFlags.HideAndDontSave
+        };
+        texture.SetPixelData(multipliers, 0);
+        texture.Apply(false, true);
+        return texture;
+    }
+
+    private static void AccumulateClosedComponents(
+        float[] heights,
+        int resolution,
+        Vector2 mapSizeMeters,
+        float threshold,
+        bool highland,
+        float minimumAreaSquareMeters,
+        int[] labels,
+        int[] floodQueue,
+        float[] distances,
+        ContourDistanceHeap distanceHeap,
+        float[] smallestContainingArea,
+        float[] distanceWithinSmallestRegion)
+    {
+        int pixelCount = heights.Length;
+        for (int index = 0; index < pixelCount; index++)
+            labels[index] = -1;
+
+        var componentPixelCounts = new List<int>();
+        var componentHasContourBoundary = new List<bool>();
+        for (int seed = 0; seed < pixelCount; seed++)
+        {
+            if (labels[seed] >= 0
+                || !IsInsideThreshold(heights[seed], threshold, highland))
+            {
+                continue;
+            }
+
+            int component = componentPixelCounts.Count;
+            int head = 0;
+            int tail = 0;
+            int count = 0;
+            bool hasContourBoundary = false;
+            labels[seed] = component;
+            floodQueue[tail++] = seed;
+
+            while (head < tail)
+            {
+                int index = floodQueue[head++];
+                count++;
+                int x = index % resolution;
+                int y = index / resolution;
+                for (int neighbour = 0;
+                     neighbour < CardinalX.Length;
+                     neighbour++)
+                {
+                    int neighbourX = x + CardinalX[neighbour];
+                    int neighbourY = y + CardinalY[neighbour];
+                    if (neighbourX < 0
+                        || neighbourX >= resolution
+                        || neighbourY < 0
+                        || neighbourY >= resolution)
+                    {
+                        continue;
+                    }
+
+                    int neighbourIndex =
+                        neighbourY * resolution + neighbourX;
+                    if (!IsInsideThreshold(
+                            heights[neighbourIndex],
+                            threshold,
+                            highland))
+                    {
+                        hasContourBoundary = true;
+                        continue;
+                    }
+
+                    if (labels[neighbourIndex] >= 0)
+                    {
+                        continue;
+                    }
+
+                    labels[neighbourIndex] = component;
+                    floodQueue[tail++] = neighbourIndex;
+                }
+            }
+
+            componentPixelCounts.Add(count);
+            componentHasContourBoundary.Add(hasContourBoundary);
+        }
+
+        int componentCount = componentPixelCounts.Count;
+        if (componentCount == 0)
+            return;
+
+        float pixelWidth = mapSizeMeters.x / resolution;
+        float pixelHeight = mapSizeMeters.y / resolution;
+        float pixelArea = pixelWidth * pixelHeight;
+        var validComponents = new bool[componentCount];
+        bool hasValidComponent = false;
+        for (int component = 0; component < componentCount; component++)
+        {
+            float area = componentPixelCounts[component] * pixelArea;
+            // The rectangular map boundary closes edge-reaching contours. A
+            // real threshold transition is still required so a uniform map is
+            // not mistaken for one giant contour region.
+            bool valid = componentHasContourBoundary[component]
+                         && area >= minimumAreaSquareMeters;
+            validComponents[component] = valid;
+            hasValidComponent |= valid;
+        }
+
+        if (!hasValidComponent)
+            return;
+
+        distanceHeap.Clear();
+        for (int index = 0; index < pixelCount; index++)
+            distances[index] = float.PositiveInfinity;
+
+        // Every valid component boundary is a simultaneous source. Distance is
+        // propagated only through pixels with the same component label.
+        for (int index = 0; index < pixelCount; index++)
+        {
+            int component = labels[index];
+            if (component < 0 || !validComponents[component])
+                continue;
+
+            int x = index % resolution;
+            int y = index / resolution;
+            bool isBoundary = false;
+            for (int neighbour = 0;
+                 neighbour < NeighbourX.Length;
+                 neighbour++)
+            {
+                int neighbourX = x + NeighbourX[neighbour];
+                int neighbourY = y + NeighbourY[neighbour];
+                if (neighbourX < 0
+                    || neighbourX >= resolution
+                    || neighbourY < 0
+                    || neighbourY >= resolution
+                    || labels[neighbourY * resolution + neighbourX]
+                    != component)
+                {
+                    isBoundary = true;
+                    break;
+                }
+            }
+
+            if (!isBoundary)
+                continue;
+
+            distances[index] = 0f;
+            distanceHeap.Push(index, 0f);
+        }
+
+        while (distanceHeap.Count > 0)
+        {
+            ContourDistanceNode node = distanceHeap.Pop();
+            if (node.Distance > distances[node.Index] + 0.0001f)
+                continue;
+
+            int component = labels[node.Index];
+            int x = node.Index % resolution;
+            int y = node.Index / resolution;
+            for (int neighbour = 0;
+                 neighbour < NeighbourX.Length;
+                 neighbour++)
+            {
+                int neighbourX = x + NeighbourX[neighbour];
+                int neighbourY = y + NeighbourY[neighbour];
+                if (neighbourX < 0
+                    || neighbourX >= resolution
+                    || neighbourY < 0
+                    || neighbourY >= resolution)
+                {
+                    continue;
+                }
+
+                int neighbourIndex =
+                    neighbourY * resolution + neighbourX;
+                if (labels[neighbourIndex] != component)
+                    continue;
+
+                float deltaX = NeighbourX[neighbour] * pixelWidth;
+                float deltaY = NeighbourY[neighbour] * pixelHeight;
+                float candidate = node.Distance + Mathf.Sqrt(
+                    deltaX * deltaX + deltaY * deltaY);
+                if (candidate >= distances[neighbourIndex] - 0.0001f)
+                    continue;
+
+                distances[neighbourIndex] = candidate;
+                distanceHeap.Push(neighbourIndex, candidate);
+            }
+        }
+
+        var componentMaximumDistances = new float[componentCount];
+        for (int index = 0; index < pixelCount; index++)
+        {
+            int component = labels[index];
+            if (component < 0 || !validComponents[component])
+                continue;
+
+            componentMaximumDistances[component] = Mathf.Max(
+                componentMaximumDistances[component],
+                distances[index]);
+        }
+
+        for (int index = 0; index < pixelCount; index++)
+        {
+            int component = labels[index];
+            if (component < 0 || !validComponents[component])
+                continue;
+
+            float area = componentPixelCounts[component] * pixelArea;
+            if (area >= smallestContainingArea[index] - 0.0001f)
+                continue;
+
+            float maximumDistance =
+                componentMaximumDistances[component];
+            smallestContainingArea[index] = area;
+            distanceWithinSmallestRegion[index] = maximumDistance > 0.0001f
+                ? Mathf.Clamp01(distances[index] / maximumDistance)
+                : 0f;
+        }
+    }
+
+    private static bool IsInsideThreshold(
+        float height,
+        float threshold,
+        bool highland)
+    {
+        return highland ? height >= threshold : height <= threshold;
+    }
+
+    private readonly struct ContourDistanceNode
+    {
+        public readonly int Index;
+        public readonly float Distance;
+
+        public ContourDistanceNode(int index, float distance)
+        {
+            Index = index;
+            Distance = distance;
+        }
+    }
+
+    private sealed class ContourDistanceHeap
+    {
+        private ContourDistanceNode[] nodes;
+
+        public ContourDistanceHeap(int initialCapacity)
+        {
+            nodes = new ContourDistanceNode[
+                Mathf.Max(4, initialCapacity)];
+        }
+
+        public int Count { get; private set; }
+
+        public void Clear()
+        {
+            Count = 0;
+        }
+
+        public void Push(int index, float distance)
+        {
+            if (Count == nodes.Length)
+                Array.Resize(ref nodes, nodes.Length * 2);
+
+            int insertionIndex = Count++;
+            var node = new ContourDistanceNode(index, distance);
+            while (insertionIndex > 0)
+            {
+                int parentIndex = (insertionIndex - 1) / 2;
+                if (!ComesBefore(node, nodes[parentIndex]))
+                    break;
+
+                nodes[insertionIndex] = nodes[parentIndex];
+                insertionIndex = parentIndex;
+            }
+
+            nodes[insertionIndex] = node;
+        }
+
+        public ContourDistanceNode Pop()
+        {
+            ContourDistanceNode result = nodes[0];
+            ContourDistanceNode tail = nodes[--Count];
+            if (Count == 0)
+                return result;
+
+            int index = 0;
+            while (true)
+            {
+                int left = index * 2 + 1;
+                if (left >= Count)
+                    break;
+
+                int right = left + 1;
+                int child = right < Count
+                            && ComesBefore(nodes[right], nodes[left])
+                    ? right
+                    : left;
+                if (!ComesBefore(nodes[child], tail))
+                    break;
+
+                nodes[index] = nodes[child];
+                index = child;
+            }
+
+            nodes[index] = tail;
+            return result;
+        }
+
+        private static bool ComesBefore(
+            ContourDistanceNode left,
+            ContourDistanceNode right)
+        {
+            if (left.Distance < right.Distance)
+                return true;
+            if (left.Distance > right.Distance)
+                return false;
+            return left.Index < right.Index;
+        }
     }
 }

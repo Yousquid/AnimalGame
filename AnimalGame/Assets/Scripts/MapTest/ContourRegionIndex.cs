@@ -29,8 +29,11 @@ namespace AnimalGame.MapTest
 
     /// <summary>
     /// Lazily flood-fills the baked contour threshold currently occupied by the
-    /// robot. Components touching a map edge are open; enclosed components are
-    /// closed-contour regions. Both hills and depressions are supported.
+    /// robot. The map's four straight sides are treated as closing boundaries,
+    /// so a contour that reaches an edge can still enclose a valid region. A
+    /// component must nevertheless touch a real contour transition; the bare
+    /// map rectangle is not treated as a contour region by itself. Both hills
+    /// and depressions are supported.
     /// </summary>
     public sealed class ContourRegionIndex
     {
@@ -199,7 +202,7 @@ namespace AnimalGame.MapTest
                     int read = 0;
                     int write = 0;
                     int count = 0;
-                    bool touchesEdge = false;
+                    bool hasContourBoundary = false;
                     labels[startIndex] = componentId;
                     floodQueue[write++] = startIndex;
 
@@ -209,18 +212,13 @@ namespace AnimalGame.MapTest
                         int currentX = index % width;
                         int currentY = index / width;
                         count++;
-                        touchesEdge |= currentX == 0
-                                       || currentY == 0
-                                       || currentX == width - 1
-                                       || currentY == height - 1;
-
                         TryEnqueue(currentX - 1, currentY);
                         TryEnqueue(currentX + 1, currentY);
                         TryEnqueue(currentX, currentY - 1);
                         TryEnqueue(currentX, currentY + 1);
                     }
 
-                    if (!touchesEdge)
+                    if (hasContourBoundary)
                         closedAreas[componentId] = count * cellArea;
 
                     void TryEnqueue(int nextX, int nextY)
@@ -228,16 +226,24 @@ namespace AnimalGame.MapTest
                         if (nextX < 0 || nextX >= width
                             || nextY < 0 || nextY >= height)
                         {
+                            // Leaving the sample grid reaches one of the four
+                            // straight map sides. It closes the region but does
+                            // not by itself prove that a contour exists.
                             return;
                         }
 
                         int nextIndex = nextY * width + nextX;
-                        if (labels[nextIndex] != 0
-                            || !BelongsToRegion(
+                        if (!BelongsToRegion(
                                 nextX,
                                 nextY,
                                 boundaryHeight,
                                 highland))
+                        {
+                            hasContourBoundary = true;
+                            return;
+                        }
+
+                        if (labels[nextIndex] != 0)
                         {
                             return;
                         }
