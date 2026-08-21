@@ -23,6 +23,8 @@ namespace AnimalGame.RobotMap
         private float followAngularVelocity;
         private float cameraDistance = 10f;
         private bool followPoseInitialized;
+        private float positionDampingOverride = -1f;
+        private float positionDampingOverrideEndTime = float.PositiveInfinity;
 
         public void FollowBalanceTarget(RobotBalanceController balanceController)
         {
@@ -31,6 +33,30 @@ namespace AnimalGame.RobotMap
                 ? balanceTargetSource.CameraFollowTarget
                 : null;
             followPoseInitialized = false;
+        }
+
+        public void FollowTarget(Transform followTarget, float damping)
+        {
+            balanceTargetSource = null;
+            Target = followTarget;
+            positionDampingOverride = Mathf.Max(0f, damping);
+            positionDampingOverrideEndTime = float.PositiveInfinity;
+        }
+
+        public void FollowBalanceTargetSmooth(
+            RobotBalanceController balanceController,
+            float damping,
+            float dampingDuration)
+        {
+            balanceTargetSource = balanceController;
+            Target = balanceTargetSource != null
+                ? balanceTargetSource.CameraFollowTarget
+                : null;
+            positionDampingOverride = Mathf.Max(0f, damping);
+            positionDampingOverrideEndTime = Time.unscaledTime
+                                              + Mathf.Max(
+                                                  0.05f,
+                                                  dampingDuration);
         }
 
         private void ResolveBalanceTarget()
@@ -67,11 +93,20 @@ namespace AnimalGame.RobotMap
             if (!followPoseInitialized)
                 SnapToTarget();
 
+            if (Time.unscaledTime >= positionDampingOverrideEndTime)
+            {
+                positionDampingOverride = -1f;
+                positionDampingOverrideEndTime = float.PositiveInfinity;
+            }
+
+            float activePositionDamping = positionDampingOverride >= 0f
+                ? positionDampingOverride
+                : positionDamping;
             followPoint = Vector3.SmoothDamp(
                 followPoint,
                 Target.position,
                 ref followVelocity,
-                Mathf.Max(0.0001f, positionDamping));
+                Mathf.Max(0.0001f, activePositionDamping));
 
             if (followTargetRotation)
             {

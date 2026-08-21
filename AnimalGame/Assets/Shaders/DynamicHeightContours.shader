@@ -7,6 +7,7 @@ Shader "AnimalGame/Dynamic Height Contours"
         _SurfaceTex ("Editor-Baked Terrain Surface", 2D) = "black" {}
         _SurfaceEnabled ("Surface Enabled", Float) = 0
         _SurfaceRevealEnabled ("Surface UI Reveal Enabled", Float) = 0
+        _SurfaceRevealCenterPixels ("Surface UI Centre", Vector) = (0, 0, 0, 0)
         _SurfaceRevealRadiusPixels ("Surface UI Radius", Float) = 430
         _SurfaceRevealEdgePixels ("Surface UI Edge", Float) = 4
         _ContourColor ("Contour Color", Color) = (1, 1, 1, 1)
@@ -66,6 +67,7 @@ Shader "AnimalGame/Dynamic Height Contours"
             sampler2D _SurfaceTex;
             float _SurfaceEnabled;
             float _SurfaceRevealEnabled;
+            float4 _SurfaceRevealCenterPixels;
             float _SurfaceRevealRadiusPixels;
             float _SurfaceRevealEdgePixels;
             fixed4 _ContourColor;
@@ -109,7 +111,7 @@ Shader "AnimalGame/Dynamic Height Contours"
                         float2 pixelPosition = screenUv * _ScreenParams.xy;
                         float distanceFromUiCentre = distance(
                             pixelPosition,
-                            _ScreenParams.xy * 0.5);
+                            _SurfaceRevealCenterPixels.xy);
                         float revealRadius = max(1.0, _SurfaceRevealRadiusPixels);
                         float revealEdge = min(
                             max(0.0, _SurfaceRevealEdgePixels),

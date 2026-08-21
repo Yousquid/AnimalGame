@@ -67,6 +67,10 @@ namespace AnimalGame.MapTest
                 robotObject.GetComponent<RobotBalanceController>();
             if (balance == null)
                 balance = robotObject.AddComponent<RobotBalanceController>();
+            PhotoModeController photoMode =
+                robotObject.GetComponent<PhotoModeController>();
+            if (photoMode == null)
+                photoMode = robotObject.AddComponent<PhotoModeController>();
             RobotTumbleController tumble =
                 robotObject.GetComponent<RobotTumbleController>();
             if (tumble == null)
@@ -93,10 +97,13 @@ namespace AnimalGame.MapTest
                 scanOverlayObject.GetComponent<TraversalScanOverlayUI>();
             ScanChargeUI scanChargeUi =
                 mainUiObject.GetComponentInChildren<ScanChargeUI>(true);
+            PhotoModeUI photoModeUi =
+                mainUiObject.GetComponent<PhotoModeUI>();
 
             if (map == null || robot == null || camera == null || cameraFollow == null
                 || traversalEvaluator == null || traversalOverlay == null
                 || scanOverlay == null || scanChargeUi == null
+                || photoMode == null || photoModeUi == null
                 || !map.HasGeneratedMap)
             {
                 Debug.LogError(
@@ -116,6 +123,9 @@ namespace AnimalGame.MapTest
             tumble.Initialize(traversalEvaluator);
             heightMotion.Initialize(map);
             cameraShake.Initialize(robot, balance, heightMotion);
+            photoMode.InitializeCamera(cameraFollow, cameraShake);
+            scanChargeUi.SetPhotoModeController(photoMode);
+            photoModeUi.Initialize(photoMode, camera);
             RobotTumbleUiRotation uiRotation =
                 mainUiObject.GetComponent<RobotTumbleUiRotation>();
             if (uiRotation == null)
@@ -356,6 +366,9 @@ namespace AnimalGame.MapTest
         private readonly Dictionary<Canvas, RectTransform> canvasPivots = new();
         private RobotTumbleController tumble;
         private Camera mapCamera;
+        private Canvas mainUiCanvas;
+        private Vector2 mainUiInitialPivotPosition;
+        private bool mainUiInitialPositionCaptured;
         private float currentRotationDegrees;
         private float nextCanvasRefreshTime;
         private int screenQuarterTurnSign = 1;
@@ -365,6 +378,7 @@ namespace AnimalGame.MapTest
         {
             tumble = tumbleController;
             mapCamera = camera;
+            mainUiCanvas = GetComponent<Canvas>();
             RefreshCanvasRoots();
         }
 
@@ -462,6 +476,13 @@ namespace AnimalGame.MapTest
                     canvasPivots[canvas] = pivot;
                 }
 
+                if (canvas == mainUiCanvas
+                    && !mainUiInitialPositionCaptured)
+                {
+                    mainUiInitialPivotPosition = pivot.anchoredPosition;
+                    mainUiInitialPositionCaptured = true;
+                }
+
                 MoveDirectCanvasChildrenUnderPivot(canvas, pivot);
             }
         }
@@ -519,6 +540,14 @@ namespace AnimalGame.MapTest
                     0f,
                     0f,
                     currentRotationDegrees);
+                if (canvasPivot.Key == mainUiCanvas
+                    && mainUiInitialPositionCaptured)
+                {
+                    // Only MainUI is position-locked. Player/world canvases keep
+                    // their own positioning rules and are never forced to zero.
+                    canvasPivot.Value.anchoredPosition =
+                        mainUiInitialPivotPosition;
+                }
             }
 
             foreach (Canvas missingCanvas in missingCanvases)
@@ -530,7 +559,15 @@ namespace AnimalGame.MapTest
             foreach (KeyValuePair<Canvas, RectTransform> canvasPivot in canvasPivots)
             {
                 if (canvasPivot.Value != null)
+                {
                     canvasPivot.Value.localRotation = Quaternion.identity;
+                    if (canvasPivot.Key == mainUiCanvas
+                        && mainUiInitialPositionCaptured)
+                    {
+                        canvasPivot.Value.anchoredPosition =
+                            mainUiInitialPivotPosition;
+                    }
+                }
             }
 
             currentRotationDegrees = 0f;

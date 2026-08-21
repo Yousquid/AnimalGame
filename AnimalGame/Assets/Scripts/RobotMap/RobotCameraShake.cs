@@ -371,6 +371,10 @@ namespace AnimalGame.RobotMap
         private float scanChargePositionAmplitude;
         private float scanChargeRotationAmplitude;
         private float scanChargeFrequency = 1f;
+        private float photoModeRevealShakeStrength;
+        private float photoModeRevealPositionAmplitude;
+        private float photoModeRevealRotationAmplitude;
+        private float photoModeRevealFrequency = 1f;
         private Vector2 springPosition;
         private Vector2 springPositionVelocity;
         private float springRotation;
@@ -438,6 +442,22 @@ namespace AnimalGame.RobotMap
                 0f,
                 rotationAmplitudeDegrees);
             scanChargeFrequency = Mathf.Max(0.1f, frequency);
+        }
+
+        public void SetPhotoModeRevealShake(
+            float strength,
+            float positionAmplitude,
+            float rotationAmplitudeDegrees,
+            float frequency)
+        {
+            photoModeRevealShakeStrength = Mathf.Clamp01(strength);
+            photoModeRevealPositionAmplitude = Mathf.Max(
+                0f,
+                positionAmplitude);
+            photoModeRevealRotationAmplitude = Mathf.Max(
+                0f,
+                rotationAmplitudeDegrees);
+            photoModeRevealFrequency = Mathf.Max(0.1f, frequency);
         }
 
         public void Initialize(
@@ -1101,23 +1121,45 @@ namespace AnimalGame.RobotMap
 
         private void AddScanChargeVibration()
         {
-            if (scanChargeShakeStrength <= 0f)
+            if (scanChargeShakeStrength > 0f)
+            {
+                float time = Time.time * scanChargeFrequency;
+                float noiseX = SignedPerlin(noiseSeedX + 173.4f, time);
+                float noiseY = SignedPerlin(
+                    noiseSeedY + 291.7f,
+                    time * 0.87f);
+                float noiseRotation = SignedPerlin(
+                    noiseSeedRotation + 419.2f,
+                    time * 0.71f);
+                continuousPosition += new Vector2(noiseX, noiseY)
+                                      * scanChargePositionAmplitude
+                                      * scanChargeShakeStrength;
+                continuousRotation += noiseRotation
+                                      * scanChargeRotationAmplitude
+                                      * scanChargeShakeStrength;
+            }
+
+            if (photoModeRevealShakeStrength <= 0f)
                 return;
 
-            float time = Time.time * scanChargeFrequency;
-            float noiseX = SignedPerlin(noiseSeedX + 173.4f, time);
-            float noiseY = SignedPerlin(
-                noiseSeedY + 291.7f,
-                time * 0.87f);
-            float noiseRotation = SignedPerlin(
-                noiseSeedRotation + 419.2f,
-                time * 0.71f);
-            continuousPosition += new Vector2(noiseX, noiseY)
-                                  * scanChargePositionAmplitude
-                                  * scanChargeShakeStrength;
-            continuousRotation += noiseRotation
-                                  * scanChargeRotationAmplitude
-                                  * scanChargeShakeStrength;
+            float revealTime = Time.unscaledTime * photoModeRevealFrequency;
+            float revealNoiseX = SignedPerlin(
+                noiseSeedX + 547.6f,
+                revealTime);
+            float revealNoiseY = SignedPerlin(
+                noiseSeedY + 683.2f,
+                revealTime * 0.89f);
+            float revealNoiseRotation = SignedPerlin(
+                noiseSeedRotation + 761.9f,
+                revealTime * 0.73f);
+            continuousPosition += new Vector2(
+                                      revealNoiseX,
+                                      revealNoiseY)
+                                  * photoModeRevealPositionAmplitude
+                                  * photoModeRevealShakeStrength;
+            continuousRotation += revealNoiseRotation
+                                  * photoModeRevealRotationAmplitude
+                                  * photoModeRevealShakeStrength;
         }
 
         private void AddDirectionalImpact(
@@ -1676,6 +1718,7 @@ namespace AnimalGame.RobotMap
             StopGamepadRumble();
             scanZoomMultiplier = 1f;
             SetScanChargeShake(0f, 0f, 0f, 1f);
+            SetPhotoModeRevealShake(0f, 0f, 0f, 1f);
             if (attachedCamera != null)
                 attachedCamera.orthographicSize = baseOrthographicSize;
         }

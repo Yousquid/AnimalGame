@@ -244,6 +244,7 @@ namespace AnimalGame.Editor
             var robot = new GameObject("Robot Marker");
             robot.AddComponent<RobotMover>();
             robot.AddComponent<RobotBalanceController>();
+            robot.AddComponent<PhotoModeController>();
             robot.AddComponent<RobotHeightMotionDetector>();
             robot.AddComponent<RobotBalanceView>();
             robot.AddComponent<RobotMarkerView>();

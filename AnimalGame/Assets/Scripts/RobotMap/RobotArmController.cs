@@ -120,6 +120,7 @@ namespace AnimalGame.RobotMap
         private RobotMarkerView markerView;
         private RobotBalanceView balanceView;
         private RobotTumbleController tumble;
+        private PhotoModeController photoMode;
         private ArmVisual leftArm;
         private ArmVisual rightArm;
         private float modeElapsed;
@@ -163,6 +164,7 @@ namespace AnimalGame.RobotMap
             markerView = GetComponent<RobotMarkerView>();
             balanceView = GetComponent<RobotBalanceView>();
             tumble = GetComponent<RobotTumbleController>();
+            photoMode = GetComponent<PhotoModeController>();
         }
 
         private void Start()
@@ -178,7 +180,11 @@ namespace AnimalGame.RobotMap
             bool tumbleArmControlAvailable = tumble != null
                                              && tumble.State
                                              != RobotTumbleState.Upright;
+            if (photoMode == null)
+                photoMode = GetComponent<PhotoModeController>();
+            bool photoModeActive = photoMode != null && photoMode.IsActive;
             bool canOperate = mover != null
+                              && !photoModeActive
                               && (mover.MovementMode
                                   == RobotMovementMode.Driven
                                   || tumbleArmControlAvailable);

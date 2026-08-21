@@ -12,6 +12,7 @@ GameObject:
   - component: {fileID: 223000000}
   - component: {fileID: 114000001}
   - component: {fileID: 114000002}
+  - component: {fileID: 114000006}
   m_Layer: 5
   m_Name: MainUI
   m_TagString: Untagged
@@ -103,6 +104,34 @@ MonoBehaviour:
   m_BlockingMask:
     serializedVersion: 2
     m_Bits: 4294967295
+--- !u!114 &114000006
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 100000000}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7d7bc29c01764233bf7bfc2eafeb1840, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  cameraFrameSprite: {fileID: 21300000, guid: 0cf7acded41b51b45aaee72ce2e027d4, type: 3}
+  cameraAimSmallSprite: {fileID: 21300000, guid: f779f896118866e4f8f89e1b9d796c23, type: 3}
+  cameraAimBigSprite: {fileID: 21300000, guid: 12de25bd6e1efca43a2e642af7109261, type: 3}
+  frameReferenceSize: {x: 1920, y: 1080}
+  cameraFrameColor: {r: 1, g: 0.82, b: 0.18, a: 1}
+  nearestFrameScale: 0.22
+  farthestFrameScale: 0.16
+  guideRevealStart: 0.2
+  guideRevealEnd: 0.78
+  frameRevealStart: 0.34
+  frameRevealEnd: 0.82
+  entryFrameScale: 0.75
+  rangeGuideColor: {r: 0.92, g: 0.98, b: 1, a: 0.92}
+  dashLength: 18
+  dashGap: 11
+  dashWidth: 3
 --- !u!1 &100000001
 GameObject:
   m_ObjectHideFlags: 0

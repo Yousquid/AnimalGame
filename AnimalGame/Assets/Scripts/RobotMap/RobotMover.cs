@@ -188,6 +188,7 @@ namespace AnimalGame.RobotMap
             MovementMode == RobotMovementMode.ExternalTumble;
         public bool IsPermanentlyFallen => MovementMode == RobotMovementMode.Fallen;
         public bool IsArmInputCaptured { get; private set; }
+        public bool IsPhotoModeInputLocked { get; private set; }
         public LevelThreeClimbFailurePhase CurrentLevelThreeClimbPhase
         {
             get;
@@ -279,10 +280,15 @@ namespace AnimalGame.RobotMap
 
             float throttle = SelectStrongerInput(keyboardThrottle, gamepadThrottle);
             float steering = SelectStrongerInput(keyboardSteering, gamepadSteering);
-            if (IsArmInputCaptured)
+            if (IsArmInputCaptured || IsPhotoModeInputLocked)
             {
                 throttle = 0f;
                 steering = 0f;
+            }
+            if (IsPhotoModeInputLocked)
+            {
+                CurrentSpeed = 0f;
+                CurrentTurnSpeed = 0f;
             }
             if (balanceController != null)
             {
@@ -443,6 +449,18 @@ namespace AnimalGame.RobotMap
                                  && MovementMode == RobotMovementMode.Driven;
         }
 
+        public void SetPhotoModeInputLocked(bool locked)
+        {
+            IsPhotoModeInputLocked = locked
+                                     && MovementMode
+                                     == RobotMovementMode.Driven;
+            if (!IsPhotoModeInputLocked)
+                return;
+
+            CurrentSpeed = 0f;
+            CurrentTurnSpeed = 0f;
+        }
+
         internal void MarkFallenPermanently()
         {
             MovementMode = RobotMovementMode.Fallen;
@@ -453,6 +471,7 @@ namespace AnimalGame.RobotMap
         {
             ClearMotionForExternalControl();
             IsArmInputCaptured = false;
+            IsPhotoModeInputLocked = false;
             MovementMode = RobotMovementMode.Driven;
         }
 

@@ -11,6 +11,7 @@ GameObject:
   - component: {fileID: 1075418996823516578}
   - component: {fileID: 5167503192331160194}
   - component: {fileID: 6754498989903123456}
+  - component: {fileID: 6754498989903123999}
   - component: {fileID: 7410917293342164201}
   - component: {fileID: 9016834624170285310}
   - component: {fileID: 8127351094236507811}
@@ -132,6 +133,37 @@ MonoBehaviour:
   minimumDriveAuthority: 0.68
   minimumSteeringAuthority: 0.45
   cameraFollowOffsetAtRing: 1.25
+--- !u!114 &6754498989903123999
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4839072109466370475}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d30202cbe3874c039669cdcbf63acf51, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  keyboardToggleKey: 112
+  rightStickDeadZone: 0.2
+  rightStickExponent: 1.35
+  guideOriginSideOffset: 0.8
+  guideOriginForwardDistance: 0.6
+  guideHalfAngleDegrees: 25
+  minimumAimDistance: 2
+  maximumAimDistance: 7
+  lateralFramePadding: 1
+  lateralAimSpeed: 5
+  depthAimSpeed: 4
+  entryDuration: 0.7
+  exitDuration: 0.6
+  photoCameraPositionDamping: 0.15
+  returnCameraPositionDamping: 0.15
+  returnCameraBlendDuration: 0.45
+  entryShakePositionAmplitude: 0.02
+  entryShakeRotationAmplitude: 0.15
+  entryShakeFrequency: 5
 --- !u!114 &7410917293342164201
 MonoBehaviour:
   m_ObjectHideFlags: 0

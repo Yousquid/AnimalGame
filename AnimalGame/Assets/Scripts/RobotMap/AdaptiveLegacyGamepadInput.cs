@@ -100,6 +100,38 @@ namespace AnimalGame.RobotMap
                     ReadAxisSafely(XboxBalanceVerticalAxis));
         }
 
+        public static Vector2 ReadRightStick()
+        {
+            return ReadBalance();
+        }
+
+        public static bool WasWestFaceButtonPressedThisFrame()
+        {
+#if ENABLE_INPUT_SYSTEM
+            bool hasInputSystemGamepad = false;
+            foreach (Gamepad gamepad in Gamepad.all)
+            {
+                if (gamepad == null || !gamepad.added)
+                    continue;
+
+                hasInputSystemGamepad = true;
+                if (gamepad.buttonWest.wasPressedThisFrame)
+                    return true;
+            }
+
+            // Do not also read the legacy button when the Input System owns a
+            // connected device. Reading both paths can turn one physical press
+            // into two mode changes on some Windows controller drivers.
+            if (hasInputSystemGamepad)
+                return false;
+#endif
+
+            RefreshDeviceIfNeeded();
+            return ActiveFamily == LegacyGamepadFamily.Sony
+                ? Input.GetKeyDown(KeyCode.JoystickButton0)
+                : Input.GetKeyDown(KeyCode.JoystickButton2);
+        }
+
         public static float ReadTriggerThrottle()
         {
             RefreshDeviceIfNeeded();

@@ -163,7 +163,8 @@ namespace AnimalGame.RobotMap
                 return;
             }
 
-            Vector3 originScreen = mapCamera.WorldToScreenPoint(transform.position);
+            Vector3 originScreen = mapCamera.WorldToScreenPoint(
+                transform.position);
             if (originScreen.z <= 0f)
             {
                 graphic.enabled = false;

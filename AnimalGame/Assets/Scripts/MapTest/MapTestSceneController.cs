@@ -104,6 +104,9 @@ namespace AnimalGame.MapTest
         private Canvas surfaceRevealCanvas;
         private Material surfaceSettingsMaterial;
         private Texture2D appliedSurfaceVisual;
+        private Vector2 appliedSurfaceCenterPixels = new Vector2(
+            float.NaN,
+            float.NaN);
         private float appliedSurfaceRadiusPixels = float.NaN;
         private float appliedSurfaceEdgePixels = float.NaN;
         private bool appliedSurfaceEnabled;
@@ -771,6 +774,11 @@ namespace AnimalGame.MapTest
             // painter can author the fixed map. The player build applies the one
             // inexpensive screen-space cutoff to the otherwise static texture.
             bool revealEnabled = Application.isPlaying && hasSurface;
+            Vector2 centerPixels = surfaceRevealUi != null
+                ? surfaceRevealUi.GetUiCenterScreenPoint()
+                : new Vector2(
+                    Screen.width * 0.5f,
+                    Screen.height * 0.5f);
             float radiusPixels = surfaceRevealUi != null
                 ? surfaceRevealUi.UiRingRadiusPixels
                   * (surfaceRevealCanvas != null
@@ -783,6 +791,8 @@ namespace AnimalGame.MapTest
                 && appliedSurfaceVisual == bakedSurfaceVisual
                 && appliedSurfaceEnabled == hasSurface
                 && appliedSurfaceRevealEnabled == revealEnabled
+                && (appliedSurfaceCenterPixels - centerPixels).sqrMagnitude
+                <= 0.0001f
                 && Mathf.Approximately(appliedSurfaceRadiusPixels, radiusPixels)
                 && Mathf.Approximately(appliedSurfaceEdgePixels, edgePixels))
             {
@@ -796,12 +806,16 @@ namespace AnimalGame.MapTest
             contourMaterial.SetFloat(
                 "_SurfaceRevealEnabled",
                 revealEnabled ? 1f : 0f);
+            contourMaterial.SetVector(
+                "_SurfaceRevealCenterPixels",
+                new Vector4(centerPixels.x, centerPixels.y, 0f, 0f));
             contourMaterial.SetFloat("_SurfaceRevealRadiusPixels", radiusPixels);
             contourMaterial.SetFloat("_SurfaceRevealEdgePixels", edgePixels);
             surfaceSettingsMaterial = contourMaterial;
             appliedSurfaceVisual = bakedSurfaceVisual;
             appliedSurfaceEnabled = hasSurface;
             appliedSurfaceRevealEnabled = revealEnabled;
+            appliedSurfaceCenterPixels = centerPixels;
             appliedSurfaceRadiusPixels = radiusPixels;
             appliedSurfaceEdgePixels = edgePixels;
         }

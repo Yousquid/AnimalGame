@@ -147,6 +147,7 @@ namespace AnimalGame.RobotMap
         private float fullyChargedShakeElapsed;
 
         private Camera mapCamera;
+        private PhotoModeController photoMode;
         private RectTransform ringCoordinateSpace;
         private ScanPulseRingGraphic ringGraphic;
 
@@ -168,6 +169,33 @@ namespace AnimalGame.RobotMap
         {
             Canvas canvas = GetComponentInParent<Canvas>();
             return uiRingRadiusPixels * (canvas != null ? canvas.scaleFactor : 1f);
+        }
+
+        public Vector2 GetUiCenterScreenPoint()
+        {
+            Canvas canvas = GetComponentInParent<Canvas>();
+            RectTransform rect = transform as RectTransform;
+            if (rect == null)
+            {
+                return new Vector2(
+                    Screen.width * 0.5f,
+                    Screen.height * 0.5f);
+            }
+
+            Camera eventCamera = canvas != null
+                                 && canvas.renderMode
+                                 != RenderMode.ScreenSpaceOverlay
+                ? canvas.worldCamera
+                : null;
+            Vector3 worldCenter = rect.TransformPoint(rect.rect.center);
+            return RectTransformUtility.WorldToScreenPoint(
+                eventCamera,
+                worldCenter);
+        }
+
+        public void SetPhotoModeController(PhotoModeController controller)
+        {
+            photoMode = controller;
         }
 
         private void Awake()
@@ -196,7 +224,8 @@ namespace AnimalGame.RobotMap
 
             UpdateReleaseRing(deltaTime);
 
-            bool scanHeld = IsScanInputHeld();
+            bool scanHeld = (photoMode == null || !photoMode.IsInputLocked)
+                            && IsScanInputHeld();
             switch (state)
             {
                 case ScanVisualState.Idle:

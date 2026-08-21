@@ -166,6 +166,7 @@ namespace AnimalGame.RobotMap
                 : 1f;
 
         private RobotMover mover;
+        private PhotoModeController photoMode;
         private HeightMapTraversalEvaluator traversalEvaluator;
         private Transform cameraFollowTarget;
         private Vector2 currentBalanceLocal;
@@ -180,9 +181,11 @@ namespace AnimalGame.RobotMap
         private float selfRightingInertiaInitialMagnitude;
         private float selfRightingInertiaElapsed;
         private float selfRightingInertiaDuration;
+        private bool balanceGamepadInputArmed = true;
         private void Awake()
         {
             mover = GetComponent<RobotMover>();
+            photoMode = GetComponent<PhotoModeController>();
             EnsureCameraFollowTarget();
             PublishState();
         }
@@ -441,20 +444,48 @@ namespace AnimalGame.RobotMap
 
         private void UpdatePlayerCounterbalance(float deltaTime)
         {
-            Vector2 keyboard = new Vector2(
-                (Input.GetKey(KeyCode.RightArrow) ? 1f : 0f)
-                - (Input.GetKey(KeyCode.LeftArrow) ? 1f : 0f),
-                (Input.GetKey(KeyCode.UpArrow) ? 1f : 0f)
-                - (Input.GetKey(KeyCode.DownArrow) ? 1f : 0f));
-            Vector2 gamepad = ReadRightStickSafely();
-            gamepad = ApplyRadialDeadZone(gamepad, rightStickDeadZone);
-            if (gamepad.sqrMagnitude > 0.0001f)
+            if (photoMode == null)
+                photoMode = GetComponent<PhotoModeController>();
+
+            bool photoModeActive = photoMode != null && photoMode.IsActive;
+            Vector2 rawGamepad = ReadRightStickSafely();
+            Vector2 keyboard = Vector2.zero;
+            Vector2 gamepad = Vector2.zero;
+            if (photoModeActive)
             {
-                gamepad = gamepad.normalized
-                          * Mathf.Pow(
-                              Mathf.Clamp01(gamepad.magnitude),
-                              counterbalanceInputExponent);
+                // Photo mode owns the right stick. Keep all manual balance
+                // input neutral while slope and inertia forces continue to run.
+                balanceGamepadInputArmed = false;
             }
+            else
+            {
+                keyboard = new Vector2(
+                    (Input.GetKey(KeyCode.RightArrow) ? 1f : 0f)
+                    - (Input.GetKey(KeyCode.LeftArrow) ? 1f : 0f),
+                    (Input.GetKey(KeyCode.UpArrow) ? 1f : 0f)
+                    - (Input.GetKey(KeyCode.DownArrow) ? 1f : 0f));
+
+                if (!balanceGamepadInputArmed
+                    && rawGamepad.magnitude <= rightStickDeadZone)
+                {
+                    balanceGamepadInputArmed = true;
+                }
+
+                if (balanceGamepadInputArmed)
+                {
+                    gamepad = ApplyRadialDeadZone(
+                        rawGamepad,
+                        rightStickDeadZone);
+                    if (gamepad.sqrMagnitude > 0.0001f)
+                    {
+                        gamepad = gamepad.normalized
+                                  * Mathf.Pow(
+                                      Mathf.Clamp01(gamepad.magnitude),
+                                      counterbalanceInputExponent);
+                    }
+                }
+            }
+
             Vector2 input = keyboard.sqrMagnitude >= gamepad.sqrMagnitude
                 ? Vector2.ClampMagnitude(keyboard, 1f)
                 : gamepad;
@@ -573,7 +604,7 @@ namespace AnimalGame.RobotMap
 
         private static Vector2 ReadRightStickSafely()
         {
-            return AdaptiveLegacyGamepadInput.ReadBalance();
+            return AdaptiveLegacyGamepadInput.ReadRightStick();
         }
 
         private static Vector2 ApplyRadialDeadZone(Vector2 value, float deadZone)
