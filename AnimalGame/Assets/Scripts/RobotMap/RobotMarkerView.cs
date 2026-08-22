@@ -62,6 +62,27 @@ namespace AnimalGame.RobotMap
         [Tooltip("Shapes how quickly the top-surface arrow fades as it turns edge-on. Values below one retain readability longer.")]
         [SerializeField, Range(0.25f, 3f)] private float indicatorTumbleFadeExponent = 0.72f;
 
+        [Header("Photo Camera Form")]
+        [Tooltip("Arts/Player_Camera/Camera_first_part, used as the extending camera stem.")]
+        [SerializeField] private Sprite cameraFirstPartSprite;
+
+        [Tooltip("Arts/Player_Camera/camera_second_part, used as the deploying camera head.")]
+        [SerializeField] private Sprite cameraSecondPartSprite;
+
+        [Tooltip("Scale shared by the two camera sprites. Both assets use the same 128 px canvas and pivot.")]
+        [SerializeField, Min(0.1f)] private float photoCameraArtworkScale = 0.7f;
+
+        [Tooltip("How far the camera stem overlaps the top of the body, relative to the visible body diameter.")]
+        [SerializeField, Range(0f, 0.25f)]
+        private float photoCameraBodyOverlapRatio = 0.035f;
+
+        [Tooltip("Reveal progress at which the upper camera head starts deploying after the stem.")]
+        [SerializeField, Range(0f, 0.9f)]
+        private float photoCameraHeadRevealStart = 0.3f;
+
+        [SerializeField] private Color photoCameraColor =
+            new Color(0.92f, 0.98f, 1f, 1f);
+
         [Header("Fallen Rollover Sign")]
         [Tooltip("Arts/rollover_sign displayed over the robot only after tumbling has completely settled.")]
         [SerializeField] private Sprite rolloverSignSprite;
@@ -126,6 +147,9 @@ namespace AnimalGame.RobotMap
         private SpriteRenderer bodyFill;
         private SpriteRenderer bodyArtwork;
         private SpriteRenderer directionIndicator;
+        private Transform photoCameraRoot;
+        private SpriteRenderer cameraFirstPart;
+        private SpriteRenderer cameraSecondPart;
         private SpriteRenderer rolloverSign;
         private LineRenderer tail;
         private Sprite generatedBodySprite;
@@ -136,7 +160,9 @@ namespace AnimalGame.RobotMap
         private RobotMover mover;
         private RobotTumbleController tumble;
         private RobotArmController armController;
+        private PhotoModeController photoMode;
         private float indicatorArmModeVisibility = 1f;
+        private float photoCameraFormVisibility;
         private float driveBobPhase;
         private float driveBobBlend;
         private float driveBobBlendVelocity;
@@ -152,6 +178,7 @@ namespace AnimalGame.RobotMap
             mover = GetComponent<RobotMover>();
             tumble = GetComponent<RobotTumbleController>();
             armController = GetComponent<RobotArmController>();
+            photoMode = GetComponent<PhotoModeController>();
             driveBobRandom = new System.Random(
                 unchecked(GetInstanceID() * 397 ^ System.Environment.TickCount));
             driveBobNoiseSeed = NextDriveBobRandom(0f, 1000f);
@@ -160,6 +187,7 @@ namespace AnimalGame.RobotMap
             CreateForegroundSpriteMaterial();
             CreateBodySpriteRenderer();
             CreateDirectionIndicatorRenderer();
+            CreatePhotoCameraRenderers();
             CreateRolloverSignRenderer();
 
             tail = RobotMapDemo.CreateLine(transform, "Motion Tail", new[]
@@ -225,6 +253,7 @@ namespace AnimalGame.RobotMap
         {
             SynchronizeMarkerScreenSize();
             SynchronizeBodyFillColor();
+            UpdatePhotoCameraForm();
             UpdateDirectionIndicatorSurfaceProjection();
             SynchronizeRolloverSignVisibility();
 
@@ -582,6 +611,165 @@ namespace AnimalGame.RobotMap
             }
         }
 
+        private void CreatePhotoCameraRenderers()
+        {
+            var cameraRootObject = new GameObject("Photo Camera Form");
+            cameraRootObject.transform.SetParent(bodyVisualRoot, false);
+            photoCameraRoot = cameraRootObject.transform;
+
+            cameraFirstPart = CreatePhotoCameraPart(
+                "Camera First Part",
+                cameraFirstPartSprite,
+                1003);
+            cameraSecondPart = CreatePhotoCameraPart(
+                "Camera Second Part",
+                cameraSecondPartSprite,
+                1004);
+
+            if (cameraFirstPartSprite == null
+                || cameraSecondPartSprite == null)
+            {
+                Debug.LogWarning(
+                    "RobotMarkerView is missing one or both "
+                    + "Arts/Player_Camera camera sprites.",
+                    this);
+            }
+
+            UpdatePhotoCameraForm();
+        }
+
+        private SpriteRenderer CreatePhotoCameraPart(
+            string objectName,
+            Sprite sprite,
+            int sortingOrder)
+        {
+            var partObject = new GameObject(objectName);
+            partObject.transform.SetParent(photoCameraRoot, false);
+
+            SpriteRenderer renderer = partObject.AddComponent<SpriteRenderer>();
+            renderer.sprite = sprite;
+            renderer.color = WithAlpha(photoCameraColor, 0f);
+            renderer.sortingOrder = sortingOrder;
+            renderer.enabled = false;
+            if (foregroundSpriteMaterial != null)
+                renderer.sharedMaterial = foregroundSpriteMaterial;
+            return renderer;
+        }
+
+        private void UpdatePhotoCameraForm()
+        {
+            bool hasCameraArtwork = cameraFirstPart != null
+                                    && cameraFirstPart.sprite != null
+                                    && cameraSecondPart != null
+                                    && cameraSecondPart.sprite != null;
+            if (!hasCameraArtwork || photoCameraRoot == null)
+            {
+                photoCameraFormVisibility = 0f;
+                SetPhotoCameraPartVisible(cameraFirstPart, 0f);
+                SetPhotoCameraPartVisible(cameraSecondPart, 0f);
+                return;
+            }
+
+            if (photoMode == null)
+                photoMode = GetComponent<PhotoModeController>();
+
+            float reveal = photoMode != null
+                ? Mathf.Clamp01(photoMode.Reveal01)
+                : 0f;
+            photoCameraFormVisibility = Mathf.SmoothStep(0f, 1f, reveal);
+
+            const float FirstPartVisibleLowerExtentPixels = 24f;
+            float firstPartLowerExtent = FirstPartVisibleLowerExtentPixels
+                                         / Mathf.Max(
+                                             1f,
+                                             cameraFirstPart.sprite.pixelsPerUnit)
+                                         * photoCameraArtworkScale;
+            float cameraRootHeight = VisualBodyDiameter * 0.5f
+                                     - VisualBodyDiameter
+                                     * photoCameraBodyOverlapRatio
+                                     + firstPartLowerExtent;
+            photoCameraRoot.localPosition = new Vector3(
+                0f,
+                cameraRootHeight,
+                0f);
+            photoCameraRoot.localRotation = Quaternion.identity;
+
+            float stemProgress = Mathf.SmoothStep(
+                0f,
+                1f,
+                Mathf.InverseLerp(0f, 0.72f, reveal));
+            Transform stemTransform = cameraFirstPart.transform;
+            stemTransform.localPosition = new Vector3(
+                0f,
+                Mathf.Lerp(
+                    -VisualBodyDiameter * 0.09f,
+                    0f,
+                    stemProgress),
+                0f);
+            stemTransform.localRotation = Quaternion.Euler(
+                0f,
+                0f,
+                Mathf.Lerp(4f, 0f, stemProgress));
+            stemTransform.localScale = new Vector3(
+                photoCameraArtworkScale
+                * Mathf.Lerp(0.86f, 1f, stemProgress),
+                photoCameraArtworkScale
+                * Mathf.Lerp(0.08f, 1f, stemProgress),
+                1f);
+            SetPhotoCameraPartVisible(cameraFirstPart, stemProgress);
+
+            float headProgress = Mathf.SmoothStep(
+                0f,
+                1f,
+                Mathf.InverseLerp(
+                    photoCameraHeadRevealStart,
+                    1f,
+                    reveal));
+            float headPopScale = 1f
+                                 + Mathf.Sin(headProgress * Mathf.PI)
+                                 * 0.1f;
+            Transform headTransform = cameraSecondPart.transform;
+            headTransform.localPosition = new Vector3(
+                0f,
+                Mathf.Lerp(
+                    -VisualBodyDiameter * 0.13f,
+                    0f,
+                    headProgress),
+                0f);
+            headTransform.localRotation = Quaternion.Euler(
+                0f,
+                0f,
+                Mathf.Lerp(-9f, 0f, headProgress));
+            headTransform.localScale = Vector3.one
+                                       * photoCameraArtworkScale
+                                       * Mathf.Lerp(
+                                           0.55f,
+                                           1f,
+                                           headProgress)
+                                       * headPopScale;
+            SetPhotoCameraPartVisible(cameraSecondPart, headProgress);
+        }
+
+        private void SetPhotoCameraPartVisible(
+            SpriteRenderer renderer,
+            float visibility)
+        {
+            if (renderer == null)
+                return;
+
+            float alpha = Mathf.Clamp01(visibility);
+            renderer.color = WithAlpha(
+                photoCameraColor,
+                photoCameraColor.a * alpha);
+            renderer.enabled = renderer.sprite != null && alpha > 0.001f;
+        }
+
+        private static Color WithAlpha(Color color, float alpha)
+        {
+            color.a = Mathf.Clamp01(alpha);
+            return color;
+        }
+
         private static Sprite CreateCircularFillSprite(out Texture2D texture)
         {
             const int Resolution = 128;
@@ -793,11 +981,28 @@ namespace AnimalGame.RobotMap
                 (Vector3)(bodyInset + tumbleEdgeOffset);
             Color projectedColor = indicatorColor;
             float combinedVisibility = safeVisibility
-                                       * indicatorArmModeVisibility;
+                                       * indicatorArmModeVisibility
+                                       * GetPhotoModeIndicatorVisibility();
             projectedColor.a *= combinedVisibility;
             directionIndicator.color = projectedColor;
             directionIndicator.enabled = directionIndicator.sprite != null
                                          && combinedVisibility > 0.001f;
+        }
+
+        private float GetPhotoModeIndicatorVisibility()
+        {
+            if (photoMode == null)
+                photoMode = GetComponent<PhotoModeController>();
+
+            if (photoMode == null || !photoMode.IsActive)
+                return 1f;
+
+            // Entry and active photo mode hide the direction indicator in the
+            // same frame as the mode switch. During exit it returns along with
+            // the existing reverse camera-form animation.
+            return photoMode.IsExiting
+                ? 1f - photoCameraFormVisibility
+                : 0f;
         }
 
         private void CreateRolloverSignRenderer()
@@ -897,6 +1102,17 @@ namespace AnimalGame.RobotMap
                 indicatorTumbleFadeExponent,
                 0.25f,
                 3f);
+            photoCameraArtworkScale = Mathf.Max(
+                0.1f,
+                photoCameraArtworkScale);
+            photoCameraBodyOverlapRatio = Mathf.Clamp(
+                photoCameraBodyOverlapRatio,
+                0f,
+                0.25f);
+            photoCameraHeadRevealStart = Mathf.Clamp(
+                photoCameraHeadRevealStart,
+                0f,
+                0.9f);
             rolloverSignDiameterRatio = Mathf.Max(
                 0.1f,
                 rolloverSignDiameterRatio);

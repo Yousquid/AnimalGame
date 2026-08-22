@@ -22,10 +22,14 @@ namespace AnimalGame.RobotMap
             new Color(1f, 0.82f, 0.18f, 1f);
 
         [Tooltip("Camera-frame scale at the nearest photo distance.")]
-        [SerializeField, Min(0.01f)] private float nearestFrameScale = 0.22f;
+        [SerializeField, Min(0.01f)] private float nearestFrameScale = 0.44f;
 
         [Tooltip("Camera-frame scale at the farthest photo distance.")]
-        [SerializeField, Min(0.01f)] private float farthestFrameScale = 0.16f;
+        [SerializeField, Min(0.01f)] private float farthestFrameScale = 0.32f;
+
+        [Tooltip("Maximum camera-frame width relative to the photo range's widest far edge. A uniform limiter preserves the near-large/far-small size curve.")]
+        [SerializeField, Range(0.1f, 1f)]
+        private float maximumFrameWidthOfRange = 0.72f;
 
         [Header("Entry Reveal")]
         [Tooltip("Normalized entry time at which the dashed range starts drawing outward.")]
@@ -43,6 +47,21 @@ namespace AnimalGame.RobotMap
         [SerializeField, Min(0f)] private float dashGap = 11f;
         [SerializeField, Min(0.5f)] private float dashWidth = 3f;
 
+        [Header("Photo Range Focus")]
+        [Tooltip("Shader used to darken everything outside the active photo range.")]
+        [SerializeField] private Shader rangeDimShader;
+
+        [Tooltip("Dark overlay applied outside the photo range at full reveal.")]
+        [SerializeField] private Color rangeOutsideDimColor =
+            new Color(0f, 0f, 0f, 0.82f);
+
+        [Tooltip("Softness of the transition at the two range lines and far edge, in screen pixels.")]
+        [SerializeField, Min(0f)] private float rangeDimEdgeSoftnessPixels = 2f;
+
+        [Tooltip("Undimmed radius retained around the player so the robot and camera form stay readable.")]
+        [SerializeField, Min(0f)]
+        private float rangeDimPlayerProtectionRadiusPixels = 48f;
+
         private PhotoModeController controller;
         private Camera mapCamera;
         private Canvas rootCanvas;
@@ -50,6 +69,7 @@ namespace AnimalGame.RobotMap
         private RectTransform playerRangeCanvasRoot;
         private RectTransform visualRoot;
         private RectTransform frameRoot;
+        private PhotoRangeDimGraphic rangeDim;
         private PhotoRangeGuideGraphic rangeGuide;
         private Image frameImage;
         private Image bigAimImage;
@@ -76,6 +96,17 @@ namespace AnimalGame.RobotMap
                     dashGap,
                     dashWidth);
                 rangeGuide.color = rangeGuideColor;
+            }
+
+            if (rangeDim != null)
+            {
+                rangeDim.Configure(
+                    controller,
+                    mapCamera,
+                    rangeDimShader,
+                    rangeDimEdgeSoftnessPixels,
+                    rangeDimPlayerProtectionRadiusPixels);
+                rangeDim.color = rangeOutsideDimColor;
             }
 
             SetVisible(controller != null && controller.IsActive);
@@ -115,7 +146,7 @@ namespace AnimalGame.RobotMap
                 frameRoot.anchoredPosition = localPoint;
             }
 
-            float frameScale = Mathf.Lerp(
+            float preferredFrameScale = Mathf.Lerp(
                 nearestFrameScale,
                 farthestFrameScale,
                 controller.Zoom01);
@@ -125,9 +156,32 @@ namespace AnimalGame.RobotMap
                 frameRevealStart,
                 frameRevealEnd);
             float revealScale = CalculateRevealScale(frameReveal);
+            float maximumRangeScale = CalculateMaximumRangeFrameScale();
+            float rangeScaleMultiplier = 1f;
+            if (maximumRangeScale < float.PositiveInfinity)
+            {
+                float largestPreferredScale = Mathf.Max(
+                    nearestFrameScale,
+                    farthestFrameScale);
+                rangeScaleMultiplier = Mathf.Min(
+                    1f,
+                    maximumRangeScale
+                    / Mathf.Max(0.0001f, largestPreferredScale));
+            }
+
+            float displayedFrameScale = preferredFrameScale
+                                        * rangeScaleMultiplier
+                                        * revealScale;
+            if (maximumRangeScale < float.PositiveInfinity)
+            {
+                displayedFrameScale = Mathf.Min(
+                    displayedFrameScale,
+                    maximumRangeScale);
+            }
+
             frameRoot.localScale = new Vector3(
-                frameScale * revealScale,
-                frameScale * revealScale,
+                displayedFrameScale,
+                displayedFrameScale,
                 1f);
             frameRoot.localRotation = Quaternion.Euler(
                 0f,
@@ -140,11 +194,13 @@ namespace AnimalGame.RobotMap
             SetArtworkAlpha(
                 smallAimImage,
                 SmoothReveal(reveal, 0.62f, 1f));
-            rangeGuide?.UpdatePlayerScreenAnchor();
-            rangeGuide?.SetReveal(SmoothReveal(
+            float guideReveal = SmoothReveal(
                 reveal,
                 guideRevealStart,
-                guideRevealEnd));
+                guideRevealEnd);
+            rangeDim?.UpdatePresentation(guideReveal);
+            rangeGuide?.UpdatePlayerScreenAnchor();
+            rangeGuide?.SetReveal(guideReveal);
         }
 
         private float CalculateRevealScale(float frameReveal)
@@ -162,6 +218,38 @@ namespace AnimalGame.RobotMap
                 1.04f,
                 1f,
                 Mathf.SmoothStep(0f, 1f, settle));
+        }
+
+        private float CalculateMaximumRangeFrameScale()
+        {
+            if (controller == null
+                || mapCamera == null
+                || frameReferenceSize.x <= 0f)
+            {
+                return float.PositiveInfinity;
+            }
+
+            controller.GetGuideWorldPoints(
+                out Vector3 leftStart,
+                out Vector3 leftEnd,
+                out Vector3 rightStart,
+                out Vector3 rightEnd);
+            Vector3 leftScreen = mapCamera.WorldToScreenPoint(leftEnd);
+            Vector3 rightScreen = mapCamera.WorldToScreenPoint(rightEnd);
+            if (leftScreen.z <= 0f || rightScreen.z <= 0f)
+                return float.PositiveInfinity;
+
+            float availableWidthPixels = Vector2.Distance(
+                new Vector2(leftScreen.x, leftScreen.y),
+                new Vector2(rightScreen.x, rightScreen.y));
+            float canvasScaleFactor = rootCanvas != null
+                ? Mathf.Max(0.0001f, rootCanvas.scaleFactor)
+                : 1f;
+            float availableWidthInCanvas = availableWidthPixels
+                                           / canvasScaleFactor;
+            return availableWidthInCanvas
+                   * maximumFrameWidthOfRange
+                   / frameReferenceSize.x;
         }
 
         private static float SmoothReveal(
@@ -241,6 +329,17 @@ namespace AnimalGame.RobotMap
             StretchToParent(visualRoot);
 
             CreatePlayerRangeCanvas();
+            GameObject dimObject = CreateUiObject(
+                "Photo Range Outside Dim",
+                playerRangeCanvasRoot,
+                true);
+            RectTransform dimTransform =
+                dimObject.GetComponent<RectTransform>();
+            StretchToParent(dimTransform);
+            rangeDim = dimObject.AddComponent<PhotoRangeDimGraphic>();
+            rangeDim.raycastTarget = false;
+            rangeDim.color = rangeOutsideDimColor;
+
             GameObject rangeObject = CreateUiObject(
                 "Photo Range Dashed Guides",
                 playerRangeCanvasRoot,
@@ -315,7 +414,10 @@ namespace AnimalGame.RobotMap
             playerRangeCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
             playerRangeCanvas.overrideSorting = true;
             playerRangeCanvas.sortingLayerID = rootCanvas.sortingLayerID;
-            playerRangeCanvas.sortingOrder = rootCanvas.sortingOrder - 1;
+            // Draw the focus overlay above MainUI so its terrain texture and
+            // gameplay markers are darkened outside the photo range. The
+            // dashed guides are later siblings and remain bright on top.
+            playerRangeCanvas.sortingOrder = rootCanvas.sortingOrder + 1;
 
             CanvasScaler targetScaler = canvasObject.GetComponent<CanvasScaler>();
             targetScaler.uiScaleMode =
@@ -331,7 +433,10 @@ namespace AnimalGame.RobotMap
             {
                 visualRoot.gameObject.SetActive(visible);
                 if (visible)
+                {
+                    rangeDim?.SetVerticesDirty();
                     rangeGuide?.SetVerticesDirty();
+                }
             }
 
             if (playerRangeCanvasRoot != null
@@ -400,9 +505,19 @@ namespace AnimalGame.RobotMap
             frameReferenceSize.y = Mathf.Max(1f, frameReferenceSize.y);
             nearestFrameScale = Mathf.Max(0.01f, nearestFrameScale);
             farthestFrameScale = Mathf.Max(0.01f, farthestFrameScale);
+            maximumFrameWidthOfRange = Mathf.Clamp(
+                maximumFrameWidthOfRange,
+                0.1f,
+                1f);
             dashLength = Mathf.Max(1f, dashLength);
             dashGap = Mathf.Max(0f, dashGap);
             dashWidth = Mathf.Max(0.5f, dashWidth);
+            rangeDimEdgeSoftnessPixels = Mathf.Max(
+                0f,
+                rangeDimEdgeSoftnessPixels);
+            rangeDimPlayerProtectionRadiusPixels = Mathf.Max(
+                0f,
+                rangeDimPlayerProtectionRadiusPixels);
             guideRevealStart = Mathf.Clamp(guideRevealStart, 0f, 0.99f);
             guideRevealEnd = Mathf.Clamp(
                 guideRevealEnd,
@@ -422,6 +537,167 @@ namespace AnimalGame.RobotMap
                 Destroy(playerRangeCanvasRoot.gameObject);
         }
 
+    }
+
+    public sealed class PhotoRangeDimGraphic : MaskableGraphic
+    {
+        private static readonly int TriangleAId =
+            Shader.PropertyToID("_TriangleA");
+        private static readonly int TriangleBId =
+            Shader.PropertyToID("_TriangleB");
+        private static readonly int TriangleCId =
+            Shader.PropertyToID("_TriangleC");
+        private static readonly int PlayerCenterId =
+            Shader.PropertyToID("_PlayerCenter");
+        private static readonly int RevealId =
+            Shader.PropertyToID("_Reveal");
+        private static readonly int EdgeSoftnessId =
+            Shader.PropertyToID("_EdgeSoftnessPixels");
+        private static readonly int PlayerRadiusId =
+            Shader.PropertyToID("_PlayerRadiusPixels");
+
+        private PhotoModeController controller;
+        private Camera mapCamera;
+        private Material runtimeMaterial;
+        private float edgeSoftnessPixels = 2f;
+        private float playerProtectionRadiusPixels = 48f;
+
+        public void Configure(
+            PhotoModeController photoModeController,
+            Camera camera,
+            Shader dimShader,
+            float configuredEdgeSoftnessPixels,
+            float configuredPlayerProtectionRadiusPixels)
+        {
+            controller = photoModeController;
+            mapCamera = camera;
+            edgeSoftnessPixels = Mathf.Max(
+                0f,
+                configuredEdgeSoftnessPixels);
+            playerProtectionRadiusPixels = Mathf.Max(
+                0f,
+                configuredPlayerProtectionRadiusPixels);
+
+            Shader activeShader = dimShader != null
+                ? dimShader
+                : Shader.Find("UI/Photo Range Dim");
+            if (activeShader == null)
+            {
+                Debug.LogError(
+                    "PhotoRangeDimGraphic could not find the "
+                    + "UI/Photo Range Dim shader.",
+                    this);
+                return;
+            }
+
+            if (runtimeMaterial == null
+                || runtimeMaterial.shader != activeShader)
+            {
+                DestroyRuntimeMaterial();
+                runtimeMaterial = new Material(activeShader)
+                {
+                    name = "Runtime Photo Range Dim Material",
+                    hideFlags = HideFlags.DontSave
+                };
+                material = runtimeMaterial;
+            }
+
+            runtimeMaterial.SetFloat(EdgeSoftnessId, edgeSoftnessPixels);
+            runtimeMaterial.SetFloat(
+                PlayerRadiusId,
+                playerProtectionRadiusPixels);
+            SetAllDirty();
+        }
+
+        public void UpdatePresentation(float reveal)
+        {
+            if (runtimeMaterial == null)
+                return;
+
+            float clampedReveal = Mathf.Clamp01(reveal);
+            runtimeMaterial.SetFloat(RevealId, clampedReveal);
+            if (controller == null
+                || mapCamera == null
+                || clampedReveal <= 0f)
+            {
+                return;
+            }
+
+            controller.GetGuideWorldPoints(
+                out Vector3 leftStart,
+                out Vector3 leftEnd,
+                out Vector3 rightStart,
+                out Vector3 rightEnd);
+            Vector3 apexWorld = (leftStart + rightStart) * 0.5f;
+            leftEnd = Vector3.Lerp(leftStart, leftEnd, clampedReveal);
+            rightEnd = Vector3.Lerp(rightStart, rightEnd, clampedReveal);
+
+            Vector3 apexViewport = mapCamera.WorldToViewportPoint(apexWorld);
+            Vector3 leftViewport = mapCamera.WorldToViewportPoint(leftEnd);
+            Vector3 rightViewport = mapCamera.WorldToViewportPoint(rightEnd);
+            Vector3 playerViewport = mapCamera.WorldToViewportPoint(
+                controller.transform.position);
+            if (apexViewport.z <= 0f
+                || leftViewport.z <= 0f
+                || rightViewport.z <= 0f
+                || playerViewport.z <= 0f)
+            {
+                runtimeMaterial.SetFloat(RevealId, 0f);
+                return;
+            }
+
+            runtimeMaterial.SetVector(
+                TriangleAId,
+                new Vector4(apexViewport.x, apexViewport.y, 0f, 0f));
+            runtimeMaterial.SetVector(
+                TriangleBId,
+                new Vector4(leftViewport.x, leftViewport.y, 0f, 0f));
+            runtimeMaterial.SetVector(
+                TriangleCId,
+                new Vector4(rightViewport.x, rightViewport.y, 0f, 0f));
+            runtimeMaterial.SetVector(
+                PlayerCenterId,
+                new Vector4(playerViewport.x, playerViewport.y, 0f, 0f));
+        }
+
+        protected override void OnPopulateMesh(VertexHelper vertexHelper)
+        {
+            vertexHelper.Clear();
+            Rect rect = rectTransform.rect;
+            UIVertex vertex = UIVertex.simpleVert;
+            vertex.color = color;
+            var quad = new UIVertex[4];
+
+            vertex.position = new Vector2(rect.xMin, rect.yMin);
+            vertex.uv0 = new Vector2(0f, 0f);
+            quad[0] = vertex;
+            vertex.position = new Vector2(rect.xMin, rect.yMax);
+            vertex.uv0 = new Vector2(0f, 1f);
+            quad[1] = vertex;
+            vertex.position = new Vector2(rect.xMax, rect.yMax);
+            vertex.uv0 = new Vector2(1f, 1f);
+            quad[2] = vertex;
+            vertex.position = new Vector2(rect.xMax, rect.yMin);
+            vertex.uv0 = new Vector2(1f, 0f);
+            quad[3] = vertex;
+            vertexHelper.AddUIVertexQuad(quad);
+        }
+
+        protected override void OnDestroy()
+        {
+            DestroyRuntimeMaterial();
+            base.OnDestroy();
+        }
+
+        private void DestroyRuntimeMaterial()
+        {
+            if (runtimeMaterial == null)
+                return;
+
+            material = null;
+            Destroy(runtimeMaterial);
+            runtimeMaterial = null;
+        }
     }
 
     public sealed class PhotoRangeGuideGraphic : MaskableGraphic

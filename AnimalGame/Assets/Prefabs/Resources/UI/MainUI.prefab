@@ -121,8 +121,9 @@ MonoBehaviour:
   cameraAimBigSprite: {fileID: 21300000, guid: 12de25bd6e1efca43a2e642af7109261, type: 3}
   frameReferenceSize: {x: 1920, y: 1080}
   cameraFrameColor: {r: 1, g: 0.82, b: 0.18, a: 1}
-  nearestFrameScale: 0.22
-  farthestFrameScale: 0.16
+  nearestFrameScale: 0.44
+  farthestFrameScale: 0.32
+  maximumFrameWidthOfRange: 0.72
   guideRevealStart: 0.2
   guideRevealEnd: 0.78
   frameRevealStart: 0.34
@@ -132,6 +133,10 @@ MonoBehaviour:
   dashLength: 18
   dashGap: 11
   dashWidth: 3
+  rangeDimShader: {fileID: 4800000, guid: 13f0b474bd794dc49c93cc3a1c0b719e, type: 3}
+  rangeOutsideDimColor: {r: 0, g: 0, b: 0, a: 0.82}
+  rangeDimEdgeSoftnessPixels: 2
+  rangeDimPlayerProtectionRadiusPixels: 48
 --- !u!1 &100000001
 GameObject:
   m_ObjectHideFlags: 0

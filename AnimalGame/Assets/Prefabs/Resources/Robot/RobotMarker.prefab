@@ -148,12 +148,12 @@ MonoBehaviour:
   keyboardToggleKey: 112
   rightStickDeadZone: 0.2
   rightStickExponent: 1.35
-  guideOriginSideOffset: 0.8
+  guideOriginSideOffset: 0
   guideOriginForwardDistance: 0.6
-  guideHalfAngleDegrees: 25
+  guideHalfAngleDegrees: 28.88889
   minimumAimDistance: 2
-  maximumAimDistance: 7
-  lateralFramePadding: 1
+  maximumAimDistance: 6.066667
+  lateralFramePadding: 0.2
   lateralAimSpeed: 5
   depthAimSpeed: 4
   entryDuration: 0.7
@@ -345,6 +345,12 @@ MonoBehaviour:
   indicatorTumbleEdgeOffsetRatio: 0.18
   indicatorMinimumProjectedScale: 0.04
   indicatorTumbleFadeExponent: 0.72
+  cameraFirstPartSprite: {fileID: 21300000, guid: ad04dbb83f19b354390faaa3f278c9b3, type: 3}
+  cameraSecondPartSprite: {fileID: 21300000, guid: 07236b203f7e05344a755de812a923dd, type: 3}
+  photoCameraArtworkScale: 0.7
+  photoCameraBodyOverlapRatio: 0.035
+  photoCameraHeadRevealStart: 0.3
+  photoCameraColor: {r: 0.92, g: 0.98, b: 1, a: 1}
   rolloverSignSprite: {fileID: 21300000, guid: c645d70685587da4097b880ac22a0cae, type: 3}
   rolloverSignDiameterRatio: 1
   rolloverSignVisibleDiameterPixels: 60

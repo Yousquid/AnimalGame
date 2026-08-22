@@ -20,22 +20,24 @@ namespace AnimalGame.RobotMap
 
         [Header("Photo Range")]
         [Tooltip("Horizontal distance from the robot centre to each dashed guide origin, in world units.")]
-        [SerializeField, Min(0f)] private float guideOriginSideOffset = 0.8f;
+        [SerializeField, Min(0f)] private float guideOriginSideOffset;
 
         [Tooltip("Forward distance from the robot centre to the two dashed guide origins, in world units.")]
         [SerializeField, Min(0f)] private float guideOriginForwardDistance = 0.6f;
 
         [Tooltip("Outward angle of each dashed range guide from the robot's forward direction.")]
-        [SerializeField, Range(1f, 75f)] private float guideHalfAngleDegrees = 25f;
+        [SerializeField, Range(1f, 75f)]
+        private float guideHalfAngleDegrees = 28.88889f;
 
         [Tooltip("Nearest allowed photo-frame distance in front of the robot.")]
         [SerializeField, Min(0f)] private float minimumAimDistance = 2f;
 
         [Tooltip("Farthest allowed photo-frame distance in front of the robot.")]
-        [SerializeField, Min(0.1f)] private float maximumAimDistance = 7f;
+        [SerializeField, Min(0.1f)]
+        private float maximumAimDistance = 6.066667f;
 
         [Tooltip("World-space margin kept between the photo-frame centre and either dashed guide.")]
-        [SerializeField, Min(0f)] private float lateralFramePadding = 1f;
+        [SerializeField, Min(0f)] private float lateralFramePadding = 0.2f;
 
         [Header("Frame Motion")]
         [Tooltip("Maximum horizontal photo-frame motion speed in world units per second.")]
