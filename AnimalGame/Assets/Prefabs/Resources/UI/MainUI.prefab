@@ -124,6 +124,7 @@ MonoBehaviour:
   nearestFrameScale: 0.44
   farthestFrameScale: 0.32
   maximumFrameWidthOfRange: 0.72
+  frameLineWidthIncreasePixels: 1.5
   guideRevealStart: 0.2
   guideRevealEnd: 0.78
   frameRevealStart: 0.34

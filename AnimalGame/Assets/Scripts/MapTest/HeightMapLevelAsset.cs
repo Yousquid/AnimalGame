@@ -5,6 +5,15 @@ using UnityEngine;
 namespace AnimalGame.MapTest
 {
 #if UNITY_EDITOR
+    public enum StaticWaterDepthPaintMode
+    {
+        Set = 0,
+        Add = 1,
+        Subtract = 2,
+        Smooth = 3,
+        Erase = 4
+    }
+
     public enum TerrainSurfaceTransitionMode
     {
         Hard = 0,
@@ -119,7 +128,8 @@ namespace AnimalGame.MapTest
     public sealed class HeightMapLevelAsset : ScriptableObject
     {
 #if UNITY_EDITOR
-        public const int CurrentSurfaceBakeGeneratorVersion = 5;
+        public const int CurrentSurfaceBakeGeneratorVersion = 7;
+        public const int CurrentStaticWaterMaskBakeGeneratorVersion = 1;
 #endif
 
         [Header("Height Source")]
@@ -144,6 +154,73 @@ namespace AnimalGame.MapTest
         [SerializeField, Range(0.1f, 0.7f)] private float maximumContourCoverage = 0.3f;
         [SerializeField, Range(0.1f, 1.5f)] private float contourEdgeSoftness = 0.4f;
         [SerializeField, Range(16, 128)] private int viewportHeightSamples = 64;
+
+        [Header("Static Water")]
+        [Tooltip("Resolution of the persistent static-water depth map. A zero byte is dry land; non-zero values encode water depth.")]
+        [SerializeField, Range(64, 1024)]
+        private int staticWaterResolution = 512;
+
+        [Tooltip("Deepest water value represented by the depth map, in logical map meters.")]
+        [SerializeField, Min(0.1f)]
+        private float maximumStaticWaterDepthMeters = 10f;
+
+        [Tooltip("Water at or below this depth remains traversable. Deeper water is treated as a hard movement blocker.")]
+        [SerializeField, Min(0f)]
+        private float maximumPassableStaticWaterDepthMeters = 1.2f;
+
+        [SerializeField, HideInInspector]
+        private byte[] staticWaterDepthMap = Array.Empty<byte>();
+
+        [Header("Static Water Visual")]
+        [Tooltip("Pattern animated by the runtime map shader inside the authored water range.")]
+        [SerializeField] private Texture2D staticWaterEditorTexture;
+
+        [Tooltip("Editor-generated range/depth texture consumed directly by the runtime map shader.")]
+        [SerializeField] private Texture2D bakedStaticWaterMask;
+
+        [Tooltip("Map-space size of one animated water-pattern tile.")]
+        [SerializeField, Min(0.1f)]
+        private float staticWaterEditorTileSizeMeters = 8f;
+
+        [Tooltip("Map-space movement velocity of the primary water-pattern layer, in meters per second.")]
+        [SerializeField] private Vector2 staticWaterLayerOneSpeedMetersPerSecond =
+            new Vector2(0.36f, 0.04f);
+
+        [Tooltip("Map-space movement velocity of the secondary water-pattern layer, in meters per second.")]
+        [SerializeField] private Vector2 staticWaterLayerTwoSpeedMetersPerSecond =
+            new Vector2(-0.14f, 0.22f);
+
+        [Tooltip("Tiling multiplier of the rotated secondary pattern layer.")]
+        [SerializeField, Min(0.1f)]
+        private float staticWaterLayerTwoScale = 1.35f;
+
+        [Tooltip("Small UV distortion that makes the water lines bend like waves instead of sliding rigidly.")]
+        [SerializeField, Range(0f, 0.2f)]
+        private float staticWaterWaveDistortion = 0.03f;
+
+        [Tooltip("Speed of the sinusoidal wave distortion.")]
+        [SerializeField, Min(0f)] private float staticWaterWaveSpeed = 0.8f;
+
+        [Tooltip("Map-space wavelength of the broad distortion.")]
+        [SerializeField, Min(0.1f)]
+        private float staticWaterWaveLengthMeters = 12f;
+
+        [Tooltip("Animation-speed multiplier at the maximum authored depth.")]
+        [SerializeField, Range(0f, 1f)]
+        private float staticWaterDeepSpeedMultiplier = 0.65f;
+
+        [SerializeField, HideInInspector]
+        private int staticWaterMaskBakeRevision;
+
+#if UNITY_EDITOR
+        [Header("Static Water Scene Preview")]
+        [Tooltip("Tint used only by the Scene-view static-water preview.")]
+        [SerializeField] private Color staticWaterEditorTint =
+            new Color(0.18f, 0.72f, 1f, 1f);
+
+        [SerializeField, HideInInspector]
+        private int staticWaterMaskBakeGeneratorVersion;
+#endif
 
 #if UNITY_EDITOR
         [Header("Terrain Surface Palette")]
@@ -269,6 +346,29 @@ namespace AnimalGame.MapTest
         public float MaximumContourCoverage => maximumContourCoverage;
         public float ContourEdgeSoftness => contourEdgeSoftness;
         public int ViewportHeightSamples => viewportHeightSamples;
+        public int StaticWaterResolution => staticWaterResolution;
+        public float MaximumStaticWaterDepthMeters =>
+            maximumStaticWaterDepthMeters;
+        public float MaximumPassableStaticWaterDepthMeters =>
+            maximumPassableStaticWaterDepthMeters;
+        public Texture2D StaticWaterTexture => staticWaterEditorTexture;
+        public Texture2D BakedStaticWaterMask => bakedStaticWaterMask;
+        public float StaticWaterTileSizeMeters =>
+            staticWaterEditorTileSizeMeters;
+        public Vector2 StaticWaterLayerOneSpeedMetersPerSecond =>
+            staticWaterLayerOneSpeedMetersPerSecond;
+        public Vector2 StaticWaterLayerTwoSpeedMetersPerSecond =>
+            staticWaterLayerTwoSpeedMetersPerSecond;
+        public float StaticWaterLayerTwoScale => staticWaterLayerTwoScale;
+        public float StaticWaterWaveDistortion => staticWaterWaveDistortion;
+        public float StaticWaterWaveSpeed => staticWaterWaveSpeed;
+        public float StaticWaterWaveLengthMeters =>
+            staticWaterWaveLengthMeters;
+        public float StaticWaterDeepSpeedMultiplier =>
+            staticWaterDeepSpeedMultiplier;
+#if UNITY_EDITOR
+        public Color StaticWaterEditorTint => staticWaterEditorTint;
+#endif
         public Texture2D BakedSurfaceVisual => bakedSurfaceVisual;
         public float SurfaceRevealEdgePixels => surfaceRevealEdgePixels;
         public int SurfacePresentationHash
@@ -282,6 +382,29 @@ namespace AnimalGame.MapTest
                         : 0;
                     hash = hash * 397 ^ surfaceRevealEdgePixels.GetHashCode();
                     hash = hash * 397 ^ surfaceBakeRevision;
+                    hash = hash * 397 ^ (staticWaterEditorTexture != null
+                        ? staticWaterEditorTexture.GetInstanceID()
+                        : 0);
+                    hash = hash * 397 ^ (bakedStaticWaterMask != null
+                        ? bakedStaticWaterMask.GetInstanceID()
+                        : 0);
+                    hash = hash * 397
+                           ^ staticWaterEditorTileSizeMeters.GetHashCode();
+                    hash = hash * 397
+                           ^ staticWaterLayerOneSpeedMetersPerSecond.GetHashCode();
+                    hash = hash * 397
+                           ^ staticWaterLayerTwoSpeedMetersPerSecond.GetHashCode();
+                    hash = hash * 397
+                           ^ staticWaterLayerTwoScale.GetHashCode();
+                    hash = hash * 397
+                           ^ staticWaterWaveDistortion.GetHashCode();
+                    hash = hash * 397
+                           ^ staticWaterWaveSpeed.GetHashCode();
+                    hash = hash * 397
+                           ^ staticWaterWaveLengthMeters.GetHashCode();
+                    hash = hash * 397
+                           ^ staticWaterDeepSpeedMultiplier.GetHashCode();
+                    hash = hash * 397 ^ staticWaterMaskBakeRevision;
                     return hash;
                 }
             }
@@ -295,6 +418,63 @@ namespace AnimalGame.MapTest
                                && mapWidthMeters > 0f
                                && mapHeightMeters > 0f
                                && maximumHeightMeters > minimumHeightMeters;
+
+        /// <summary>
+        /// Samples the persistent static-water depth map in logical map meters.
+        /// A result of zero means dry land. The data is bilinearly sampled so
+        /// runtime traversal does not inherit jagged authoring-pixel edges.
+        /// </summary>
+        public float SampleStaticWaterDepth(Vector2 mapPositionMeters)
+        {
+            if (staticWaterDepthMap == null
+                || staticWaterDepthMap.Length == 0
+                || mapPositionMeters.x < 0f
+                || mapPositionMeters.x > mapWidthMeters
+                || mapPositionMeters.y < 0f
+                || mapPositionMeters.y > mapHeightMeters)
+            {
+                return 0f;
+            }
+
+            int resolution = Mathf.RoundToInt(
+                Mathf.Sqrt(staticWaterDepthMap.Length));
+            if (resolution <= 0
+                || resolution * resolution != staticWaterDepthMap.Length)
+            {
+                return 0f;
+            }
+
+            float pixelX = mapPositionMeters.x
+                           / Mathf.Max(0.0001f, mapWidthMeters)
+                           * resolution - 0.5f;
+            float pixelY = mapPositionMeters.y
+                           / Mathf.Max(0.0001f, mapHeightMeters)
+                           * resolution - 0.5f;
+            int unclampedX0 = Mathf.FloorToInt(pixelX);
+            int unclampedY0 = Mathf.FloorToInt(pixelY);
+            int x0 = Mathf.Clamp(unclampedX0, 0, resolution - 1);
+            int y0 = Mathf.Clamp(unclampedY0, 0, resolution - 1);
+            int x1 = Mathf.Clamp(unclampedX0 + 1, 0, resolution - 1);
+            int y1 = Mathf.Clamp(unclampedY0 + 1, 0, resolution - 1);
+            float blendX = Mathf.Clamp01(pixelX - Mathf.Floor(pixelX));
+            float blendY = Mathf.Clamp01(pixelY - Mathf.Floor(pixelY));
+            float lower = Mathf.Lerp(
+                staticWaterDepthMap[y0 * resolution + x0],
+                staticWaterDepthMap[y0 * resolution + x1],
+                blendX);
+            float upper = Mathf.Lerp(
+                staticWaterDepthMap[y1 * resolution + x0],
+                staticWaterDepthMap[y1 * resolution + x1],
+                blendX);
+            float encodedDepth = Mathf.Lerp(lower, upper, blendY);
+            return encodedDepth / byte.MaxValue
+                   * Mathf.Max(0.1f, maximumStaticWaterDepthMeters);
+        }
+
+        public bool HasStaticWaterAt(Vector2 mapPositionMeters)
+        {
+            return SampleStaticWaterDepth(mapPositionMeters) > 0.0001f;
+        }
 
         public int ConfigurationHash
         {
@@ -365,6 +545,308 @@ namespace AnimalGame.MapTest
             surfaceOutsideClosedContourAlphaMultiplier;
         public bool SurfaceBakeNeedsUpgrade =>
             surfaceBakeGeneratorVersion < CurrentSurfaceBakeGeneratorVersion;
+        public bool StaticWaterMaskBakeNeedsUpgrade =>
+            staticWaterMaskBakeGeneratorVersion
+            < CurrentStaticWaterMaskBakeGeneratorVersion;
+
+        public bool EnsureStaticWaterAuthoringData()
+        {
+            int requestedResolution = Mathf.Clamp(
+                staticWaterResolution,
+                64,
+                1024);
+            int requestedLength = requestedResolution * requestedResolution;
+            if (staticWaterDepthMap != null
+                && staticWaterDepthMap.Length == requestedLength)
+            {
+                return false;
+            }
+
+            byte[] previousMap = staticWaterDepthMap;
+            staticWaterDepthMap = new byte[requestedLength];
+            if (previousMap == null || previousMap.Length == 0)
+                return true;
+
+            int previousResolution = Mathf.RoundToInt(
+                Mathf.Sqrt(previousMap.Length));
+            if (previousResolution <= 0
+                || previousResolution * previousResolution
+                != previousMap.Length)
+            {
+                return true;
+            }
+
+            for (int y = 0; y < requestedResolution; y++)
+            {
+                int sourceY = Mathf.Clamp(
+                    Mathf.FloorToInt(
+                        (y + 0.5f) / requestedResolution
+                        * previousResolution),
+                    0,
+                    previousResolution - 1);
+                for (int x = 0; x < requestedResolution; x++)
+                {
+                    int sourceX = Mathf.Clamp(
+                        Mathf.FloorToInt(
+                            (x + 0.5f) / requestedResolution
+                            * previousResolution),
+                        0,
+                        previousResolution - 1);
+                    staticWaterDepthMap[y * requestedResolution + x] =
+                        previousMap[sourceY * previousResolution + sourceX];
+                }
+            }
+
+            return true;
+        }
+
+        public byte[] GetOrCreateStaticWaterDepthMap()
+        {
+            EnsureStaticWaterAuthoringData();
+            return staticWaterDepthMap;
+        }
+
+        public int CalculateStaticWaterAuthoringHash()
+        {
+            unchecked
+            {
+                int hash = staticWaterResolution;
+                hash = hash * 397
+                       ^ maximumStaticWaterDepthMeters.GetHashCode();
+                hash = hash * 397
+                       ^ maximumPassableStaticWaterDepthMeters.GetHashCode();
+                if (staticWaterDepthMap != null)
+                {
+                    for (int index = 0;
+                         index < staticWaterDepthMap.Length;
+                         index++)
+                    {
+                        hash = hash * 31 ^ staticWaterDepthMap[index];
+                    }
+                }
+
+                return hash;
+            }
+        }
+
+        public bool PaintStaticWaterDepth(
+            Vector2 mapPositionMeters,
+            float brushRadiusMeters,
+            StaticWaterDepthPaintMode mode,
+            float targetDepthMeters,
+            float depthStepMeters,
+            float strength,
+            float hardness)
+        {
+            byte[] depthMap = GetOrCreateStaticWaterDepthMap();
+            int resolution = Mathf.Clamp(staticWaterResolution, 64, 1024);
+            Vector2 mapSize = MapSizeMeters;
+            float radius = Mathf.Max(0.01f, brushRadiusMeters);
+            float radiusSquared = radius * radius;
+            float clampedStrength = Mathf.Clamp01(strength);
+            float clampedHardness = Mathf.Clamp01(hardness);
+            float maximumDepth = Mathf.Max(
+                0.1f,
+                maximumStaticWaterDepthMeters);
+            float targetDepth = Mathf.Clamp(
+                targetDepthMeters,
+                0f,
+                maximumDepth);
+            float depthStep = Mathf.Max(0f, depthStepMeters);
+            int minimumX = Mathf.Clamp(
+                Mathf.FloorToInt(
+                    (mapPositionMeters.x - radius)
+                    / mapSize.x * resolution),
+                0,
+                resolution - 1);
+            int maximumX = Mathf.Clamp(
+                Mathf.CeilToInt(
+                    (mapPositionMeters.x + radius)
+                    / mapSize.x * resolution),
+                0,
+                resolution - 1);
+            int minimumY = Mathf.Clamp(
+                Mathf.FloorToInt(
+                    (mapPositionMeters.y - radius)
+                    / mapSize.y * resolution),
+                0,
+                resolution - 1);
+            int maximumY = Mathf.Clamp(
+                Mathf.CeilToInt(
+                    (mapPositionMeters.y + radius)
+                    / mapSize.y * resolution),
+                0,
+                resolution - 1);
+            byte[] smoothingSource = mode == StaticWaterDepthPaintMode.Smooth
+                ? (byte[])depthMap.Clone()
+                : null;
+            bool changed = false;
+
+            for (int y = minimumY; y <= maximumY; y++)
+            {
+                float pixelMapY = (y + 0.5f) / resolution * mapSize.y;
+                for (int x = minimumX; x <= maximumX; x++)
+                {
+                    float pixelMapX = (x + 0.5f) / resolution * mapSize.x;
+                    float deltaX = pixelMapX - mapPositionMeters.x;
+                    float deltaY = pixelMapY - mapPositionMeters.y;
+                    float distanceSquared = deltaX * deltaX + deltaY * deltaY;
+                    if (distanceSquared > radiusSquared)
+                        continue;
+
+                    float normalizedDistance = Mathf.Sqrt(distanceSquared)
+                                               / radius;
+                    float falloff = CalculateStaticWaterBrushFalloff(
+                        normalizedDistance,
+                        clampedHardness);
+                    float weight = falloff * clampedStrength;
+                    if (weight <= 0.0001f)
+                        continue;
+
+                    int index = y * resolution + x;
+                    float previousDepth = DecodeStaticWaterDepth(
+                        depthMap[index],
+                        maximumDepth);
+                    float nextDepth;
+                    switch (mode)
+                    {
+                        case StaticWaterDepthPaintMode.Add:
+                            nextDepth = previousDepth + depthStep * weight;
+                            break;
+                        case StaticWaterDepthPaintMode.Subtract:
+                            nextDepth = previousDepth - depthStep * weight;
+                            break;
+                        case StaticWaterDepthPaintMode.Smooth:
+                            float averageDepth = CalculateNeighbourDepthAverage(
+                                smoothingSource,
+                                resolution,
+                                x,
+                                y,
+                                maximumDepth);
+                            nextDepth = Mathf.Lerp(
+                                previousDepth,
+                                averageDepth,
+                                weight);
+                            break;
+                        case StaticWaterDepthPaintMode.Erase:
+                            nextDepth = Mathf.Lerp(previousDepth, 0f, weight);
+                            break;
+                        default:
+                            nextDepth = Mathf.Lerp(
+                                previousDepth,
+                                targetDepth,
+                                weight);
+                            break;
+                    }
+
+                    byte encodedDepth = EncodeStaticWaterDepth(
+                        Mathf.Clamp(nextDepth, 0f, maximumDepth),
+                        maximumDepth);
+                    if (depthMap[index] == encodedDepth)
+                        continue;
+
+                    depthMap[index] = encodedDepth;
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        public bool FillStaticWaterDepth(float depthMeters)
+        {
+            byte[] depthMap = GetOrCreateStaticWaterDepthMap();
+            float maximumDepth = Mathf.Max(
+                0.1f,
+                maximumStaticWaterDepthMeters);
+            byte targetValue = EncodeStaticWaterDepth(
+                Mathf.Clamp(depthMeters, 0f, maximumDepth),
+                maximumDepth);
+            bool changed = false;
+            for (int index = 0; index < depthMap.Length; index++)
+            {
+                if (depthMap[index] == targetValue)
+                    continue;
+
+                depthMap[index] = targetValue;
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        private static float CalculateStaticWaterBrushFalloff(
+            float normalizedDistance,
+            float hardness)
+        {
+            if (normalizedDistance <= hardness)
+                return 1f;
+            if (hardness >= 0.9999f)
+                return normalizedDistance <= 1f ? 1f : 0f;
+
+            float edgeProgress = Mathf.InverseLerp(
+                hardness,
+                1f,
+                normalizedDistance);
+            return 1f - Mathf.SmoothStep(0f, 1f, edgeProgress);
+        }
+
+        private static float CalculateNeighbourDepthAverage(
+            byte[] source,
+            int resolution,
+            int centreX,
+            int centreY,
+            float maximumDepth)
+        {
+            if (source == null || source.Length == 0)
+                return 0f;
+
+            float total = 0f;
+            int count = 0;
+            for (int offsetY = -1; offsetY <= 1; offsetY++)
+            {
+                int y = centreY + offsetY;
+                if (y < 0 || y >= resolution)
+                    continue;
+
+                for (int offsetX = -1; offsetX <= 1; offsetX++)
+                {
+                    int x = centreX + offsetX;
+                    if (x < 0 || x >= resolution)
+                        continue;
+
+                    total += DecodeStaticWaterDepth(
+                        source[y * resolution + x],
+                        maximumDepth);
+                    count++;
+                }
+            }
+
+            return count > 0 ? total / count : 0f;
+        }
+
+        private static float DecodeStaticWaterDepth(
+            byte encodedDepth,
+            float maximumDepth)
+        {
+            return encodedDepth / (float)byte.MaxValue * maximumDepth;
+        }
+
+        private static byte EncodeStaticWaterDepth(
+            float depthMeters,
+            float maximumDepth)
+        {
+            if (depthMeters <= 0.0001f)
+                return 0;
+
+            return (byte)Mathf.Clamp(
+                Mathf.RoundToInt(
+                    depthMeters / Mathf.Max(0.0001f, maximumDepth)
+                    * byte.MaxValue),
+                1,
+                byte.MaxValue);
+        }
+
         public bool HasUsableSurfaceDefinitions
         {
             get
@@ -669,6 +1151,17 @@ namespace AnimalGame.MapTest
                 surfaceBakeRevision++;
             }
         }
+
+        public void SetBakedStaticWaterMask(Texture2D texture)
+        {
+            bakedStaticWaterMask = texture;
+            staticWaterMaskBakeGeneratorVersion =
+                CurrentStaticWaterMaskBakeGeneratorVersion;
+            unchecked
+            {
+                staticWaterMaskBakeRevision++;
+            }
+        }
 #endif
 
         private void OnValidate()
@@ -688,6 +1181,33 @@ namespace AnimalGame.MapTest
             maximumContourCoverage = Mathf.Clamp(maximumContourCoverage, 0.1f, 0.7f);
             contourEdgeSoftness = Mathf.Clamp(contourEdgeSoftness, 0.1f, 1.5f);
             viewportHeightSamples = Mathf.Clamp(viewportHeightSamples, 16, 128);
+            staticWaterResolution = Mathf.Clamp(
+                staticWaterResolution,
+                64,
+                1024);
+            maximumStaticWaterDepthMeters = Mathf.Max(
+                0.1f,
+                maximumStaticWaterDepthMeters);
+            maximumPassableStaticWaterDepthMeters = Mathf.Clamp(
+                maximumPassableStaticWaterDepthMeters,
+                0f,
+                maximumStaticWaterDepthMeters);
+            staticWaterEditorTileSizeMeters = Mathf.Max(
+                0.1f,
+                staticWaterEditorTileSizeMeters);
+            staticWaterLayerTwoScale = Mathf.Max(
+                0.1f,
+                staticWaterLayerTwoScale);
+            staticWaterWaveDistortion = Mathf.Clamp(
+                staticWaterWaveDistortion,
+                0f,
+                0.2f);
+            staticWaterWaveSpeed = Mathf.Max(0f, staticWaterWaveSpeed);
+            staticWaterWaveLengthMeters = Mathf.Max(
+                0.1f,
+                staticWaterWaveLengthMeters);
+            staticWaterDeepSpeedMultiplier = Mathf.Clamp01(
+                staticWaterDeepSpeedMultiplier);
             surfaceRevealEdgePixels = Mathf.Max(0f, surfaceRevealEdgePixels);
 #if UNITY_EDITOR
             surfaceOpacity = Mathf.Clamp01(surfaceOpacity);

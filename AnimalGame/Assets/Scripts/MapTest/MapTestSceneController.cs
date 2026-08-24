@@ -111,6 +111,7 @@ namespace AnimalGame.MapTest
         private float appliedSurfaceEdgePixels = float.NaN;
         private bool appliedSurfaceEnabled;
         private bool appliedSurfaceRevealEnabled;
+        private int appliedWaterPresentationHash = int.MinValue;
         private Texture2D generatedPreviewTexture;
         private Sprite generatedMapSprite;
         private GameObject generatedMapObject;
@@ -242,6 +243,39 @@ namespace AnimalGame.MapTest
                 mapPositionMeters.x / Mathf.Max(0.0001f, mapWidthMeters),
                 mapPositionMeters.y / Mathf.Max(0.0001f, mapHeightMeters));
             heightMeters = SampleHeight(uv);
+            return true;
+        }
+
+        public bool TrySampleStaticWaterWorldPosition(
+            Vector2 worldPosition,
+            out float depthMeters)
+        {
+            depthMeters = 0f;
+            if (!TrySampleWorldPosition(
+                    worldPosition,
+                    out Vector2 mapPositionMeters,
+                    out _))
+            {
+                return false;
+            }
+
+            depthMeters = levelAsset != null
+                ? levelAsset.SampleStaticWaterDepth(mapPositionMeters)
+                : 0f;
+            return true;
+        }
+
+        public bool TrySampleStaticWaterMapPosition(
+            Vector2 mapPositionMeters,
+            out float depthMeters)
+        {
+            depthMeters = 0f;
+            if (!TrySampleMapPosition(mapPositionMeters, out _))
+                return false;
+
+            depthMeters = levelAsset != null
+                ? levelAsset.SampleStaticWaterDepth(mapPositionMeters)
+                : 0f;
             return true;
         }
 
@@ -770,10 +804,17 @@ namespace AnimalGame.MapTest
                 return;
 
             bool hasSurface = bakedSurfaceVisual != null;
+            bool hasWater = levelAsset != null
+                            && levelAsset.BakedStaticWaterMask != null
+                            && levelAsset.StaticWaterTexture != null;
+            int waterPresentationHash = levelAsset != null
+                ? levelAsset.SurfacePresentationHash
+                : 0;
             // In Edit Mode the complete baked layer remains visible so the Scene
             // painter can author the fixed map. The player build applies the one
             // inexpensive screen-space cutoff to the otherwise static texture.
-            bool revealEnabled = Application.isPlaying && hasSurface;
+            bool revealEnabled = Application.isPlaying
+                                 && (hasSurface || hasWater);
             Vector2 centerPixels = surfaceRevealUi != null
                 ? surfaceRevealUi.GetUiCenterScreenPoint()
                 : new Vector2(
@@ -791,6 +832,7 @@ namespace AnimalGame.MapTest
                 && appliedSurfaceVisual == bakedSurfaceVisual
                 && appliedSurfaceEnabled == hasSurface
                 && appliedSurfaceRevealEnabled == revealEnabled
+                && appliedWaterPresentationHash == waterPresentationHash
                 && (appliedSurfaceCenterPixels - centerPixels).sqrMagnitude
                 <= 0.0001f
                 && Mathf.Approximately(appliedSurfaceRadiusPixels, radiusPixels)
@@ -803,6 +845,55 @@ namespace AnimalGame.MapTest
                 "_SurfaceTex",
                 hasSurface ? bakedSurfaceVisual : Texture2D.blackTexture);
             contourMaterial.SetFloat("_SurfaceEnabled", hasSurface ? 1f : 0f);
+            contourMaterial.SetTexture(
+                "_WaterMaskTex",
+                hasWater
+                    ? levelAsset.BakedStaticWaterMask
+                    : Texture2D.blackTexture);
+            contourMaterial.SetTexture(
+                "_WaterPatternTex",
+                hasWater
+                    ? levelAsset.StaticWaterTexture
+                    : Texture2D.blackTexture);
+            contourMaterial.SetFloat("_WaterEnabled", hasWater ? 1f : 0f);
+            if (hasWater)
+            {
+                contourMaterial.SetVector(
+                    "_MapSizeMeters",
+                    new Vector4(
+                        levelAsset.MapSizeMeters.x,
+                        levelAsset.MapSizeMeters.y,
+                        0f,
+                        0f));
+                contourMaterial.SetFloat(
+                    "_WaterTileSizeMeters",
+                    levelAsset.StaticWaterTileSizeMeters);
+                Vector2 primarySpeed =
+                    levelAsset.StaticWaterLayerOneSpeedMetersPerSecond;
+                Vector2 secondarySpeed =
+                    levelAsset.StaticWaterLayerTwoSpeedMetersPerSecond;
+                contourMaterial.SetVector(
+                    "_WaterLayerOneSpeed",
+                    new Vector4(primarySpeed.x, primarySpeed.y, 0f, 0f));
+                contourMaterial.SetVector(
+                    "_WaterLayerTwoSpeed",
+                    new Vector4(secondarySpeed.x, secondarySpeed.y, 0f, 0f));
+                contourMaterial.SetFloat(
+                    "_WaterLayerTwoScale",
+                    levelAsset.StaticWaterLayerTwoScale);
+                contourMaterial.SetFloat(
+                    "_WaterWaveDistortion",
+                    levelAsset.StaticWaterWaveDistortion);
+                contourMaterial.SetFloat(
+                    "_WaterWaveSpeed",
+                    levelAsset.StaticWaterWaveSpeed);
+                contourMaterial.SetFloat(
+                    "_WaterWaveLengthMeters",
+                    levelAsset.StaticWaterWaveLengthMeters);
+                contourMaterial.SetFloat(
+                    "_WaterDeepSpeedMultiplier",
+                    levelAsset.StaticWaterDeepSpeedMultiplier);
+            }
             contourMaterial.SetFloat(
                 "_SurfaceRevealEnabled",
                 revealEnabled ? 1f : 0f);
@@ -815,6 +906,7 @@ namespace AnimalGame.MapTest
             appliedSurfaceVisual = bakedSurfaceVisual;
             appliedSurfaceEnabled = hasSurface;
             appliedSurfaceRevealEnabled = revealEnabled;
+            appliedWaterPresentationHash = waterPresentationHash;
             appliedSurfaceCenterPixels = centerPixels;
             appliedSurfaceRadiusPixels = radiusPixels;
             appliedSurfaceEdgePixels = edgePixels;
@@ -841,6 +933,7 @@ namespace AnimalGame.MapTest
                 DestroyGeneratedObject(contourMaterial);
             contourMaterial = null;
             surfaceSettingsMaterial = null;
+            appliedWaterPresentationHash = int.MinValue;
 
             if (generatedMapSprite != null)
                 DestroyGeneratedObject(generatedMapSprite);

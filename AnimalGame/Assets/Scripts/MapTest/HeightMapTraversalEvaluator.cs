@@ -10,7 +10,8 @@ namespace AnimalGame.MapTest
         Step,
         UnsafeDownhill,
         Boundary,
-        Obstacle
+        Obstacle,
+        DeepWater
     }
 
     public enum UphillSlopeLevel
@@ -113,6 +114,22 @@ namespace AnimalGame.MapTest
                 0f,
                 Vector2.zero,
                 TraversalBlockReason.Obstacle);
+
+        public static SlopeTraversalResult BlockedDeepWater =>
+            new SlopeTraversalResult(
+                true,
+                false,
+                true,
+                UphillSlopeLevel.LevelOne,
+                0f,
+                0f,
+                0f,
+                0f,
+                0f,
+                0f,
+                0f,
+                Vector2.zero,
+                TraversalBlockReason.DeepWater);
     }
 
     /// <summary>
@@ -314,6 +331,35 @@ namespace AnimalGame.MapTest
             return worldUnitsPerMapMeter > 0.000001f
                 ? worldVelocity.magnitude / worldUnitsPerMapMeter
                 : 0f;
+        }
+
+        /// <summary>
+        /// Samples authored static-water depth under a world-space point and
+        /// returns the configured deepest still-traversable water depth. Deep
+        /// water blocking remains part of the normal traversal evaluation;
+        /// callers can use this data for effects within the passable range.
+        /// </summary>
+        public bool TrySamplePassableStaticWater(
+            Vector2 worldPosition,
+            out float depthMeters,
+            out float maximumPassableDepthMeters)
+        {
+            depthMeters = 0f;
+            maximumPassableDepthMeters = 0f;
+            HeightMapLevelAsset levelAsset = map != null
+                ? map.LevelAsset
+                : null;
+            if (!IsInitialized || levelAsset == null)
+                return false;
+
+            maximumPassableDepthMeters = Mathf.Max(
+                0f,
+                levelAsset.MaximumPassableStaticWaterDepthMeters);
+            return map.TrySampleStaticWaterWorldPosition(
+                worldPosition,
+                out depthMeters)
+                   && depthMeters > 0.0001f
+                   && depthMeters <= maximumPassableDepthMeters + 0.0001f;
         }
 
         /// <summary>
@@ -904,6 +950,9 @@ namespace AnimalGame.MapTest
             {
                 float t = (evaluationIndex + 0.5f) / evaluationCount;
                 Vector2 center = Vector2.Lerp(startMapPosition, endMapPosition, t);
+                if (IsStaticWaterTooDeep(center, direction))
+                    return SlopeTraversalResult.BlockedDeepWater;
+
                 if (!TryAnalyzeSurface(center, direction, out SurfaceAnalysis analysis))
                     return SlopeTraversalResult.BlockedBoundary;
 
@@ -1019,6 +1068,9 @@ namespace AnimalGame.MapTest
                 return SlopeTraversalResult.BlockedBoundary;
             }
 
+            if (IsStaticWaterTooDeep(mapPosition, mapDirection))
+                return SlopeTraversalResult.BlockedDeepWater;
+
             bool stepBlocked = analysis.MaximumStepResidualHeight > maximumStepHeightMeters;
             bool unsafeDownhill = analysis.SignedDirectionalSlopeAngle
                                   < -maximumDownhillSlopeAngle;
@@ -1047,6 +1099,44 @@ namespace AnimalGame.MapTest
                 analysis.SurfaceRoughness,
                 analysis.DownhillMapDirection,
                 reason);
+        }
+
+        private bool IsStaticWaterTooDeep(
+            Vector2 centreMapPosition,
+            Vector2 forwardMapDirection)
+        {
+            HeightMapLevelAsset levelAsset = map != null
+                ? map.LevelAsset
+                : null;
+            if (levelAsset == null)
+                return false;
+
+            float passableDepth = Mathf.Max(
+                0f,
+                levelAsset.MaximumPassableStaticWaterDepthMeters);
+            Vector2 normalizedForward = forwardMapDirection.sqrMagnitude
+                                        > 0.000001f
+                ? forwardMapDirection.normalized
+                : Vector2.up;
+            Vector2 lateral = new Vector2(
+                -normalizedForward.y,
+                normalizedForward.x);
+            float halfWidth = Mathf.Max(
+                0f,
+                robotFootprintWidthMeters * 0.5f);
+
+            for (int sampleIndex = -1; sampleIndex <= 1; sampleIndex++)
+            {
+                Vector2 samplePosition = centreMapPosition
+                                         + lateral * halfWidth * sampleIndex;
+                if (levelAsset.SampleStaticWaterDepth(samplePosition)
+                    > passableDepth + 0.0001f)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private bool TryAnalyzeSurface(

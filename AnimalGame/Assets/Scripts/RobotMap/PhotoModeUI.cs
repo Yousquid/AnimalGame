@@ -31,6 +31,10 @@ namespace AnimalGame.RobotMap
         [SerializeField, Range(0.1f, 1f)]
         private float maximumFrameWidthOfRange = 0.72f;
 
+        [Tooltip("Additional camera-frame line thickness in final screen pixels. This remains stable while the frame scales and moves.")]
+        [SerializeField, Min(0f)]
+        private float frameLineWidthIncreasePixels = 1.5f;
+
         [Header("Entry Reveal")]
         [Tooltip("Normalized entry time at which the dashed range starts drawing outward.")]
         [SerializeField, Range(0f, 1f)] private float guideRevealStart = 0.2f;
@@ -71,6 +75,7 @@ namespace AnimalGame.RobotMap
         private RectTransform frameRoot;
         private PhotoRangeDimGraphic rangeDim;
         private PhotoRangeGuideGraphic rangeGuide;
+        private readonly Image[] frameStrokeImages = new Image[12];
         private Image frameImage;
         private Image bigAimImage;
         private Image smallAimImage;
@@ -143,7 +148,7 @@ namespace AnimalGame.RobotMap
                     eventCamera,
                     out Vector2 localPoint))
             {
-                frameRoot.anchoredPosition = localPoint;
+                frameRoot.anchoredPosition = SnapToCanvasPixels(localPoint);
             }
 
             float preferredFrameScale = Mathf.Lerp(
@@ -187,6 +192,7 @@ namespace AnimalGame.RobotMap
                 0f,
                 0f,
                 CalculateFrameTiltDegrees());
+            UpdateFrameStroke(displayedFrameScale, frameReveal);
             SetArtworkAlpha(frameImage, frameReveal);
             SetArtworkAlpha(
                 bigAimImage,
@@ -250,6 +256,63 @@ namespace AnimalGame.RobotMap
             return availableWidthInCanvas
                    * maximumFrameWidthOfRange
                    / frameReferenceSize.x;
+        }
+
+        private void UpdateFrameStroke(
+            float displayedFrameScale,
+            float frameReveal)
+        {
+            float canvasScaleFactor = rootCanvas != null
+                ? Mathf.Max(0.0001f, rootCanvas.scaleFactor)
+                : 1f;
+            float localOffset = frameLineWidthIncreasePixels
+                                / Mathf.Max(
+                                    0.0001f,
+                                    displayedFrameScale
+                                    * canvasScaleFactor);
+            float strokeReveal = frameReveal * frameReveal;
+            for (int i = 0; i < frameStrokeImages.Length; i++)
+            {
+                Image strokeImage = frameStrokeImages[i];
+                if (strokeImage == null)
+                    continue;
+
+                strokeImage.rectTransform.anchoredPosition =
+                    GetFrameStrokeDirection(i) * localOffset;
+                SetArtworkAlpha(strokeImage, strokeReveal);
+            }
+        }
+
+        private Vector2 SnapToCanvasPixels(Vector2 canvasPosition)
+        {
+            float canvasScaleFactor = rootCanvas != null
+                ? Mathf.Max(0.0001f, rootCanvas.scaleFactor)
+                : 1f;
+            return new Vector2(
+                Mathf.Round(canvasPosition.x * canvasScaleFactor)
+                / canvasScaleFactor,
+                Mathf.Round(canvasPosition.y * canvasScaleFactor)
+                / canvasScaleFactor);
+        }
+
+        private static Vector2 GetFrameStrokeDirection(int index)
+        {
+            const float Diagonal = 0.70710678f;
+            switch (index)
+            {
+                case 0: return Vector2.left;
+                case 1: return Vector2.right;
+                case 2: return Vector2.down;
+                case 3: return Vector2.up;
+                case 4: return new Vector2(-Diagonal, -Diagonal);
+                case 5: return new Vector2(-Diagonal, Diagonal);
+                case 6: return new Vector2(Diagonal, -Diagonal);
+                case 7: return new Vector2(Diagonal, Diagonal);
+                case 8: return Vector2.left * 0.5f;
+                case 9: return Vector2.right * 0.5f;
+                case 10: return Vector2.down * 0.5f;
+                default: return Vector2.up * 0.5f;
+            }
         }
 
         private static float SmoothReveal(
@@ -366,6 +429,15 @@ namespace AnimalGame.RobotMap
             frameRoot.anchoredPosition = Vector2.zero;
             frameRoot.sizeDelta = frameReferenceSize;
             frameRoot.localScale = Vector3.one;
+
+            for (int i = 0; i < frameStrokeImages.Length; i++)
+            {
+                frameStrokeImages[i] = CreateArtworkImage(
+                    "camera_frame_stroke_" + i,
+                    frameRoot,
+                    cameraFrameSprite,
+                    cameraFrameColor);
+            }
 
             frameImage = CreateArtworkImage(
                 "camera_frame",
@@ -509,6 +581,9 @@ namespace AnimalGame.RobotMap
                 maximumFrameWidthOfRange,
                 0.1f,
                 1f);
+            frameLineWidthIncreasePixels = Mathf.Max(
+                0f,
+                frameLineWidthIncreasePixels);
             dashLength = Mathf.Max(1f, dashLength);
             dashGap = Mathf.Max(0f, dashGap);
             dashWidth = Mathf.Max(0.5f, dashWidth);

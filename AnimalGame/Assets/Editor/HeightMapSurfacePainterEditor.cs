@@ -18,6 +18,12 @@ public sealed class HeightMapLevelAssetEditor : Editor
             HeightMapSurfacePainterWindow.OpenForAsset(
                 (HeightMapLevelAsset)target);
         }
+
+        if (GUILayout.Button("Open Static Water Painter"))
+        {
+            HeightMapStaticWaterPainterWindow.OpenForAsset(
+                (HeightMapLevelAsset)target);
+        }
     }
 }
 
@@ -747,6 +753,16 @@ internal static class HeightMapSurfaceBakeUpgrade
     static HeightMapSurfaceBakeUpgrade()
     {
         EditorApplication.delayCall += UpgradeOutdatedBakes;
+        EditorApplication.playModeStateChanged += HandlePlayModeStateChanged;
+    }
+
+    private static void HandlePlayModeStateChanged(PlayModeStateChange state)
+    {
+        if (state != PlayModeStateChange.EnteredEditMode)
+            return;
+
+        EditorApplication.delayCall -= UpgradeOutdatedBakes;
+        EditorApplication.delayCall += UpgradeOutdatedBakes;
     }
 
     private static void UpgradeOutdatedBakes()
@@ -762,14 +778,20 @@ internal static class HeightMapSurfaceBakeUpgrade
             string assetPath = AssetDatabase.GUIDToAssetPath(levelGuid);
             HeightMapLevelAsset level =
                 AssetDatabase.LoadAssetAtPath<HeightMapLevelAsset>(assetPath);
-            if (level == null
-                || !level.HasUsableSurfaceDefinitions
-                || !level.SurfaceBakeNeedsUpgrade)
-            {
+            if (level == null)
                 continue;
+
+            if (level.SurfaceBakeNeedsUpgrade
+                && level.HasUsableSurfaceDefinitions)
+            {
+                HeightMapSurfaceBaker.Bake(level, false);
             }
 
-            HeightMapSurfaceBaker.Bake(level, false);
+            if (level.StaticWaterMaskBakeNeedsUpgrade
+                && level.StaticWaterTexture != null)
+            {
+                HeightMapStaticWaterMaskBaker.Bake(level, false);
+            }
         }
     }
 }

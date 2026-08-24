@@ -99,6 +99,8 @@ MonoBehaviour:
   downhillFullBoostAngle: 35
   downhillMaximumSpeedMultiplier: 1.5
   downhillAccelerationBonus: 3
+  shallowWaterSpeedReduction: 0.2
+  deepWaterSpeedReduction: 0.3
 --- !u!114 &6754498989903123456
 MonoBehaviour:
   m_ObjectHideFlags: 0

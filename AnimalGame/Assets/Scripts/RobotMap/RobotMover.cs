@@ -172,6 +172,15 @@ namespace AnimalGame.RobotMap
         [Tooltip("Additional acceleration applied while travelling downhill, scaled by the downhill-angle progress.")]
         [SerializeField, Min(0f)] private float downhillAccelerationBonus = 3f;
 
+        [Header("Static Water Resistance")]
+        [Tooltip("Linear movement-speed reduction applied as soon as the player enters traversable water.")]
+        [SerializeField, Range(0f, 1f)]
+        private float shallowWaterSpeedReduction = 0.2f;
+
+        [Tooltip("Linear movement-speed reduction at the deepest still-traversable water depth.")]
+        [SerializeField, Range(0f, 1f)]
+        private float deepWaterSpeedReduction = 0.3f;
+
         public float CurrentSpeed { get; private set; }
         public float CurrentTurnSpeed { get; private set; }
         public float CurrentTerrainTurnSpeed { get; private set; }
@@ -182,6 +191,7 @@ namespace AnimalGame.RobotMap
         public bool IsLevelThreeUnstable { get; private set; }
         public bool IsAutoAligningDownhill { get; private set; }
         public bool IsDownhillBoosted { get; private set; }
+        public float CurrentWaterSpeedMultiplier { get; private set; } = 1f;
         public RobotMovementMode MovementMode { get; private set; }
         public bool IsMovementLocked => MovementMode != RobotMovementMode.Driven;
         public bool IsExternallyTumbling =>
@@ -232,6 +242,7 @@ namespace AnimalGame.RobotMap
             downhillHeadingRecoveryDirection = Vector2.zero;
             pendingDownhillRecoveryFromLevelThreeSlip = false;
             CurrentTraversalResult = SlopeTraversalResult.NoData;
+            CurrentWaterSpeedMultiplier = 1f;
         }
 
         private void Update()
@@ -382,7 +393,11 @@ namespace AnimalGame.RobotMap
             float baseTargetSpeed = movementThrottle >= 0f
                 ? movementThrottle * ScaleMotion(forwardSpeed)
                 : movementThrottle * ScaleMotion(reverseSpeed);
-            float targetSpeed = baseTargetSpeed * topSpeedMultiplier;
+            CurrentWaterSpeedMultiplier =
+                CalculateStaticWaterSpeedMultiplier();
+            float targetSpeed = baseTargetSpeed
+                                * topSpeedMultiplier
+                                * CurrentWaterSpeedMultiplier;
             float speedChangeRate = GetSpeedChangeRate(
                                         movementThrottle,
                                         targetSpeed)
@@ -494,6 +509,7 @@ namespace AnimalGame.RobotMap
             downhillHeadingRecoveryDirection = Vector2.zero;
             pendingDownhillRecoveryFromLevelThreeSlip = false;
             CurrentTraversalResult = SlopeTraversalResult.NoData;
+            CurrentWaterSpeedMultiplier = 1f;
         }
 
         private void UpdateTurning(
@@ -1099,6 +1115,27 @@ namespace AnimalGame.RobotMap
                 Mathf.Lerp(launchAcceleration, runningAcceleration, normalizedSpeed));
         }
 
+        private float CalculateStaticWaterSpeedMultiplier()
+        {
+            if (traversalEvaluator == null
+                || !traversalEvaluator.TrySamplePassableStaticWater(
+                    transform.position,
+                    out float depthMeters,
+                    out float maximumPassableDepthMeters))
+            {
+                return 1f;
+            }
+
+            float normalizedDepth = maximumPassableDepthMeters > 0.0001f
+                ? Mathf.Clamp01(depthMeters / maximumPassableDepthMeters)
+                : 1f;
+            float speedReduction = Mathf.Lerp(
+                shallowWaterSpeedReduction,
+                deepWaterSpeedReduction,
+                normalizedDepth);
+            return 1f - Mathf.Clamp01(speedReduction);
+        }
+
         private float ScaleMotion(float value)
         {
             return value * overallMotionScale;
@@ -1188,6 +1225,12 @@ namespace AnimalGame.RobotMap
                 1f,
                 downhillMaximumSpeedMultiplier);
             downhillAccelerationBonus = Mathf.Max(0f, downhillAccelerationBonus);
+            shallowWaterSpeedReduction = Mathf.Clamp01(
+                shallowWaterSpeedReduction);
+            deepWaterSpeedReduction = Mathf.Clamp(
+                deepWaterSpeedReduction,
+                shallowWaterSpeedReduction,
+                1f);
         }
     }
 }
