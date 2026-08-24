@@ -171,8 +171,7 @@ namespace AnimalGame.Animals
         private void TickCurious(float deltaTime)
         {
             Motor.Stop();
-            if (Perception.TryGetPlayerMapPosition(out Vector2 playerMapPosition))
-                Motor.FaceMapPosition(playerMapPosition);
+            behaviourSet.TickCurious(deltaTime);
 
             if (!Perception.TryGetPlayerProximity(
                     out float proximity,

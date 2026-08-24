@@ -24,6 +24,10 @@ namespace AnimalGame.Animals
         {
         }
 
+        public virtual void TickCurious(float deltaTime)
+        {
+        }
+
         public virtual void ExitCurious()
         {
         }

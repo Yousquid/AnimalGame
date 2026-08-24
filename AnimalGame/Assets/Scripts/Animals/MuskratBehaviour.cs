@@ -103,8 +103,26 @@ namespace AnimalGame.Animals
 
         public override void EnterCurious()
         {
+            // Curious muskrats no longer use the daily left/right looking
+            // pattern. Their direct-vision cone continuously tracks the player.
+            dailyPhase = DailyPhase.None;
+            currentDailySettings = null;
+            currentFoodSource = null;
+            lookCountdown = 0f;
             Motor.Stop();
             Agent.PlaceholderView?.RestoreVisibleAppearance();
+            FacePlayerWhileCurious();
+        }
+
+        public override void TickCurious(float deltaTime)
+        {
+            Motor.Stop();
+            FacePlayerWhileCurious();
+        }
+
+        public override void ExitCurious()
+        {
+            Motor.Stop();
         }
 
         public override void EnterFleeing()
@@ -215,6 +233,15 @@ namespace AnimalGame.Animals
 
             dailyPhase = DailyPhase.FallbackIdle;
             actionTimer = 1f;
+        }
+
+        private void FacePlayerWhileCurious()
+        {
+            if (Agent.Perception.TryGetPlayerMapPosition(
+                    out Vector2 playerMapPosition))
+            {
+                Motor.FaceMapPosition(playerMapPosition);
+            }
         }
 
         private bool IsDailyBehaviourAvailable(
