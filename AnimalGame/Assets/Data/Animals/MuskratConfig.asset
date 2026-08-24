@@ -1,0 +1,64 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e42ea6af259ac874fabc89fccca67a0b, type: 3}
+  m_Name: MuskratConfig
+  m_EditorClassIdentifier: 
+  speciesName: Muskrat
+  activityRadiusMeters: 20
+  dailyMoveSpeedMetersPerSecond: 1.8
+  fleeSpeedMetersPerSecond: 8
+  turnSpeedDegreesPerSecond: 420
+  arrivalDistanceMeters: 0.18
+  bodyRadiusMeters: 0.16
+  maximumTravelTimeSeconds: 18
+  dailyBehaviours:
+  - behaviour: 0
+    selectionWeight: 1.5
+    durationSeconds: {x: 3, y: 6}
+  - behaviour: 1
+    selectionWeight: 1.35
+    durationSeconds: {x: 3, y: 7}
+  - behaviour: 2
+    selectionWeight: 1.5
+    durationSeconds: {x: 4, y: 8}
+  - behaviour: 3
+    selectionWeight: 1
+    durationSeconds: {x: 3, y: 6}
+  foodPreferences:
+  - foodType: 0
+    selectionWeight: 1
+  - foodType: 1
+    selectionWeight: 1
+  - foodType: 2
+    selectionWeight: 1
+  nearbyFoodDistanceMeters: 1.6
+  foodApproachPaddingMeters: 0.08
+  lookIntervalSeconds: {x: 0.65, y: 1.4}
+  lookAngleDegrees: 75
+  minimumDiveWaterDepthMeters: 0.2
+  resurfaceRadiusMeters: 10
+  submergeTransitionSeconds: 0.35
+  waterSearchSpacingMeters: 1.5
+  alertRadiusMeters: 14
+  detectionIntervalSeconds: 0.1
+  baseDetectionChancePerCheck: 0.3
+  nearestDetectionMultiplier: 3
+  playerSpeedForMaximumBonus: 3
+  maximumPlayerSpeedDetectionMultiplier: 2
+  directVisionAngleDegrees: 75
+  directLineOfSightDetectionMultiplier: 1.5
+  reactionIntervalSeconds: 0.1
+  baseFleeChancePerCheck: 0.05
+  nearestFleeMultiplier: 2.5
+  baseAggressionChancePerCheck: 0
+  nearestAggressionMultiplier: 1
+  curiousLostPlayerDelaySeconds: 2.5

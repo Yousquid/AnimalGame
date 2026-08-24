@@ -26,7 +26,7 @@ namespace AnimalGame.MapTest
 
         public bool BlocksTraversal => blocksTraversal;
         public float RadiusMeters => radiusMeters;
-        internal static IEnumerable<HeightMapObstacleFootprint>
+        public static IEnumerable<HeightMapObstacleFootprint>
             ActiveFootprints => activeFootprints;
 
         private void OnEnable()
