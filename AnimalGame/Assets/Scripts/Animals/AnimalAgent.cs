@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using AnimalGame.MapTest;
 using UnityEngine;
 
@@ -10,11 +11,15 @@ namespace AnimalGame.Animals
     [AddComponentMenu("Animal Game/Animals/Animal Agent")]
     public sealed class AnimalAgent : MonoBehaviour
     {
+        private static readonly HashSet<AnimalAgent> activeAgents =
+            new HashSet<AnimalAgent>();
+
         [SerializeField] private AnimalSpeciesConfig config;
         [SerializeField] private AnimalBehaviourSet behaviourSet;
         [SerializeField] private AnimalPlaceholderView placeholderView;
 
         public AnimalSpeciesConfig Config => config;
+        public static IEnumerable<AnimalAgent> ActiveAgents => activeAgents;
         public AnimalMotor Motor { get; private set; }
         public AnimalPerception Perception { get; private set; }
         public AnimalPlaceholderView PlaceholderView => placeholderView;
@@ -26,6 +31,22 @@ namespace AnimalGame.Animals
         private bool initialized;
         private float reactionCountdown;
         private float outsideAlertTimer;
+
+        private void OnEnable()
+        {
+            if (gameObject.scene.IsValid())
+                activeAgents.Add(this);
+        }
+
+        private void OnDisable()
+        {
+            activeAgents.Remove(this);
+        }
+
+        private void OnDestroy()
+        {
+            activeAgents.Remove(this);
+        }
 
         private void Start()
         {

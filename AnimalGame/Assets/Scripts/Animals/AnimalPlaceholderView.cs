@@ -10,6 +10,7 @@ namespace AnimalGame.Animals
         [SerializeField] private SpriteRenderer bodyFill;
         [SerializeField] private SpriteRenderer bodyOutline;
         [SerializeField] private SpriteRenderer directionIndicator;
+        [SerializeField] private AnimalDiscoveryVisual discoveryVisual;
 
         private Vector3 baseVisualScale = Vector3.one;
         private Color baseBodyFillColor = Color.black;
@@ -46,15 +47,29 @@ namespace AnimalGame.Animals
                     progress);
             }
 
-            ApplyAlpha(bodyFill, baseBodyFillColor, visibility);
-            ApplyAlpha(bodyOutline, baseBodyOutlineColor, visibility);
-            ApplyAlpha(directionIndicator, baseIndicatorColor, visibility);
+            if (discoveryVisual != null)
+            {
+                discoveryVisual.SetExternalVisibility(visibility);
+            }
+            else
+            {
+                ApplyAlpha(bodyFill, baseBodyFillColor, visibility);
+                ApplyAlpha(bodyOutline, baseBodyOutlineColor, visibility);
+                ApplyAlpha(directionIndicator, baseIndicatorColor, visibility);
+            }
         }
 
         public void RestoreVisibleAppearance()
         {
             SetSubmergeProgress(0f);
         }
+
+#if UNITY_EDITOR
+        public void ConfigureDiscoveryVisual(AnimalDiscoveryVisual visual)
+        {
+            discoveryVisual = visual;
+        }
+#endif
 
         private void CacheBaseAppearance()
         {

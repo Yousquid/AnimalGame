@@ -98,7 +98,22 @@ namespace AnimalGame.MapTest
             if (map != null)
                 return;
 
-            map = FindObjectOfType<MapTestSceneController>();
+            // Prefab contents are loaded in an isolated preview scene. Do not
+            // bind a prefab prototype to the controller in the user's open
+            // level, otherwise editor installers overwrite the prototype's
+            // neutral map coordinates with the centre of that level.
+            MapTestSceneController[] candidates =
+                FindObjectsOfType<MapTestSceneController>();
+            for (int i = 0; i < candidates.Length; i++)
+            {
+                MapTestSceneController candidate = candidates[i];
+                if (candidate != null
+                    && candidate.gameObject.scene == gameObject.scene)
+                {
+                    map = candidate;
+                    break;
+                }
+            }
         }
 
         private void OnDrawGizmosSelected()

@@ -95,6 +95,7 @@ GameObject:
   - component: {fileID: 6533485218955025695}
   - component: {fileID: 8601369888071405056}
   - component: {fileID: 4615545443437542843}
+  - component: {fileID: 4514303481677001136}
   m_Layer: 0
   m_Name: Test_Lotus
   m_TagString: Untagged
@@ -133,7 +134,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   map: {fileID: 0}
   mapPositionMeters: {x: 125, y: 125}
-  sampledSurfaceHeightMeters: 32.253864
+  sampledSurfaceHeightMeters: 32.23716
   footprintRadiusMeters: 0.64
   clampInsideMap: 1
 --- !u!114 &4615545443437542843
@@ -151,6 +152,23 @@ MonoBehaviour:
   foodType: 1
   selectionWeight: 1
   eatingApproachPaddingMeters: 0.05
+--- !u!114 &4514303481677001136
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4211731452637057285}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0ec4b53eeeee78847b6149c77765f7a7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  fadeStartDistanceMeters: 3
+  fadeStartAlphaReduction: 0.5
+  contactAlphaReduction: 0.9
+  contactPaddingMeters: 0.05
+  fallbackPlayerRadiusMeters: 0.75
 --- !u!1 &6827638650626107215
 GameObject:
   m_ObjectHideFlags: 0

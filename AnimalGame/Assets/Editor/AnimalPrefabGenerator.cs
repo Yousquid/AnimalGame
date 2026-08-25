@@ -51,6 +51,7 @@ namespace AnimalGame.Editor
             EnsureFoodSource(LotusPrefabPath, AnimalFoodType.Lotus);
             EnsureFoodSource(AustralisPrefabPath, AnimalFoodType.Australis);
             CreateMuskratPrefab(config, true);
+            AnimalDiscoveryPrefabInstaller.EnsureMuskratPrototype();
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
             Debug.Log(
@@ -68,6 +69,7 @@ namespace AnimalGame.Editor
             EnsureFoodSource(LotusPrefabPath, AnimalFoodType.Lotus);
             EnsureFoodSource(AustralisPrefabPath, AnimalFoodType.Australis);
             CreateMuskratPrefab(config, false);
+            AnimalDiscoveryPrefabInstaller.EnsureMuskratPrototype();
             AssetDatabase.SaveAssets();
         }
 
