@@ -253,8 +253,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 96ee1c46ec8141fd970e39063a8ba4cb, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   map: {fileID: 0}
   mapPositionMeters: {x: 0, y: 0}
   sampledSurfaceHeightMeters: 0
@@ -270,8 +270,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 2158aed473b09a54a963048b911b8184, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
 --- !u!114 &6688424352525102916
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -338,8 +338,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 25aa56a0b0dc4e04893d1e8827863a7d, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
   discoverableKind: 0
   discoveryId: muskrat
   startDiscovered: 0
@@ -353,8 +353,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: c47c9ea2a7683c84aa315a667b426765, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
   discoverable: {fileID: 4693375148983939860}
   knownRenderers:
   - {fileID: 6051157855037081251}
@@ -362,6 +362,15 @@ MonoBehaviour:
   - {fileID: 6459853648258718936}
   unknownRenderer: {fileID: 9121644353624982551}
   revealDuration: 0.4
+  rollSpeedRange: {x: 0.6, y: 2.5}
+  rollSpeedChangeInterval: {x: 0.3, y: 1.2}
+  rollSpeedResponse: 5.5
+  polygonMorphDuration: {x: 0.4, y: 0.9}
+  recognitionFieldScaleRange: {x: 1, y: 1.5}
+  fieldScaleHoldDuration: {x: 0.7, y: 1.8}
+  fieldScaleTransitionDuration: {x: 0.4, y: 0.9}
+  unknownPositionUpdateInterval: 2
+  unknownPositionRefreshAnimationDuration: 0.2
 --- !u!1 &3470056907385243293
 GameObject:
   m_ObjectHideFlags: 0
@@ -389,7 +398,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 0.56363636, y: 0.56363636, z: 0.56363636}
+  m_LocalScale: {x: 0.8727273, y: 0.8727273, z: 0.8727273}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 3351961163244372313}
@@ -435,8 +444,8 @@ SpriteRenderer:
   m_SortingLayerID: 0
   m_SortingLayer: 0
   m_SortingOrder: 1153
-  m_Sprite: {fileID: 21300000, guid: b202381eb90f91040a281a4f4577b9e1, type: 3}
-  m_Color: {r: 0.92, g: 0.98, b: 1, a: 1}
+  m_Sprite: {fileID: 8686807323953464799, guid: 6322db69203b5c449807dda289ea682f, type: 2}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
   m_FlipX: 0
   m_FlipY: 0
   m_DrawMode: 0

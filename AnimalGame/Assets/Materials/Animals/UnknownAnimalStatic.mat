@@ -33,16 +33,23 @@ Material:
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
-    - _EdgeDistortion: 0.12
+    - _AnimationPhase: 0
+    - _BlockFill: 0.88
+    - _ClusterContrast: 0.8
     - _EnableExternalAlpha: 0
-    - _NoiseCells: 20
-    - _NoiseFps: 18
+    - _FieldCoverage: 0.72
+    - _FieldDrift: 0.16
+    - _FieldRadius: 0.46
+    - _NoiseCells: 12
+    - _NoiseFps: 11
     - _RevealProgress: 0
+    - _ScrollRate: 0.22
     - _Seed: 0
+    - _ShapePhase: 0
     m_Colors:
     - _Color: {r: 1, g: 1, b: 1, a: 1}
-    - _DarkColor: {r: 0.015, g: 0.025, b: 0.035, a: 1}
+    - _DarkColor: {r: 0.005, g: 0.005, b: 0.005, a: 1}
     - _Flip: {r: 1, g: 1, b: 1, a: 1}
-    - _LightColor: {r: 0.78, g: 0.94, b: 1, a: 1}
+    - _LightColor: {r: 1, g: 1, b: 1, a: 1}
     - _RendererColor: {r: 1, g: 1, b: 1, a: 1}
   m_BuildTextureStacks: []

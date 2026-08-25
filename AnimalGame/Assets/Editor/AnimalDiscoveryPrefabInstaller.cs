@@ -11,14 +11,15 @@ namespace AnimalGame.Editor
     {
         private const string MuskratPrefabPath =
             "Assets/Prefabs/Animals/Muskrat/Muskrat_Placeholder.prefab";
-        private const string BodyFillSpritePath =
-            "Assets/Arts/robot_body_fill.png";
         private const string StaticShaderPath =
             "Assets/Shaders/UnknownAnimalStatic.shader";
         private const string MaterialFolder = "Assets/Materials/Animals";
         private const string StaticMaterialPath =
             MaterialFolder + "/UnknownAnimalStatic.mat";
+        private const string StaticMaskTexturePath =
+            MaterialFolder + "/UnknownAnimalStaticMask.asset";
         private const string UnknownObjectName = "Unknown Animal Static";
+        private const float UnknownFieldScaleFromBodyFill = 2.4f;
 
         static AnimalDiscoveryPrefabInstaller()
         {
@@ -33,16 +34,15 @@ namespace AnimalGame.Editor
 
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(
                 MuskratPrefabPath);
-            Sprite maskSprite = AssetDatabase.LoadAssetAtPath<Sprite>(
-                BodyFillSpritePath);
             Shader shader = AssetDatabase.LoadAssetAtPath<Shader>(
                 StaticShaderPath);
-            if (prefab == null || maskSprite == null || shader == null)
+            if (prefab == null || shader == null)
                 return;
 
             EnsureFolders();
+            Sprite maskSprite = EnsureFullRectMaskSprite();
             Material material = EnsureStaticMaterial(shader);
-            if (material == null)
+            if (maskSprite == null || material == null)
                 return;
 
             HeightMapPlacedObject prefabPlacement =
@@ -112,13 +112,10 @@ namespace AnimalGame.Editor
                     var unknownObject = new GameObject(UnknownObjectName);
                     unknownTransform = unknownObject.transform;
                     unknownTransform.SetParent(visualRoot, false);
-                    unknownTransform.localScale =
-                        bodyFill.transform.localScale * 1.55f;
                     unknownRenderer =
                         unknownObject.AddComponent<SpriteRenderer>();
                     unknownRenderer.sprite = maskSprite;
-                    unknownRenderer.color =
-                        new Color(0.92f, 0.98f, 1f, 1f);
+                    unknownRenderer.color = Color.white;
                     unknownRenderer.sortingLayerID =
                         bodyOutline.sortingLayerID;
                     unknownRenderer.sortingOrder = Mathf.Max(
@@ -150,6 +147,21 @@ namespace AnimalGame.Editor
                         unknownRenderer.sharedMaterial = material;
                         changed = true;
                     }
+                    if (unknownRenderer.color != Color.white)
+                    {
+                        unknownRenderer.color = Color.white;
+                        changed = true;
+                    }
+                }
+
+                Vector3 desiredUnknownScale = Vector3.one
+                    * bodyFill.transform.localScale.x
+                    * UnknownFieldScaleFromBodyFill;
+                if ((unknownTransform.localScale - desiredUnknownScale)
+                    .sqrMagnitude > 0.000001f)
+                {
+                    unknownTransform.localScale = desiredUnknownScale;
+                    changed = true;
                 }
 
                 var knownRenderers = new[]
@@ -261,24 +273,133 @@ namespace AnimalGame.Editor
         {
             Material material = AssetDatabase.LoadAssetAtPath<Material>(
                 StaticMaterialPath);
-            if (material != null)
-                return material;
-
-            material = new Material(shader)
+            bool created = material == null;
+            if (created)
             {
-                name = "Unknown Animal Static"
-            };
-            material.SetColor(
+                material = new Material(shader)
+                {
+                    name = "Unknown Animal Static"
+                };
+            }
+
+            bool changed = false;
+            changed |= SetShaderIfDifferent(material, shader);
+            changed |= SetColorIfDifferent(
+                material,
                 "_DarkColor",
-                new Color(0.015f, 0.025f, 0.035f, 1f));
-            material.SetColor(
+                new Color(0.005f, 0.005f, 0.005f, 1f));
+            changed |= SetColorIfDifferent(
+                material,
                 "_LightColor",
-                new Color(0.78f, 0.94f, 1f, 1f));
-            material.SetFloat("_NoiseCells", 20f);
-            material.SetFloat("_NoiseFps", 18f);
-            material.SetFloat("_EdgeDistortion", 0.12f);
-            AssetDatabase.CreateAsset(material, StaticMaterialPath);
+                Color.white);
+            changed |= SetFloatIfDifferent(material, "_NoiseCells", 12f);
+            changed |= SetFloatIfDifferent(material, "_NoiseFps", 11f);
+            changed |= SetFloatIfDifferent(material, "_ScrollRate", 0.22f);
+            changed |= SetFloatIfDifferent(material, "_FieldCoverage", 0.72f);
+            changed |= SetFloatIfDifferent(material, "_FieldRadius", 0.46f);
+            changed |= SetFloatIfDifferent(material, "_FieldDrift", 0.16f);
+            changed |= SetFloatIfDifferent(material, "_BlockFill", 0.88f);
+            changed |= SetFloatIfDifferent(material, "_ClusterContrast", 0.8f);
+
+            if (created)
+                AssetDatabase.CreateAsset(material, StaticMaterialPath);
+            else if (changed)
+            {
+                EditorUtility.SetDirty(material);
+                AssetDatabase.SaveAssetIfDirty(material);
+            }
             return material;
+        }
+
+        private static Sprite EnsureFullRectMaskSprite()
+        {
+            Object[] existingAssets = AssetDatabase.LoadAllAssetsAtPath(
+                StaticMaskTexturePath);
+            for (int i = 0; i < existingAssets.Length; i++)
+            {
+                if (existingAssets[i] is Sprite existingSprite)
+                    return existingSprite;
+            }
+
+            Texture2D texture = AssetDatabase.LoadAssetAtPath<Texture2D>(
+                StaticMaskTexturePath);
+            if (texture == null)
+            {
+                texture = new Texture2D(
+                    8,
+                    8,
+                    TextureFormat.RGBA32,
+                    false)
+                {
+                    name = "Unknown Animal Static Mask Texture",
+                    filterMode = FilterMode.Point,
+                    wrapMode = TextureWrapMode.Clamp
+                };
+                var pixels = new Color[8 * 8];
+                for (int i = 0; i < pixels.Length; i++)
+                    pixels[i] = Color.white;
+                texture.SetPixels(pixels);
+                texture.Apply(false, false);
+                AssetDatabase.CreateAsset(texture, StaticMaskTexturePath);
+            }
+
+            Sprite sprite = Sprite.Create(
+                texture,
+                new Rect(0f, 0f, texture.width, texture.height),
+                new Vector2(0.5f, 0.5f),
+                texture.width,
+                0u,
+                SpriteMeshType.FullRect);
+            sprite.name = "Unknown Animal Static Full Rect";
+            AssetDatabase.AddObjectToAsset(sprite, texture);
+            EditorUtility.SetDirty(texture);
+            EditorUtility.SetDirty(sprite);
+            AssetDatabase.SaveAssetIfDirty(texture);
+            AssetDatabase.SaveAssetIfDirty(sprite);
+            return sprite;
+        }
+
+        private static bool SetShaderIfDifferent(
+            Material material,
+            Shader shader)
+        {
+            if (material.shader == shader)
+                return false;
+
+            material.shader = shader;
+            return true;
+        }
+
+        private static bool SetColorIfDifferent(
+            Material material,
+            string propertyName,
+            Color value)
+        {
+            if (material.HasProperty(propertyName)
+                && material.GetColor(propertyName) == value)
+            {
+                return false;
+            }
+
+            material.SetColor(propertyName, value);
+            return true;
+        }
+
+        private static bool SetFloatIfDifferent(
+            Material material,
+            string propertyName,
+            float value)
+        {
+            if (material.HasProperty(propertyName)
+                && Mathf.Approximately(
+                    material.GetFloat(propertyName),
+                    value))
+            {
+                return false;
+            }
+
+            material.SetFloat(propertyName, value);
+            return true;
         }
 
         private static void EnsureFolders()
