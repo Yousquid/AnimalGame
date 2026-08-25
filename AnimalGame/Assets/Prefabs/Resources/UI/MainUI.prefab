@@ -339,6 +339,8 @@ MonoBehaviour:
   animator: {fileID: 950000002}
   keyboardScanKey: 101
   gamepadScanButton: 334
+  biologicalScanMinimumHoldDuration: 0.25
+  terrainScanDoubleTapWindow: 0.3
   maximumChargeDuration: 0.2
   releaseDuration: 0.25
   releaseRingExpansionDuration: 0.65
@@ -359,3 +361,5 @@ MonoBehaviour:
   scanRingThicknessPixels: 2
   scanRingSegments: 128
   releaseRingColor: {r: 0.83137256, g: 0.72156864, b: 0.32941177, a: 0.92}
+  playerUiClippedSpriteShader: {fileID: 4800000, guid: 4f7e6ab0c9ef4f5da8e215fdadfb0c3b, type: 3}
+  organicVisibilityClipSoftnessPixels: 1.5

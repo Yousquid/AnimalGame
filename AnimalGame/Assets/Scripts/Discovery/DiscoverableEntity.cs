@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using AnimalGame.MapTest;
 using UnityEngine;
 
 namespace AnimalGame.Discovery
@@ -25,20 +26,35 @@ namespace AnimalGame.Discovery
             DiscoverableKind.Animal;
         [SerializeField] private string discoveryId = "unknown";
         [SerializeField] private bool startDiscovered;
+        [Tooltip("Biological-signal collision radius in logical map meters.")]
+        [SerializeField, Min(0.01f)]
+        private float biologicalScanCollisionRadiusMeters = 0.25f;
 
         private bool initialized;
-        private bool isDiscovered;
+        private bool isPermanentlyDiscovered;
+        private float temporaryRevealRemaining;
+        private HeightMapPlacedObject placedObject;
 
         public static IReadOnlyCollection<DiscoverableEntity> Active =>
             ActiveEntities;
         public DiscoverableKind Kind => discoverableKind;
         public string DiscoveryId => discoveryId;
+        public bool IsPermanentlyDiscovered
+        {
+            get
+            {
+                EnsureInitialized();
+                return isPermanentlyDiscovered;
+            }
+        }
+        public bool IsTemporarilyRevealed => temporaryRevealRemaining > 0f;
         public bool IsDiscovered
         {
             get
             {
                 EnsureInitialized();
-                return isDiscovered;
+                return isPermanentlyDiscovered
+                       || temporaryRevealRemaining > 0f;
             }
         }
 
@@ -46,6 +62,7 @@ namespace AnimalGame.Discovery
 
         private void Awake()
         {
+            placedObject = GetComponent<HeightMapPlacedObject>();
             EnsureInitialized();
         }
 
@@ -60,14 +77,60 @@ namespace AnimalGame.Discovery
             ActiveEntities.Remove(this);
         }
 
+        private void Update()
+        {
+            if (temporaryRevealRemaining <= 0f)
+                return;
+
+            bool wasDiscovered = IsDiscovered;
+            temporaryRevealRemaining = Mathf.Max(
+                0f,
+                temporaryRevealRemaining - Time.deltaTime);
+            if (wasDiscovered != IsDiscovered)
+                DiscoveryChanged?.Invoke(IsDiscovered);
+        }
+
         public void SetDiscovered(bool discovered = true)
         {
             EnsureInitialized();
-            if (isDiscovered == discovered)
+            bool wasDiscovered = IsDiscovered;
+            if (isPermanentlyDiscovered == discovered)
                 return;
 
-            isDiscovered = discovered;
-            DiscoveryChanged?.Invoke(isDiscovered);
+            isPermanentlyDiscovered = discovered;
+            if (wasDiscovered != IsDiscovered)
+                DiscoveryChanged?.Invoke(IsDiscovered);
+        }
+
+        /// <summary>
+        /// Temporarily reveals an unknown entity without changing its permanent
+        /// biological-discovery state. Repeated scans refresh the remaining time.
+        /// </summary>
+        public void RevealTemporarily(float duration)
+        {
+            EnsureInitialized();
+            bool wasDiscovered = IsDiscovered;
+            temporaryRevealRemaining = Mathf.Max(
+                temporaryRevealRemaining,
+                Mathf.Max(0f, duration));
+            if (wasDiscovered != IsDiscovered)
+                DiscoveryChanged?.Invoke(IsDiscovered);
+        }
+
+        public float GetBiologicalScanCollisionRadiusWorld()
+        {
+            float radiusMeters = Mathf.Max(
+                0.01f,
+                biologicalScanCollisionRadiusMeters);
+            if (placedObject == null)
+                placedObject = GetComponent<HeightMapPlacedObject>();
+
+            MapTestSceneController map = placedObject != null
+                ? placedObject.Map
+                : null;
+            return map != null && map.HasGeneratedMap
+                ? map.MapMetersToWorldDistance(Vector2.right, radiusMeters)
+                : radiusMeters;
         }
 
         [ContextMenu("Debug/Discover")]
@@ -79,7 +142,11 @@ namespace AnimalGame.Discovery
         [ContextMenu("Debug/Reset To Unknown")]
         public void ResetToUnknown()
         {
-            SetDiscovered(false);
+            bool wasDiscovered = IsDiscovered;
+            temporaryRevealRemaining = 0f;
+            isPermanentlyDiscovered = false;
+            if (wasDiscovered && !IsDiscovered)
+                DiscoveryChanged?.Invoke(false);
         }
 
 #if UNITY_EDITOR
@@ -100,8 +167,16 @@ namespace AnimalGame.Discovery
             if (initialized)
                 return;
 
-            isDiscovered = startDiscovered;
+            isPermanentlyDiscovered = startDiscovered;
+            temporaryRevealRemaining = 0f;
             initialized = true;
+        }
+
+        private void OnValidate()
+        {
+            biologicalScanCollisionRadiusMeters = Mathf.Max(
+                0.01f,
+                biologicalScanCollisionRadiusMeters);
         }
     }
 }

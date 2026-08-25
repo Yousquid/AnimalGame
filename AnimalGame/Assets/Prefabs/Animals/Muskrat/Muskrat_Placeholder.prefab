@@ -343,6 +343,7 @@ MonoBehaviour:
   discoverableKind: 0
   discoveryId: muskrat
   startDiscovered: 0
+  biologicalScanCollisionRadiusMeters: 0.25
 --- !u!114 &4509910512206878976
 MonoBehaviour:
   m_ObjectHideFlags: 0

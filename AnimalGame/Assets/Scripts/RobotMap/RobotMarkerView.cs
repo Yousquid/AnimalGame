@@ -44,11 +44,11 @@ namespace AnimalGame.RobotMap
         private float indicatorBodyInsetRatio = 0.2f;
         [SerializeField] private Color indicatorColor = new Color(0.92f, 0.98f, 1f, 1f);
 
-        [Tooltip("Time used to fade the direction arrow out after entering arm-control mode.")]
+        [Tooltip("Time used to fade the direction arrow out after entering arm-control mode or beginning a biological scan charge.")]
         [SerializeField, Min(0.01f)]
         private float indicatorArmModeFadeOutDuration = 0.16f;
 
-        [Tooltip("Time used to fade the direction arrow back in after leaving arm-control mode.")]
+        [Tooltip("Time used to fade the direction arrow back in after leaving arm-control mode or ending a biological scan charge.")]
         [SerializeField, Min(0.01f)]
         private float indicatorArmModeFadeInDuration = 0.2f;
 
@@ -160,6 +160,7 @@ namespace AnimalGame.RobotMap
         private RobotMover mover;
         private RobotTumbleController tumble;
         private RobotArmController armController;
+        private BioScanController biologicalScanController;
         private PhotoModeController photoMode;
         private float indicatorArmModeVisibility = 1f;
         private float photoCameraFormVisibility;
@@ -178,6 +179,7 @@ namespace AnimalGame.RobotMap
             mover = GetComponent<RobotMover>();
             tumble = GetComponent<RobotTumbleController>();
             armController = GetComponent<RobotArmController>();
+            biologicalScanController = GetComponent<BioScanController>();
             photoMode = GetComponent<PhotoModeController>();
             driveBobRandom = new System.Random(
                 unchecked(GetInstanceID() * 397 ^ System.Environment.TickCount));
@@ -877,8 +879,17 @@ namespace AnimalGame.RobotMap
 
             bool armModeActive = armController != null
                                  && armController.IsArmModeActive;
-            float armVisibilityTarget = armModeActive ? 0f : 1f;
-            float armFadeDuration = armModeActive
+            if (biologicalScanController == null)
+            {
+                biologicalScanController =
+                    GetComponent<BioScanController>();
+            }
+            bool biologicalChargeActive = biologicalScanController != null
+                                            && biologicalScanController.IsCharging;
+            bool indicatorHiddenByMode = armModeActive
+                                         || biologicalChargeActive;
+            float armVisibilityTarget = indicatorHiddenByMode ? 0f : 1f;
+            float armFadeDuration = indicatorHiddenByMode
                 ? indicatorArmModeFadeOutDuration
                 : indicatorArmModeFadeInDuration;
             indicatorArmModeVisibility = Mathf.MoveTowards(

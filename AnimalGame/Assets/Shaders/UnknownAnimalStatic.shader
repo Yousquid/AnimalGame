@@ -59,6 +59,7 @@ Shader "Animal Game/Unknown Animal Static"
                 float4 vertex : SV_POSITION;
                 fixed4 color : COLOR;
                 float2 texcoord : TEXCOORD0;
+                float4 screenPosition : TEXCOORD1;
             };
 
             sampler2D _MainTex;
@@ -77,6 +78,10 @@ Shader "Animal Game/Unknown Animal Static"
             float _RevealProgress;
             float _AnimationPhase;
             float _ShapePhase;
+            float _PlayerUiClipEnabled;
+            float4 _PlayerUiClipCenterPixels;
+            float _PlayerUiClipRadiusPixels;
+            float _PlayerUiClipSoftnessPixels;
 
             float Hash21(float2 value)
             {
@@ -210,6 +215,7 @@ Shader "Animal Game/Unknown Animal Static"
                 output.vertex = UnityObjectToClipPos(input.vertex);
                 output.texcoord = input.texcoord;
                 output.color = input.color * _Color;
+                output.screenPosition = ComputeScreenPos(output.vertex);
                 return output;
             }
 
@@ -409,6 +415,26 @@ Shader "Animal Game/Unknown Animal Static"
                     * edgeAlpha
                     * blockAlphaNoise
                     * dissolve;
+                float2 screenUv = input.screenPosition.xy
+                                  / max(0.0001, input.screenPosition.w);
+                float2 screenPixels = screenUv * _ScreenParams.xy;
+                float distanceFromCenter = length(
+                    screenPixels - _PlayerUiClipCenterPixels.xy);
+                float clipRadius = max(
+                    0.0,
+                    _PlayerUiClipRadiusPixels);
+                float clipSoftness = max(
+                    0.001,
+                    _PlayerUiClipSoftnessPixels);
+                float insideVisibility = 1.0 - smoothstep(
+                    max(0.0, clipRadius - clipSoftness),
+                    clipRadius + clipSoftness,
+                    distanceFromCenter);
+                output.a *= lerp(
+                    1.0,
+                    insideVisibility,
+                    saturate(_PlayerUiClipEnabled));
+                clip(output.a - 0.001);
                 return output;
             }
             ENDCG

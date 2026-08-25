@@ -1,5 +1,7 @@
 using AnimalGame.Animals;
+using AnimalGame.Rendering;
 using AnimalGame.RobotMap;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace AnimalGame.MapTest
@@ -15,6 +17,9 @@ namespace AnimalGame.MapTest
     [AddComponentMenu("Animal Game/Level/Vegetation Contact Fade")]
     public sealed class VegetationContactFade : MonoBehaviour
     {
+        private static readonly HashSet<VegetationContactFade> activeVegetation =
+            new HashSet<VegetationContactFade>();
+
         [Tooltip("Edge-to-edge distance at which vegetation starts fading, measured in logical map meters.")]
         [SerializeField, Min(0.01f)] private float fadeStartDistanceMeters = 3f;
 
@@ -40,6 +45,9 @@ namespace AnimalGame.MapTest
         private Color[] authoredColours;
         private float appliedAlphaReduction = -1f;
 
+        public static IReadOnlyCollection<VegetationContactFade> Active =>
+            activeVegetation;
+
         private void Awake()
         {
             CacheReferences();
@@ -50,6 +58,7 @@ namespace AnimalGame.MapTest
             if (!Application.isPlaying)
                 return;
 
+            activeVegetation.Add(this);
             CacheReferences();
             ApplyAlphaReduction(0f, true);
         }
@@ -72,8 +81,26 @@ namespace AnimalGame.MapTest
 
         private void OnDisable()
         {
+            activeVegetation.Remove(this);
             if (Application.isPlaying)
                 ApplyAlphaReduction(0f, true);
+        }
+
+        private void OnDestroy()
+        {
+            activeVegetation.Remove(this);
+            PlayerUiOrganicVisibility.UnregisterRenderers(spriteRenderers);
+        }
+
+        public float GetBiologicalScanCollisionRadiusWorld()
+        {
+            if (placedObject == null)
+                CacheReferences();
+
+            float radiusMeters = Mathf.Max(0.05f, GetPlantContactRadiusMeters());
+            return map != null && map.HasGeneratedMap
+                ? map.MapMetersToWorldDistance(Vector2.right, radiusMeters)
+                : radiusMeters;
         }
 
         public void ConfigureEditorDefaults(
@@ -101,6 +128,7 @@ namespace AnimalGame.MapTest
             ResolveMap();
 
             spriteRenderers = GetComponentsInChildren<SpriteRenderer>(true);
+            PlayerUiOrganicVisibility.RegisterRenderers(spriteRenderers);
             authoredColours = new Color[spriteRenderers.Length];
             for (int index = 0; index < spriteRenderers.Length; index++)
             {

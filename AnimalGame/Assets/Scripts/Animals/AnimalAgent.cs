@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using AnimalGame.MapTest;
+using AnimalGame.Rendering;
 using UnityEngine;
 
 namespace AnimalGame.Animals
@@ -31,9 +32,11 @@ namespace AnimalGame.Animals
         private bool initialized;
         private float reactionCountdown;
         private float outsideAlertTimer;
+        private SpriteRenderer[] playerUiVisibilityRenderers;
 
         private void OnEnable()
         {
+            CachePlayerUiVisibilityRenderers();
             if (gameObject.scene.IsValid())
                 activeAgents.Add(this);
         }
@@ -46,6 +49,16 @@ namespace AnimalGame.Animals
         private void OnDestroy()
         {
             activeAgents.Remove(this);
+            PlayerUiOrganicVisibility.UnregisterRenderers(
+                playerUiVisibilityRenderers);
+        }
+
+        private void CachePlayerUiVisibilityRenderers()
+        {
+            playerUiVisibilityRenderers =
+                GetComponentsInChildren<SpriteRenderer>(true);
+            PlayerUiOrganicVisibility.RegisterRenderers(
+                playerUiVisibilityRenderers);
         }
 
         private void Start()

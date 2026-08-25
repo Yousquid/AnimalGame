@@ -18,6 +18,7 @@ GameObject:
   - component: {fileID: 6754498989903123457}
   - component: {fileID: 3540108170491067500}
   - component: {fileID: 6128041736594210834}
+  - component: {fileID: 775533119844220011}
   m_Layer: 0
   m_Name: RobotMarker
   m_TagString: Untagged
@@ -145,8 +146,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d30202cbe3874c039669cdcbf63acf51, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
   keyboardToggleKey: 112
   rightStickDeadZone: 0.2
   rightStickExponent: 1.35
@@ -415,3 +416,42 @@ MonoBehaviour:
   aimBlendExponent: 1.6
   maximumAimSpeedDegreesPerSecond: 240
   lengthSmoothingTime: 0.07
+--- !u!114 &775533119844220011
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4839072109466370475}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b71342c4956646a5a854940323903bf0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  mechanicalArmSprite: {fileID: 21300000, guid: 904198a61bfc02c499c4214c64930010, type: 3}
+  biologicalRadarSprite: {fileID: 21300000, guid: cb154e293d3de3649b4ef2ad5f50dca3, type: 3}
+  biologicalSignalClipShader: {fileID: 4800000, guid: aa45bb6104a64fe6a10bda70603de7ef, type: 3}
+  scannerArtworkColor: {r: 1, g: 1, b: 1, a: 1}
+  mechanicalArmArtworkScale: 0.9
+  radarArtworkScale: 0.72
+  signalFormationStartCharge01: 0.62
+  readyRingPulseAmplitude: 0.07
+  readyRingPulseFrequency: 2.5
+  deployedHoldDuration: 0.12
+  retractionDuration: 0.25
+  signalPointCount: 76
+  formedRingRadius: 0.2
+  signalSpeed: 6.58
+  maximumSignalDistance: 20
+  signalPointDiameter: 0.43
+  signalHeadCoreRatio: 0.5
+  signalHeadPulseAmount: 0.06
+  signalHeadPulseFrequency: 4.5
+  signalCollisionRadius: 0.14
+  signalTrailDuration: 0.18
+  trailWidthRatio: 0.3597713
+  trailDashLength: 0.04
+  trailGapLength: 0.09
+  signalClipSoftnessPixels: 1.5
+  temporaryRevealDuration: 1.17
+  biologicalSignalColor: {r: 1, g: 0.78039217, b: 0.12156863, a: 1}

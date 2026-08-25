@@ -1,5 +1,7 @@
 using System;
+using AnimalGame.Rendering;
 using UnityEngine;
+using UnityEngine.Serialization;
 using UnityEngine.UI;
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
@@ -63,8 +65,18 @@ namespace AnimalGame.RobotMap
         [SerializeField] private KeyCode gamepadScanButton =
             KeyCode.JoystickButton4;
 
+        [Tooltip("LB must remain held for at least this many seconds before the biological-scan charge, camera animation, and radar deployment begin. Shorter presses become terrain-scan tap candidates.")]
+        [FormerlySerializedAs("terrainScanMinimumHoldDuration")]
+        [SerializeField, Min(0.05f)]
+        private float biologicalScanMinimumHoldDuration = 0.25f;
+
+        [Tooltip("Maximum seconds allowed between the releases of two short LB presses. A valid double tap requests an immediate terrain scan.")]
+        [FormerlySerializedAs("biologicalScanDoubleTapWindow")]
+        [SerializeField, Min(0.05f)]
+        private float terrainScanDoubleTapWindow = 0.3f;
+
         [Header("Animation Timing")]
-        [Tooltip("Seconds required to play from the first through the last frame of Scan_Hold.")]
+        [Tooltip("Seconds required to fully charge the biological scan and deploy its radar after the minimum-hold threshold has been crossed.")]
         [SerializeField, Min(0.05f)] private float maximumChargeDuration = 1.5f;
 
         [Tooltip("Seconds required to play the complete authored Scan_Release clip. Lower values make the activation-key animation finish faster.")]
@@ -128,12 +140,24 @@ namespace AnimalGame.RobotMap
         [SerializeField] private Color releaseRingColor =
             new Color(0.92f, 0.98f, 1f, 0.92f);
 
+        [Header("Plant And Animal UI Visibility")]
+        [Tooltip("Sprite shader used to clip all plants and known animal visuals to the fixed circular player UI.")]
+        [SerializeField] private Shader playerUiClippedSpriteShader;
+        [Tooltip("Soft edge width shared by plants, animals, and unknown-animal fields at the player UI boundary, in screen pixels.")]
+        [SerializeField, Min(0f)]
+        private float organicVisibilityClipSoftnessPixels = 1.5f;
+
         private ScanVisualState state;
         private ScanRingPhase ringPhase;
         private float chargeElapsed;
         private float releaseElapsed;
         private float releaseRingElapsed;
         private float releaseCameraZoomElapsed;
+        private float rawScanHoldElapsed;
+        private float shortTapWindowRemaining;
+        private bool rawScanHeldLastFrame;
+        private bool biologicalScanHoldActive;
+        private bool shortTapWaiting;
 
         private ScanCameraZoomPhase cameraZoomPhase;
         private RobotCameraShake cameraShake;
@@ -160,10 +184,26 @@ namespace AnimalGame.RobotMap
         public float UiRingRadiusPixels => uiRingRadiusPixels;
 
         /// <summary>
-        /// Raised only after a full charge is released. Gameplay scan systems use
-        /// this event and remain independent from the authored scan animation.
+        /// Raised when two short LB presses are completed. Terrain systems use
+        /// this event and remain independent from biological charge presentation.
         /// </summary>
-        public event Action FullyChargedScanReleased;
+        public event Action TerrainScanRequested;
+
+        /// <summary>
+        /// Raised when the minimum LB hold is crossed and biological charging
+        /// actually begins. The radar uses this to deploy during the charge.
+        /// </summary>
+        public event Action BiologicalScanChargeStarted;
+
+        /// <summary>
+        /// Raised when LB is released before the biological charge completes.
+        /// </summary>
+        public event Action BiologicalScanChargeCancelled;
+
+        /// <summary>
+        /// Raised after a fully charged biological scan is released.
+        /// </summary>
+        public event Action FullyChargedBiologicalScanReleased;
 
         public float GetUiRingScreenRadiusPixels()
         {
@@ -200,6 +240,8 @@ namespace AnimalGame.RobotMap
 
         private void Awake()
         {
+            PlayerUiOrganicVisibility.ConfigureSpriteShader(
+                playerUiClippedSpriteShader);
             if (animator == null)
                 animator = GetComponent<Animator>();
 
@@ -211,6 +253,10 @@ namespace AnimalGame.RobotMap
 
         private void OnEnable()
         {
+            PlayerUiOrganicVisibility.ConfigureSpriteShader(
+                playerUiClippedSpriteShader);
+            UpdateOrganicVisibilityClip();
+            ResetScanGesture();
             EnterIdle(false);
             ResetScanCameraZoomImmediate();
         }
@@ -224,8 +270,20 @@ namespace AnimalGame.RobotMap
 
             UpdateReleaseRing(deltaTime);
 
-            bool scanHeld = (photoMode == null || !photoMode.IsInputLocked)
-                            && IsScanInputHeld();
+            bool inputAvailable = photoMode == null || !photoMode.IsInputLocked;
+            bool rawScanHeld = inputAvailable && IsScanInputHeld();
+            bool scanHeld;
+            if (inputAvailable)
+            {
+                scanHeld = UpdateScanGesture(rawScanHeld, deltaTime);
+            }
+            else
+            {
+                // An input lock cancels the current gesture without converting
+                // the interrupted press into a terrain-scan tap.
+                ResetScanGesture();
+                scanHeld = false;
+            }
             switch (state)
             {
                 case ScanVisualState.Idle:
@@ -268,8 +326,8 @@ namespace AnimalGame.RobotMap
                     SampleAuthoredState(ReleaseStateHash, release01);
                     if (release01 >= 1f)
                     {
-                        // The ring and camera zoom have independent durations
-                        // and may continue after the authored release clip ends.
+                        // The biological camera release may continue after the
+                        // authored activation-key release clip ends.
                         EnterIdle(true);
                     }
                     break;
@@ -280,9 +338,92 @@ namespace AnimalGame.RobotMap
             UpdateFullyChargedCameraShake(scanHeld, deltaTime);
         }
 
+        private bool UpdateScanGesture(bool rawScanHeld, float deltaTime)
+        {
+            if (shortTapWaiting)
+            {
+                shortTapWindowRemaining -= Mathf.Max(0f, deltaTime);
+                if (shortTapWindowRemaining <= 0f)
+                {
+                    shortTapWaiting = false;
+                    shortTapWindowRemaining = 0f;
+                }
+            }
+
+            if (rawScanHeld)
+            {
+                if (!rawScanHeldLastFrame)
+                    rawScanHoldElapsed = 0f;
+
+                rawScanHoldElapsed += Mathf.Max(0f, deltaTime);
+                if (!biologicalScanHoldActive
+                    && rawScanHoldElapsed
+                    >= Mathf.Max(0.05f, biologicalScanMinimumHoldDuration))
+                {
+                    // A long second press always belongs to the biological
+                    // charge, even when it began inside the double-tap window.
+                    biologicalScanHoldActive = true;
+                    shortTapWaiting = false;
+                    shortTapWindowRemaining = 0f;
+                }
+            }
+            else if (rawScanHeldLastFrame)
+            {
+                if (!biologicalScanHoldActive)
+                    RegisterShortScanTap();
+
+                rawScanHoldElapsed = 0f;
+                biologicalScanHoldActive = false;
+            }
+
+            rawScanHeldLastFrame = rawScanHeld;
+            return rawScanHeld && biologicalScanHoldActive;
+        }
+
+        private void RegisterShortScanTap()
+        {
+            if (state != ScanVisualState.Idle)
+            {
+                shortTapWaiting = false;
+                shortTapWindowRemaining = 0f;
+                return;
+            }
+
+            if (shortTapWaiting && shortTapWindowRemaining > 0f)
+            {
+                shortTapWaiting = false;
+                shortTapWindowRemaining = 0f;
+                BeginTerrainScan();
+                return;
+            }
+
+            shortTapWaiting = true;
+            shortTapWindowRemaining = Mathf.Max(
+                0.05f,
+                terrainScanDoubleTapWindow);
+        }
+
+        private void ResetScanGesture()
+        {
+            rawScanHoldElapsed = 0f;
+            shortTapWindowRemaining = 0f;
+            rawScanHeldLastFrame = false;
+            biologicalScanHoldActive = false;
+            shortTapWaiting = false;
+        }
+
         private void LateUpdate()
         {
             PinRingToPlayerUiCenter();
+            UpdateOrganicVisibilityClip();
+        }
+
+        private void UpdateOrganicVisibilityClip()
+        {
+            PlayerUiOrganicVisibility.SetClip(
+                GetUiCenterScreenPoint(),
+                GetUiRingScreenRadiusPixels(),
+                organicVisibilityClipSoftnessPixels);
         }
 
         private void BeginCharge()
@@ -296,6 +437,7 @@ namespace AnimalGame.RobotMap
             cameraZoomPhase = ScanCameraZoomPhase.Charging;
             HideScanRing();
             SampleAuthoredState(HoldStateHash, 0f);
+            BiologicalScanChargeStarted?.Invoke();
         }
 
         private void CancelCharge()
@@ -303,6 +445,7 @@ namespace AnimalGame.RobotMap
             cancelledZoomStartSize = currentScanOrthographicSize;
             cancelledZoomElapsed = 0f;
             cameraZoomPhase = ScanCameraZoomPhase.Cancelling;
+            BiologicalScanChargeCancelled?.Invoke();
             EnterIdle(false);
         }
 
@@ -315,10 +458,17 @@ namespace AnimalGame.RobotMap
             releaseCameraZoomElapsed = 0f;
             releaseZoomStartSize = currentScanOrthographicSize;
             cameraZoomPhase = ScanCameraZoomPhase.Releasing;
-            ringPhase = ScanRingPhase.Expanding;
             SampleAuthoredState(ReleaseStateHash, 0f);
+            HideScanRing();
+            FullyChargedBiologicalScanReleased?.Invoke();
+        }
+
+        private void BeginTerrainScan()
+        {
+            releaseRingElapsed = 0f;
+            ringPhase = ScanRingPhase.Expanding;
             ShowRingAt(robotRingRadiusPixels, releaseRingColor);
-            FullyChargedScanReleased?.Invoke();
+            TerrainScanRequested?.Invoke();
         }
 
         private void EnterIdle(bool preserveReleaseRing)
@@ -674,6 +824,10 @@ namespace AnimalGame.RobotMap
 
         private void OnDisable()
         {
+            PlayerUiOrganicVisibility.DisableClip();
+            if (IsCharging)
+                BiologicalScanChargeCancelled?.Invoke();
+            ResetScanGesture();
             if (animator != null)
                 animator.speed = 0f;
             HideScanRing();
@@ -683,6 +837,12 @@ namespace AnimalGame.RobotMap
 
         private void OnValidate()
         {
+            biologicalScanMinimumHoldDuration = Mathf.Max(
+                0.05f,
+                biologicalScanMinimumHoldDuration);
+            terrainScanDoubleTapWindow = Mathf.Max(
+                0.05f,
+                terrainScanDoubleTapWindow);
             maximumChargeDuration = Mathf.Max(0.05f, maximumChargeDuration);
             releaseDuration = Mathf.Max(0.05f, releaseDuration);
             releaseRingExpansionDuration = Mathf.Max(
@@ -724,6 +884,9 @@ namespace AnimalGame.RobotMap
                 0.25f,
                 scanRingThicknessPixels);
             scanRingSegments = Mathf.Clamp(scanRingSegments, 24, 256);
+            organicVisibilityClipSoftnessPixels = Mathf.Max(
+                0f,
+                organicVisibilityClipSoftnessPixels);
         }
     }
 

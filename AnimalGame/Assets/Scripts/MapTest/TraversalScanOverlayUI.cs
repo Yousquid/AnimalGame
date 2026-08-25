@@ -210,7 +210,7 @@ namespace AnimalGame.MapTest
                 map.ContourIntervalMeters);
             CreateOverlayIfNeeded();
             PrewarmMarkerPool();
-            scanChargeUi.FullyChargedScanReleased += BeginScannedSnapshot;
+            scanChargeUi.TerrainScanRequested += BeginScannedSnapshot;
             ClearSnapshot();
         }
 
@@ -1100,7 +1100,7 @@ namespace AnimalGame.MapTest
         private void UnsubscribeFromScan()
         {
             if (scanChargeUi != null)
-                scanChargeUi.FullyChargedScanReleased -= BeginScannedSnapshot;
+                scanChargeUi.TerrainScanRequested -= BeginScannedSnapshot;
         }
 
         private void OnDisable()

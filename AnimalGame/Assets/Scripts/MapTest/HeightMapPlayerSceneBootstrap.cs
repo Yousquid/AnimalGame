@@ -83,6 +83,10 @@ namespace AnimalGame.MapTest
                 robotObject.AddComponent<RobotBalanceView>();
             if (robotObject.GetComponent<RobotArmController>() == null)
                 robotObject.AddComponent<RobotArmController>();
+            BioScanController bioScan =
+                robotObject.GetComponent<BioScanController>();
+            if (bioScan == null)
+                bioScan = robotObject.AddComponent<BioScanController>();
             if (robotObject.GetComponent<RobotSelfRightingController>() == null)
                 robotObject.AddComponent<RobotSelfRightingController>();
             Camera camera = cameraObject.GetComponent<Camera>();
@@ -125,6 +129,7 @@ namespace AnimalGame.MapTest
             cameraShake.Initialize(robot, balance, heightMotion);
             photoMode.InitializeCamera(cameraFollow, cameraShake);
             scanChargeUi.SetPhotoModeController(photoMode);
+            bioScan.Initialize(scanChargeUi);
             photoModeUi.Initialize(photoMode, camera);
             RobotTumbleUiRotation uiRotation =
                 mainUiObject.GetComponent<RobotTumbleUiRotation>();
