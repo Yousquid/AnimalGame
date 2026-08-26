@@ -42,6 +42,7 @@ namespace AnimalGame.Animals
         private float transitionTimer;
         private float lookCountdown;
         private float fallbackFleeTimer;
+        private float activitySoundCountdown;
         private int lookDirectionSign = 1;
         private Vector2 lookBaseDirection = Vector2.up;
 
@@ -82,6 +83,10 @@ namespace AnimalGame.Animals
                     TickSurfacing(deltaTime);
                     break;
                 case DailyPhase.FallbackIdle:
+                    Agent.SoundEmitter?.TickRepeated(
+                        AnimalSoundKind.Idle,
+                        ref activitySoundCountdown,
+                        deltaTime);
                     actionTimer -= deltaTime;
                     if (actionTimer <= 0f)
                         BeginNextDailyBehaviour();
@@ -112,12 +117,17 @@ namespace AnimalGame.Animals
             Motor.Stop();
             Agent.PlaceholderView?.RestoreVisibleAppearance();
             FacePlayerWhileCurious();
+            BeginRepeatedSound(AnimalSoundKind.Curious);
         }
 
         public override void TickCurious(float deltaTime)
         {
             Motor.Stop();
             FacePlayerWhileCurious();
+            Agent.SoundEmitter?.TickRepeated(
+                AnimalSoundKind.Curious,
+                ref activitySoundCountdown,
+                deltaTime);
         }
 
         public override void ExitCurious()
@@ -130,6 +140,7 @@ namespace AnimalGame.Animals
             fleePhase = FleePhase.None;
             fallbackFleeTimer = 0f;
             transitionTimer = 0f;
+            activitySoundCountdown = 0f;
             Motor.Stop();
             Agent.PlaceholderView?.RestoreVisibleAppearance();
 
@@ -200,6 +211,7 @@ namespace AnimalGame.Animals
             Motor.Stop();
             currentDailySettings = null;
             currentFoodSource = null;
+            activitySoundCountdown = 0f;
             availableBehaviours.Clear();
 
             IReadOnlyList<AnimalDailyBehaviourSettings> configuredBehaviours =
@@ -233,6 +245,7 @@ namespace AnimalGame.Animals
 
             dailyPhase = DailyPhase.FallbackIdle;
             actionTimer = 1f;
+            BeginRepeatedSound(AnimalSoundKind.Idle);
         }
 
         private void FacePlayerWhileCurious()
@@ -307,6 +320,7 @@ namespace AnimalGame.Animals
 
                     Motor.FaceMapPosition(nearbyFoodPosition);
                     dailyPhase = DailyPhase.Eating;
+                    BeginRepeatedSound(AnimalSoundKind.Eating);
                     return true;
 
                 case AnimalDailyBehaviourKind.RoamAndLook:
@@ -367,6 +381,10 @@ namespace AnimalGame.Animals
         private void TickEating(float deltaTime)
         {
             Motor.Stop();
+            Agent.SoundEmitter?.TickRepeated(
+                AnimalSoundKind.Eating,
+                ref activitySoundCountdown,
+                deltaTime);
             if (currentFoodSource != null
                 && currentFoodSource.TryGetMapPosition(
                     Agent.Map,
@@ -389,6 +407,7 @@ namespace AnimalGame.Animals
                 dailyPhase = DailyPhase.LookingAround;
                 lookCountdown = 0f;
                 lookDirectionSign = Random.value < 0.5f ? -1 : 1;
+                BeginRepeatedSound(AnimalSoundKind.Looking);
             }
             else if (travelTimer >= Config.MaximumTravelTimeSeconds)
             {
@@ -399,6 +418,10 @@ namespace AnimalGame.Animals
         private void TickLookingAround(float deltaTime)
         {
             Motor.Stop();
+            Agent.SoundEmitter?.TickRepeated(
+                AnimalSoundKind.Looking,
+                ref activitySoundCountdown,
+                deltaTime);
             actionTimer -= deltaTime;
             lookCountdown -= deltaTime;
             if (lookCountdown <= 0f)
@@ -422,6 +445,7 @@ namespace AnimalGame.Animals
             {
                 Motor.Stop();
                 dailyPhase = DailyPhase.Eating;
+                BeginRepeatedSound(AnimalSoundKind.Eating);
             }
             else if (travelTimer >= Config.MaximumTravelTimeSeconds
                      || currentFoodSource == null)
@@ -439,6 +463,7 @@ namespace AnimalGame.Animals
                 Agent.SetPerceptionSuppressed(true);
                 transitionTimer = 0f;
                 dailyPhase = DailyPhase.Submerging;
+                Agent.SoundEmitter?.Emit(AnimalSoundKind.Submerging);
             }
             else if (travelTimer >= Config.MaximumTravelTimeSeconds)
             {
@@ -479,6 +504,7 @@ namespace AnimalGame.Animals
 
             transitionTimer = 0f;
             dailyPhase = DailyPhase.Surfacing;
+            Agent.SoundEmitter?.Emit(AnimalSoundKind.Surfacing);
         }
 
         private void TickSurfacing(float deltaTime)
@@ -716,6 +742,7 @@ namespace AnimalGame.Animals
             Motor.Stop();
             transitionTimer = 0f;
             fleePhase = FleePhase.Submerging;
+            Agent.SoundEmitter?.Emit(AnimalSoundKind.Submerging);
         }
 
         private void BeginFallbackFlee()
@@ -763,6 +790,22 @@ namespace AnimalGame.Animals
         {
             Agent.SetPerceptionSuppressed(false);
             Agent.PlaceholderView?.RestoreVisibleAppearance();
+            activitySoundCountdown = 0f;
+        }
+
+        private void BeginRepeatedSound(AnimalSoundKind soundKind)
+        {
+            AnimalSoundEmitter emitter = Agent != null
+                ? Agent.SoundEmitter
+                : null;
+            if (emitter == null)
+            {
+                activitySoundCountdown = 0f;
+                return;
+            }
+
+            emitter.Emit(soundKind);
+            activitySoundCountdown = emitter.ChooseRepeatInterval(soundKind);
         }
 
         private static Vector2 Rotate(Vector2 value, float degrees)

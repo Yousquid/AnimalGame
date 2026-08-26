@@ -218,6 +218,7 @@ GameObject:
   - component: {fileID: 2442668759248348903}
   - component: {fileID: 4511366766958947892}
   - component: {fileID: 950923351353688800}
+  - component: {fileID: 7723140912345678901}
   - component: {fileID: 4693375148983939860}
   - component: {fileID: 4509910512206878976}
   m_Layer: 0
@@ -253,8 +254,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 96ee1c46ec8141fd970e39063a8ba4cb, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
   map: {fileID: 0}
   mapPositionMeters: {x: 0, y: 0}
   sampledSurfaceHeightMeters: 0
@@ -270,8 +271,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 2158aed473b09a54a963048b911b8184, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!114 &6688424352525102916
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -328,6 +329,119 @@ MonoBehaviour:
   config: {fileID: 11400000, guid: 5777bd6aebd0b124587566d577746815, type: 2}
   behaviourSet: {fileID: 4511366766958947892}
   placeholderView: {fileID: 2442668759248348903}
+  soundEmitter: {fileID: 7723140912345678901}
+--- !u!114 &7723140912345678901
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3409958733117504358}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a7d6e4f31c2b4a5f8e9d0c1b2a3f4e56, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  soundWaveShader: {fileID: 4800000, guid: e6f2a8c1d4b7457e90a3c5b8f1d6e2a9, type: 3}
+  soundWaveColor: {r: 0.88, g: 0.88, b: 0.88, a: 0.9}
+  ringBreakup: 0.38
+  ringIrregularity: 0.28
+  soundOriginOffset: {x: 0, y: 0}
+  sortingOrder: 995
+  overallRadiusMultiplier: 0.5
+  overallRingCountMultiplier: 0.5
+  overallEmissionFrequencyMultiplier: 0.15
+  idleSound:
+    enabled: 1
+    maximumRadiusMeters: 0.28
+    durationSeconds: 0.5
+    ringCount: 3
+    innerRadiusRatio: 0.23
+    lineWidthNormalized: 0.014
+    opacity: 0.55
+    repeatIntervalSeconds: {x: 1.6, y: 2.4}
+    radiusVariation: 0.08
+  lookingSound:
+    enabled: 1
+    maximumRadiusMeters: 0.4
+    durationSeconds: 0.58
+    ringCount: 4
+    innerRadiusRatio: 0.23
+    lineWidthNormalized: 0.014
+    opacity: 0.68
+    repeatIntervalSeconds: {x: 0.8, y: 1.25}
+    radiusVariation: 0.08
+  curiousSound:
+    enabled: 1
+    maximumRadiusMeters: 0.58
+    durationSeconds: 0.68
+    ringCount: 5
+    innerRadiusRatio: 0.23
+    lineWidthNormalized: 0.014
+    opacity: 0.72
+    repeatIntervalSeconds: {x: 1.1, y: 1.65}
+    radiusVariation: 0.08
+  eatingSound:
+    enabled: 1
+    maximumRadiusMeters: 0.55
+    durationSeconds: 0.68
+    ringCount: 5
+    innerRadiusRatio: 0.23
+    lineWidthNormalized: 0.014
+    opacity: 0.76
+    repeatIntervalSeconds: {x: 0.75, y: 1.1}
+    radiusVariation: 0.08
+  landMovementSound:
+    enabled: 1
+    maximumRadiusMeters: 0.78
+    durationSeconds: 0.62
+    ringCount: 5
+    innerRadiusRatio: 0.23
+    lineWidthNormalized: 0.014
+    opacity: 0.7
+    repeatIntervalSeconds: {x: 0.48, y: 0.68}
+    radiusVariation: 0.08
+  waterMovementSound:
+    enabled: 1
+    maximumRadiusMeters: 0.68
+    durationSeconds: 0.72
+    ringCount: 5
+    innerRadiusRatio: 0.23
+    lineWidthNormalized: 0.014
+    opacity: 0.68
+    repeatIntervalSeconds: {x: 0.58, y: 0.82}
+    radiusVariation: 0.08
+  fleeingSound:
+    enabled: 1
+    maximumRadiusMeters: 1.35
+    durationSeconds: 0.78
+    ringCount: 5
+    innerRadiusRatio: 0.23
+    lineWidthNormalized: 0.014
+    opacity: 0.84
+    repeatIntervalSeconds: {x: 0.22, y: 0.34}
+    radiusVariation: 0.08
+  submergingSound:
+    enabled: 1
+    maximumRadiusMeters: 1.8
+    durationSeconds: 1
+    ringCount: 5
+    innerRadiusRatio: 0.23
+    lineWidthNormalized: 0.014
+    opacity: 0.9
+    repeatIntervalSeconds: {x: 1, y: 1}
+    radiusVariation: 0.08
+  surfacingSound:
+    enabled: 1
+    maximumRadiusMeters: 2.2
+    durationSeconds: 1.1
+    ringCount: 5
+    innerRadiusRatio: 0.23
+    lineWidthNormalized: 0.014
+    opacity: 0.94
+    repeatIntervalSeconds: {x: 1, y: 1}
+    radiusVariation: 0.08
+  showSoundRangeGizmos: 1
 --- !u!114 &4693375148983939860
 MonoBehaviour:
   m_ObjectHideFlags: 0

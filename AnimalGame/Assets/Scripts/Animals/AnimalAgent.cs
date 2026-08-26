@@ -9,6 +9,7 @@ namespace AnimalGame.Animals
     [RequireComponent(typeof(HeightMapPlacedObject))]
     [RequireComponent(typeof(AnimalMotor))]
     [RequireComponent(typeof(AnimalPerception))]
+    [RequireComponent(typeof(AnimalSoundEmitter))]
     [AddComponentMenu("Animal Game/Animals/Animal Agent")]
     public sealed class AnimalAgent : MonoBehaviour
     {
@@ -18,12 +19,14 @@ namespace AnimalGame.Animals
         [SerializeField] private AnimalSpeciesConfig config;
         [SerializeField] private AnimalBehaviourSet behaviourSet;
         [SerializeField] private AnimalPlaceholderView placeholderView;
+        [SerializeField] private AnimalSoundEmitter soundEmitter;
 
         public AnimalSpeciesConfig Config => config;
         public static IEnumerable<AnimalAgent> ActiveAgents => activeAgents;
         public AnimalMotor Motor { get; private set; }
         public AnimalPerception Perception { get; private set; }
         public AnimalPlaceholderView PlaceholderView => placeholderView;
+        public AnimalSoundEmitter SoundEmitter => soundEmitter;
         public MapTestSceneController Map { get; private set; }
         public Vector2 HomeMapPosition { get; private set; }
         public AnimalState CurrentState { get; private set; } = AnimalState.Daily;
@@ -96,7 +99,10 @@ namespace AnimalGame.Animals
             }
 
             if (CurrentState != AnimalState.Despawned)
+            {
                 Motor.Tick(deltaTime);
+                soundEmitter?.Tick(deltaTime);
+            }
         }
 
         public void ConfigureEditorDefaults(
@@ -168,6 +174,10 @@ namespace AnimalGame.Animals
                 behaviourSet = GetComponent<AnimalBehaviourSet>();
             if (placeholderView == null)
                 placeholderView = GetComponent<AnimalPlaceholderView>();
+            if (soundEmitter == null)
+                soundEmitter = GetComponent<AnimalSoundEmitter>();
+            if (soundEmitter == null)
+                soundEmitter = gameObject.AddComponent<AnimalSoundEmitter>();
             if (Motor == null || Perception == null || behaviourSet == null)
             {
                 Debug.LogError(
@@ -181,6 +191,7 @@ namespace AnimalGame.Animals
             Motor.Initialize(Map, config);
             Perception.Initialize(Map, config);
             behaviourSet.Initialize(this);
+            soundEmitter.Initialize(this);
             placeholderView?.RestoreVisibleAppearance();
             initialized = true;
             CurrentState = AnimalState.Daily;

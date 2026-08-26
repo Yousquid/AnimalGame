@@ -47,6 +47,10 @@ namespace AnimalGame.RobotMap
         [SerializeField] private Shader biologicalSignalClipShader;
         [SerializeField] private Color scannerArtworkColor = Color.white;
         [SerializeField, Min(0.05f)] private float mechanicalArmArtworkScale = 0.9f;
+        [Tooltip("Length multiplier for the biological radar arm. This shortens the arm without changing its width.")]
+        [InspectorName("Mechanical Arm Length")]
+        [SerializeField, Range(0.2f, 1.5f)]
+        private float mechanicalArmLengthMultiplier = 0.68f;
         [SerializeField, Min(0.05f)] private float radarArtworkScale = 0.72f;
 
         [Header("Charge-Synchronised Preparation")]
@@ -302,7 +306,11 @@ namespace AnimalGame.RobotMap
                                             / armPixelsPerUnit
                                             * mechanicalArmArtworkScale);
             armTransform.localRotation = Quaternion.Euler(0f, 0f, 180f);
-            armTransform.localScale = Vector3.one * mechanicalArmArtworkScale;
+            armTransform.localScale = new Vector3(
+                mechanicalArmArtworkScale,
+                mechanicalArmArtworkScale
+                * Mathf.Clamp(mechanicalArmLengthMultiplier, 0.2f, 1.5f),
+                mechanicalArmArtworkScale);
             SpriteRenderer armRenderer = armObject.AddComponent<SpriteRenderer>();
             ConfigureScannerRenderer(armRenderer, mechanicalArmSprite, 1240);
 
@@ -354,7 +362,11 @@ namespace AnimalGame.RobotMap
                 : 100f;
             float armLength = ArmVisibleLengthPixels
                               / armPixelsPerUnit
-                              * mechanicalArmArtworkScale;
+                              * mechanicalArmArtworkScale
+                              * Mathf.Clamp(
+                                  mechanicalArmLengthMultiplier,
+                                  0.2f,
+                                  1.5f);
             float radarHeight = RadarVisibleHeightPixels
                                 / radarPixelsPerUnit
                                 * radarArtworkScale;
@@ -732,6 +744,10 @@ namespace AnimalGame.RobotMap
             mechanicalArmArtworkScale = Mathf.Max(
                 0.05f,
                 mechanicalArmArtworkScale);
+            mechanicalArmLengthMultiplier = Mathf.Clamp(
+                mechanicalArmLengthMultiplier,
+                0.2f,
+                1.5f);
             radarArtworkScale = Mathf.Max(0.05f, radarArtworkScale);
             signalFormationStartCharge01 = Mathf.Clamp(
                 signalFormationStartCharge01,

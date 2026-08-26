@@ -433,6 +433,7 @@ MonoBehaviour:
   biologicalSignalClipShader: {fileID: 4800000, guid: aa45bb6104a64fe6a10bda70603de7ef, type: 3}
   scannerArtworkColor: {r: 1, g: 1, b: 1, a: 1}
   mechanicalArmArtworkScale: 0.9
+  mechanicalArmLengthMultiplier: 0.68
   radarArtworkScale: 0.72
   signalFormationStartCharge01: 0.62
   readyRingPulseAmplitude: 0.07
