@@ -1,13 +1,14 @@
+using System;
 using System.Collections.Generic;
 using AnimalGame.Discovery;
-using AnimalGame.MapTest;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace AnimalGame.RobotMap
 {
     /// <summary>
-    /// Deploys the player's biological radar and owns its deep-blue radial
-    /// signal projectiles. Input gesture recognition remains in ScanChargeUI so
+    /// Deploys the player's biological radar and owns its radial signal points.
+    /// Input gesture recognition remains in ScanChargeUI so
     /// LB has one authoritative short-tap/long-hold router.
     /// </summary>
     [DefaultExecutionOrder(310)]
@@ -22,6 +23,8 @@ namespace AnimalGame.RobotMap
             Shader.PropertyToID("_ClipRadiusPixels");
         private static readonly int ClipSoftnessPixelsProperty =
             Shader.PropertyToID("_ClipSoftnessPixels");
+        private static readonly int PointCoreRatioProperty =
+            Shader.PropertyToID("_PointCoreRatio");
 
         private enum ScannerPhase
         {
@@ -40,14 +43,14 @@ namespace AnimalGame.RobotMap
         [SerializeField] private Sprite mechanicalArmSprite;
         [Tooltip("Arts/robot_bioradar, displayed at the end of the mechanical arm.")]
         [SerializeField] private Sprite biologicalRadarSprite;
-        [Tooltip("Screen-space shader that clips biological signal points and trails to the fixed circular player UI.")]
+        [Tooltip("Procedural point shader that clips biological signals to the fixed circular player UI.")]
         [SerializeField] private Shader biologicalSignalClipShader;
         [SerializeField] private Color scannerArtworkColor = Color.white;
         [SerializeField, Min(0.05f)] private float mechanicalArmArtworkScale = 0.9f;
         [SerializeField, Min(0.05f)] private float radarArtworkScale = 0.72f;
 
         [Header("Charge-Synchronised Preparation")]
-        [Tooltip("Charge progress at which the deep-blue ready points begin becoming visible around the deployed radar.")]
+        [Tooltip("Charge progress at which the ready points begin becoming visible around the deployed radar.")]
         [SerializeField, Range(0f, 0.95f)]
         private float signalFormationStartCharge01 = 0.62f;
         [Tooltip("Fractional radius pulse of the ready-point ring while a fully charged scan is still held.")]
@@ -59,7 +62,16 @@ namespace AnimalGame.RobotMap
         [SerializeField, Min(0.05f)] private float retractionDuration = 0.25f;
 
         [Header("Biological Signal")]
-        [SerializeField, Range(8, 96)] private int signalPointCount = 36;
+        [Tooltip("Minimum number of evenly distributed signal points in one 360-degree scan.")]
+        [InspectorName("Minimum Point Count")]
+        [SerializeField, Range(24, 360)] private int signalPointCount = 240;
+        [Tooltip("Automatically adds enough points to keep the outer edge of the scan densely covered.")]
+        [SerializeField] private bool automaticAngularCoverage = true;
+        [Tooltip("Safety cap for automatically calculated point density.")]
+        [SerializeField, Range(24, 720)] private int maximumPointCount = 360;
+        [Tooltip("How much neighbouring points overlap at the scan's maximum radius.")]
+        [SerializeField, Range(0f, 0.75f)]
+        private float pointCoverageOverlap = 0.1f;
         [SerializeField, Min(0.01f)] private float formedRingRadius = 0.2f;
         [SerializeField, Min(0.1f)] private float signalSpeed = 10f;
         [SerializeField, Min(0.1f)] private float maximumSignalDistance = 12f;
@@ -69,31 +81,22 @@ namespace AnimalGame.RobotMap
         [Tooltip("Fraction of the leading point occupied by its bright solid core.")]
         [SerializeField, Range(0.2f, 0.9f)]
         private float signalHeadCoreRatio = 0.5f;
-        [Tooltip("Subtle scale pulse used to distinguish the leading point from its trail.")]
+        [Tooltip("Subtle scale pulse used while the ready-point ring is charging.")]
         [SerializeField, Range(0f, 0.25f)]
         private float signalHeadPulseAmount = 0.06f;
         [SerializeField, Min(0.1f)] private float signalHeadPulseFrequency = 4.5f;
-        [SerializeField, Min(0.01f)] private float signalCollisionRadius = 0.14f;
-        [Tooltip("How long emitted trail segments remain after the leading point stops.")]
-        [SerializeField, Min(0.01f)] private float signalTrailDuration = 0.5f;
-        [Tooltip("Trail width as a fraction of the leading point diameter.")]
-        [SerializeField, Range(0.1f, 1f)] private float trailWidthRatio = 0.38f;
-        [Tooltip("Visible length of one repeated trail dash, in world units.")]
-        [SerializeField, Min(0.01f)] private float trailDashLength = 0.14f;
-        [Tooltip("Empty gap after each trail dash, in world units.")]
-        [SerializeField, Min(0.01f)] private float trailGapLength = 0.09f;
+        [Tooltip("Half-thickness of the invisible expanding detection wave. Points never collide or stop.")]
+        [FormerlySerializedAs("signalCollisionRadius")]
+        [SerializeField, Min(0.01f)] private float scanWaveHalfThickness = 0.14f;
         [Tooltip("Softness of the circular player-UI clipping edge, in screen pixels.")]
         [SerializeField, Min(0f)] private float signalClipSoftnessPixels = 1.5f;
         [SerializeField, Min(0.1f)] private float temporaryRevealDuration = 5f;
 
-        [Tooltip("Deep blue used by every biological signal point and its trail.")]
+        [Tooltip("Color used by every biological signal point.")]
         [SerializeField] private Color biologicalSignalColor =
             new Color(0.055f, 0.2f, 0.72f, 1f);
 
-        private readonly List<SignalProjectile> signalPool =
-            new List<SignalProjectile>();
-        private readonly List<SignalProjectile> formingSignals =
-            new List<SignalProjectile>();
+        private readonly HashSet<int> revealedEntityIds = new HashSet<int>();
 
         private RobotMarkerView markerView;
         private ScanChargeUI scanInput;
@@ -101,12 +104,17 @@ namespace AnimalGame.RobotMap
         private Transform armRevealRoot;
         private Transform radarTransform;
         private Transform signalOrigin;
-        private Transform signalPoolRoot;
+        private Transform signalParticleRoot;
+        private ParticleSystem formingPointSystem;
+        private ParticleSystem emittedPointSystem;
+        private ParticleSystem.Particle[] formationParticles =
+            Array.Empty<ParticleSystem.Particle>();
         private Material signalPointMaterial;
-        private Material signalTrailMaterial;
-        private Sprite generatedSignalSprite;
-        private Texture2D generatedSignalTexture;
-        private Texture2D generatedTrailTexture;
+        private int formingPointCount;
+        private bool signalFormationActive;
+        private Vector2 scanWaveOrigin;
+        private float scanWaveRadius;
+        private bool scanWaveActive;
         private ScannerPhase phase;
         private float phaseElapsed;
         private float currentDeployment01;
@@ -115,22 +123,6 @@ namespace AnimalGame.RobotMap
 
         public bool IsScanning => phase != ScannerPhase.Hidden;
         public bool IsCharging => phase == ScannerPhase.Charging;
-
-        private sealed class SignalProjectile
-        {
-            public GameObject GameObject;
-            public Transform Transform;
-            public SpriteRenderer Renderer;
-            public TrailRenderer Trail;
-            public Vector2 Direction;
-            public Vector2 Position;
-            public float DistanceTravelled;
-            public bool IsActive;
-            public bool IsLaunched;
-            public bool IsTailFading;
-            public float TailFadeRemaining;
-            public float PulsePhase;
-        }
 
         private void Awake()
         {
@@ -165,7 +157,7 @@ namespace AnimalGame.RobotMap
         {
             float visualDeltaTime = Mathf.Max(0f, Time.unscaledDeltaTime);
             UpdateSignalClipMaterials();
-            TickActiveSignals(Mathf.Max(0f, Time.deltaTime));
+            TickScanWave(Mathf.Max(0f, Time.deltaTime));
 
             if (phase == ScannerPhase.Hidden)
                 return;
@@ -256,7 +248,7 @@ namespace AnimalGame.RobotMap
                 return;
 
             scannerRoot.gameObject.SetActive(true);
-            if (formingSignals.Count == 0)
+            if (!signalFormationActive)
                 BeginSignalFormation();
             ApplyDeployment(1f);
             UpdateSignalFormation(1f, 1f);
@@ -381,22 +373,19 @@ namespace AnimalGame.RobotMap
         private void BeginSignalFormation()
         {
             DeactivateFormingSignals();
-            Vector2 center = GetSignalOriginWorld();
-            int pointCount = Mathf.Clamp(signalPointCount, 8, 96);
-            for (int index = 0; index < pointCount; index++)
+            if (formingPointSystem == null)
+                CreateSignalResources();
+
+            formingPointCount = CalculateEffectivePointCount();
+            if (formationParticles.Length < formingPointCount)
+                Array.Resize(ref formationParticles, formingPointCount);
+
+            signalFormationActive = formingPointSystem != null;
+            if (formingPointSystem != null)
             {
-                float angle = index / (float)pointCount * Mathf.PI * 2f;
-                Vector2 direction = new Vector2(
-                    Mathf.Cos(angle),
-                    Mathf.Sin(angle));
-                SignalProjectile signal = GetSignalFromPool();
-                PrepareSignalForFormation(signal);
-                signal.Direction = direction;
-                signal.Position = center;
-                signal.DistanceTravelled = 0f;
-                signal.PulsePhase = angle;
-                signal.Transform.position = new Vector3(center.x, center.y, -0.22f);
-                formingSignals.Add(signal);
+                formingPointSystem.Clear(true);
+                if (!formingPointSystem.isPlaying)
+                    formingPointSystem.Play(true);
             }
         }
 
@@ -404,179 +393,173 @@ namespace AnimalGame.RobotMap
             float progress,
             float radiusMultiplier)
         {
+            if (!signalFormationActive || formingPointSystem == null)
+                return;
+
             Vector2 center = GetSignalOriginWorld();
             progress = Mathf.Clamp01(progress);
-            bool visible = progress > 0.001f;
+            if (progress <= 0.001f)
+            {
+                formingPointSystem.Clear(true);
+                return;
+            }
+
             float radius = Mathf.SmoothStep(0f, 1f, progress)
                            * Mathf.Max(0.01f, formedRingRadius)
                            * Mathf.Max(0f, radiusMultiplier);
-            for (int index = 0; index < formingSignals.Count; index++)
+            float baseSize = Mathf.Max(0.01f, signalPointDiameter)
+                             * Mathf.Lerp(0.35f, 1f, progress);
+            float pulseTime = Time.unscaledTime
+                              * Mathf.Max(0.1f, signalHeadPulseFrequency)
+                              * Mathf.PI
+                              * 2f;
+            Color32 pointColor = biologicalSignalColor;
+            for (int index = 0; index < formingPointCount; index++)
             {
-                SignalProjectile signal = formingSignals[index];
-                if (!signal.IsActive || signal.IsLaunched)
-                    continue;
-
-                if (signal.GameObject.activeSelf != visible)
-                    signal.GameObject.SetActive(visible);
-                signal.Position = center + signal.Direction * radius;
-                signal.Transform.position = new Vector3(
-                    signal.Position.x,
-                    signal.Position.y,
+                float angle01 = index / (float)formingPointCount;
+                float angle = angle01 * Mathf.PI * 2f;
+                Vector2 direction = new Vector2(
+                    Mathf.Cos(angle),
+                    Mathf.Sin(angle));
+                float pulse = 1f
+                              + Mathf.Sin(pulseTime + angle)
+                              * Mathf.Clamp(signalHeadPulseAmount, 0f, 0.25f);
+                formationParticles[index].position = new Vector3(
+                    center.x + direction.x * radius,
+                    center.y + direction.y * radius,
                     -0.22f);
-                signal.Transform.localScale = Vector3.one
-                                              * (Mathf.Max(
-                                                     0.01f,
-                                                     signalPointDiameter)
-                                                 * Mathf.Lerp(
-                                                     0.35f,
-                                                     1f,
-                                                     progress));
+                formationParticles[index].velocity = Vector3.zero;
+                formationParticles[index].startLifetime = 1000f;
+                formationParticles[index].remainingLifetime = 1000f;
+                formationParticles[index].startSize = baseSize * pulse;
+                formationParticles[index].startColor = pointColor;
             }
+
+            formingPointSystem.SetParticles(
+                formationParticles,
+                formingPointCount);
         }
 
         private void LaunchFormedSignals()
         {
-            for (int index = 0; index < formingSignals.Count; index++)
+            if (emittedPointSystem == null)
+                CreateSignalResources();
+            if (emittedPointSystem == null)
             {
-                SignalProjectile signal = formingSignals[index];
-                if (!signal.IsActive)
-                    continue;
-
-                signal.IsLaunched = true;
-                signal.IsTailFading = false;
-                signal.Trail.Clear();
-                signal.Trail.emitting = true;
+                DeactivateFormingSignals();
+                return;
             }
-            formingSignals.Clear();
+
+            if (!emittedPointSystem.isPlaying)
+                emittedPointSystem.Play(true);
+
+            Vector2 center = GetSignalOriginWorld();
+            float initialRadius = Mathf.Max(0.01f, formedRingRadius);
+            float speed = Mathf.Max(0.1f, signalSpeed);
+            float lifetime = Mathf.Max(0.1f, maximumSignalDistance) / speed;
+            int pointCount = signalFormationActive && formingPointCount > 0
+                ? formingPointCount
+                : CalculateEffectivePointCount();
+            var emit = new ParticleSystem.EmitParams
+            {
+                startLifetime = lifetime,
+                startSize = Mathf.Max(0.01f, signalPointDiameter),
+                startColor = biologicalSignalColor
+            };
+            for (int index = 0; index < pointCount; index++)
+            {
+                float angle = index / (float)pointCount * Mathf.PI * 2f;
+                Vector2 direction = new Vector2(
+                    Mathf.Cos(angle),
+                    Mathf.Sin(angle));
+                emit.position = new Vector3(
+                    center.x + direction.x * initialRadius,
+                    center.y + direction.y * initialRadius,
+                    -0.22f);
+                emit.velocity = new Vector3(
+                    direction.x * speed,
+                    direction.y * speed,
+                    0f);
+                emittedPointSystem.Emit(emit, 1);
+            }
+
+            scanWaveOrigin = center;
+            scanWaveRadius = initialRadius;
+            scanWaveActive = true;
+            revealedEntityIds.Clear();
+            RevealTargetsCrossedByWave(0f, initialRadius);
+            DeactivateFormingSignals();
         }
 
         private void DeactivateFormingSignals()
         {
-            for (int index = 0; index < formingSignals.Count; index++)
-            {
-                SignalProjectile signal = formingSignals[index];
-                if (signal != null && signal.IsActive && !signal.IsLaunched)
-                    RecycleSignalImmediately(signal);
-            }
-            formingSignals.Clear();
+            signalFormationActive = false;
+            formingPointCount = 0;
+            if (formingPointSystem != null)
+                formingPointSystem.Clear(true);
         }
 
-        private void TickActiveSignals(float deltaTime)
+        private int CalculateEffectivePointCount()
         {
-            float speed = Mathf.Max(0.1f, signalSpeed);
-            for (int index = 0; index < signalPool.Count; index++)
-            {
-                SignalProjectile signal = signalPool[index];
-                if (signal.IsTailFading)
-                {
-                    signal.TailFadeRemaining -= deltaTime;
-                    if (signal.TailFadeRemaining <= 0f)
-                        RecycleSignalImmediately(signal);
-                    continue;
-                }
+            int maximum = Mathf.Clamp(maximumPointCount, 24, 720);
+            int minimum = Mathf.Clamp(signalPointCount, 24, maximum);
+            if (!automaticAngularCoverage)
+                return minimum;
 
-                if (!signal.IsActive || !signal.IsLaunched)
-                    continue;
-
-                UpdateSignalHeadPulse(signal);
-
-                Vector2 previous = signal.Position;
-                float step = speed * deltaTime;
-                Vector2 next = previous + signal.Direction * step;
-                if (TryHitScanTarget(previous, next))
-                {
-                    BeginSignalTailFade(signal);
-                    continue;
-                }
-
-                signal.Position = next;
-                signal.DistanceTravelled += step;
-                signal.Transform.position = new Vector3(next.x, next.y, -0.22f);
-                if (signal.DistanceTravelled
-                    >= Mathf.Max(0.1f, maximumSignalDistance))
-                {
-                    BeginSignalTailFade(signal);
-                }
-            }
+            float outerRadius = Mathf.Max(0.01f, formedRingRadius)
+                                + Mathf.Max(0.1f, maximumSignalDistance);
+            float spacing = Mathf.Max(0.01f, signalPointDiameter)
+                            * Mathf.Max(
+                                0.05f,
+                                1f - Mathf.Clamp01(pointCoverageOverlap));
+            int required = Mathf.CeilToInt(
+                Mathf.PI * 2f * outerRadius / spacing);
+            return Mathf.Clamp(Mathf.Max(minimum, required), 24, maximum);
         }
 
-        private void UpdateSignalHeadPulse(SignalProjectile signal)
+        private void TickScanWave(float deltaTime)
         {
-            float pulse = 1f
-                          + Mathf.Sin(
-                              Time.time
-                              * Mathf.Max(0.1f, signalHeadPulseFrequency)
-                              * Mathf.PI
-                              * 2f
-                              + signal.PulsePhase)
-                          * Mathf.Clamp(signalHeadPulseAmount, 0f, 0.25f);
-            signal.Transform.localScale = Vector3.one
-                                          * Mathf.Max(
-                                              0.01f,
-                                              signalPointDiameter)
-                                          * pulse;
+            if (!scanWaveActive || deltaTime <= 0f)
+                return;
+
+            float previousRadius = scanWaveRadius;
+            float maximumRadius = Mathf.Max(0.01f, formedRingRadius)
+                                  + Mathf.Max(0.1f, maximumSignalDistance);
+            scanWaveRadius = Mathf.Min(
+                maximumRadius,
+                scanWaveRadius + Mathf.Max(0.1f, signalSpeed) * deltaTime);
+            RevealTargetsCrossedByWave(previousRadius, scanWaveRadius);
+            if (scanWaveRadius >= maximumRadius - 0.0001f)
+                scanWaveActive = false;
         }
 
-        private bool TryHitScanTarget(Vector2 segmentStart, Vector2 segmentEnd)
+        private void RevealTargetsCrossedByWave(
+            float previousRadius,
+            float currentRadius)
         {
-            float projectileRadius = Mathf.Max(0.01f, signalCollisionRadius);
+            float thickness = Mathf.Max(0.01f, scanWaveHalfThickness);
+            float innerRadius = Mathf.Max(0f, previousRadius - thickness);
+            float outerRadius = currentRadius + thickness;
             foreach (DiscoverableEntity entity in DiscoverableEntity.Active)
             {
                 if (entity == null || !entity.isActiveAndEnabled)
                     continue;
-
-                float targetRadius =
-                    entity.GetBiologicalScanCollisionRadiusWorld();
-                if (DistanceSquaredToSegment(
-                        entity.transform.position,
-                        segmentStart,
-                        segmentEnd)
-                    > Mathf.Pow(projectileRadius + targetRadius, 2f))
-                {
+                int entityId = entity.GetInstanceID();
+                if (revealedEntityIds.Contains(entityId))
                     continue;
-                }
 
+                float targetRadius = Mathf.Max(
+                    0f,
+                    entity.GetBiologicalScanCollisionRadiusWorld());
+                float distance = Vector2.Distance(
+                    scanWaveOrigin,
+                    entity.transform.position);
+                if (distance + targetRadius < innerRadius
+                    || distance - targetRadius > outerRadius)
+                    continue;
+                revealedEntityIds.Add(entityId);
                 entity.RevealTemporarily(temporaryRevealDuration);
-                return true;
             }
-
-            foreach (VegetationContactFade vegetation in
-                     VegetationContactFade.Active)
-            {
-                if (vegetation == null || !vegetation.isActiveAndEnabled)
-                    continue;
-
-                float targetRadius =
-                    vegetation.GetBiologicalScanCollisionRadiusWorld();
-                if (DistanceSquaredToSegment(
-                        vegetation.transform.position,
-                        segmentStart,
-                        segmentEnd)
-                    <= Mathf.Pow(projectileRadius + targetRadius, 2f))
-                {
-                    // Plants consume the signal now; a future plant discovery
-                    // presentation can be connected here without changing travel.
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private static float DistanceSquaredToSegment(
-            Vector2 point,
-            Vector2 segmentStart,
-            Vector2 segmentEnd)
-        {
-            Vector2 segment = segmentEnd - segmentStart;
-            float denominator = segment.sqrMagnitude;
-            if (denominator <= 0.000001f)
-                return (point - segmentStart).sqrMagnitude;
-
-            float projection = Mathf.Clamp01(
-                Vector2.Dot(point - segmentStart, segment) / denominator);
-            Vector2 nearest = segmentStart + segment * projection;
-            return (point - nearest).sqrMagnitude;
         }
 
         private Vector2 GetSignalOriginWorld()
@@ -585,138 +568,10 @@ namespace AnimalGame.RobotMap
             return origin.position;
         }
 
-        private SignalProjectile GetSignalFromPool()
-        {
-            for (int index = 0; index < signalPool.Count; index++)
-            {
-                if (!signalPool[index].IsActive)
-                    return signalPool[index];
-            }
-
-            var signalObject = new GameObject(
-                $"Biological Signal Point {signalPool.Count + 1}");
-            signalObject.transform.SetParent(signalPoolRoot, false);
-            var renderer = signalObject.AddComponent<SpriteRenderer>();
-            renderer.sprite = generatedSignalSprite;
-            renderer.color = biologicalSignalColor;
-            renderer.sortingOrder = 1261;
-            renderer.sharedMaterial = signalPointMaterial;
-            renderer.transform.localScale = Vector3.one
-                                            * Mathf.Max(
-                                                0.01f,
-                                                signalPointDiameter);
-
-            var trail = signalObject.AddComponent<TrailRenderer>();
-            trail.time = Mathf.Max(0.01f, signalTrailDuration);
-            trail.minVertexDistance = 0.015f;
-            trail.widthMultiplier = Mathf.Max(0.01f, signalPointDiameter)
-                                    * Mathf.Clamp(trailWidthRatio, 0.1f, 1f);
-            trail.sharedMaterial = signalTrailMaterial;
-            trail.sortingOrder = 1259;
-            trail.textureMode = LineTextureMode.Tile;
-            trail.alignment = LineAlignment.View;
-            trail.colorGradient = CreateTrailGradient();
-            trail.emitting = false;
-
-            var signal = new SignalProjectile
-            {
-                GameObject = signalObject,
-                Transform = signalObject.transform,
-                Renderer = renderer,
-                Trail = trail
-            };
-            signalPool.Add(signal);
-            signalObject.SetActive(false);
-            return signal;
-        }
-
-        private void PrepareSignalForFormation(SignalProjectile signal)
-        {
-            signal.IsActive = true;
-            signal.IsLaunched = false;
-            signal.IsTailFading = false;
-            signal.TailFadeRemaining = 0f;
-            signal.Renderer.enabled = true;
-            signal.Renderer.color = biologicalSignalColor;
-            signal.Transform.localScale = Vector3.one
-                                          * Mathf.Max(
-                                              0.01f,
-                                              signalPointDiameter);
-            signal.Trail.time = Mathf.Max(0.01f, signalTrailDuration);
-            signal.Trail.widthMultiplier = Mathf.Max(
-                                               0.01f,
-                                               signalPointDiameter)
-                                           * Mathf.Clamp(
-                                               trailWidthRatio,
-                                               0.1f,
-                                               1f);
-            signal.Trail.colorGradient = CreateTrailGradient();
-            signal.Trail.emitting = false;
-            signal.Trail.Clear();
-            signal.GameObject.SetActive(false);
-        }
-
-        private Gradient CreateTrailGradient()
-        {
-            var gradient = new Gradient();
-            Color opaque = biologicalSignalColor;
-            gradient.SetKeys(
-                new[]
-                {
-                    new GradientColorKey(opaque, 0f),
-                    new GradientColorKey(opaque, 1f)
-                },
-                new[]
-                {
-                    new GradientAlphaKey(0f, 0f),
-                    new GradientAlphaKey(opaque.a, 1f)
-                });
-            return gradient;
-        }
-
-        private void BeginSignalTailFade(SignalProjectile signal)
-        {
-            if (signal == null || !signal.IsActive)
-                return;
-
-            signal.IsLaunched = false;
-            signal.IsTailFading = true;
-            signal.TailFadeRemaining = Mathf.Max(
-                0.01f,
-                signalTrailDuration);
-            if (signal.Renderer != null)
-                signal.Renderer.enabled = false;
-            if (signal.Trail != null)
-                signal.Trail.emitting = false;
-        }
-
-        private void RecycleSignalImmediately(SignalProjectile signal)
-        {
-            if (signal == null)
-                return;
-
-            signal.IsActive = false;
-            signal.IsLaunched = false;
-            signal.IsTailFading = false;
-            signal.TailFadeRemaining = 0f;
-            if (signal.Renderer != null)
-                signal.Renderer.enabled = true;
-            if (signal.Trail != null)
-            {
-                signal.Trail.emitting = false;
-                signal.Trail.Clear();
-            }
-            if (signal.GameObject != null)
-                signal.GameObject.SetActive(false);
-        }
-
         private void CreateSignalResources()
         {
-            if (signalPoolRoot == null)
-            {
-                var poolObject = new GameObject("Biological Signal Pool");
-                signalPoolRoot = poolObject.transform;
-            }
+            if (formingPointSystem != null && emittedPointSystem != null)
+                return;
 
             Shader signalShader = biologicalSignalClipShader != null
                 ? biologicalSignalClipShader
@@ -734,107 +589,53 @@ namespace AnimalGame.RobotMap
                 {
                     name = "Runtime Biological Signal Point Material"
                 };
-                signalTrailMaterial = new Material(signalShader)
-                {
-                    name = "Runtime Biological Signal Dashed Trail Material"
-                };
+                signalPointMaterial.SetFloat(
+                    PointCoreRatioProperty,
+                    Mathf.Clamp(signalHeadCoreRatio, 0.2f, 0.9f));
             }
 
-            const int textureSize = 24;
-            generatedSignalTexture = new Texture2D(
-                textureSize,
-                textureSize,
-                TextureFormat.RGBA32,
-                false)
-            {
-                name = "Generated Biological Signal Point",
-                filterMode = FilterMode.Bilinear,
-                wrapMode = TextureWrapMode.Clamp
-            };
-            Color[] pixels = new Color[textureSize * textureSize];
-            Vector2 center = Vector2.one * ((textureSize - 1) * 0.5f);
-            float radius = textureSize * 0.46f;
-            float coreRadius = radius
-                               * Mathf.Clamp(
-                                   signalHeadCoreRatio,
-                                   0.2f,
-                                   0.9f);
-            for (int y = 0; y < textureSize; y++)
-            {
-                for (int x = 0; x < textureSize; x++)
-                {
-                    float distance = Vector2.Distance(
-                        new Vector2(x, y),
-                        center);
-                    float outerShape = 1f - Mathf.SmoothStep(
-                        radius - 0.85f,
-                        radius,
-                        distance);
-                    float core = 1f - Mathf.SmoothStep(
-                        coreRadius - 0.65f,
-                        coreRadius + 0.65f,
-                        distance);
-                    float alpha = Mathf.Max(
-                        core,
-                        outerShape * 0.52f);
-                    float brightness = Mathf.Lerp(0.72f, 1f, core);
-                    pixels[y * textureSize + x] = new Color(
-                        brightness,
-                        brightness,
-                        brightness,
-                        alpha);
-                }
-            }
-            generatedSignalTexture.SetPixels(pixels);
-            generatedSignalTexture.Apply(false, true);
-            generatedSignalSprite = Sprite.Create(
-                generatedSignalTexture,
-                new Rect(0f, 0f, textureSize, textureSize),
-                Vector2.one * 0.5f,
-                textureSize);
-            generatedSignalSprite.name = "Generated Biological Signal Point";
-
-            const int dashTextureWidth = 64;
-            const int dashTextureHeight = 4;
-            generatedTrailTexture = new Texture2D(
-                dashTextureWidth,
-                dashTextureHeight,
-                TextureFormat.RGBA32,
-                false)
-            {
-                name = "Generated Biological Signal Dash Pattern",
-                filterMode = FilterMode.Point,
-                wrapMode = TextureWrapMode.Repeat
-            };
-            Color[] dashPixels = new Color[
-                dashTextureWidth * dashTextureHeight];
-            float dashFraction = trailDashLength
-                                 / Mathf.Max(
-                                     0.02f,
-                                     trailDashLength + trailGapLength);
-            for (int y = 0; y < dashTextureHeight; y++)
-            {
-                for (int x = 0; x < dashTextureWidth; x++)
-                {
-                    float patternPosition = (x + 0.5f) / dashTextureWidth;
-                    float alpha = patternPosition <= dashFraction ? 1f : 0f;
-                    dashPixels[y * dashTextureWidth + x] =
-                        new Color(1f, 1f, 1f, alpha);
-                }
-            }
-            generatedTrailTexture.SetPixels(dashPixels);
-            generatedTrailTexture.Apply(false, true);
-            if (signalTrailMaterial != null)
-            {
-                signalTrailMaterial.mainTexture = generatedTrailTexture;
-                float patternLength = Mathf.Max(
-                    0.02f,
-                    trailDashLength + trailGapLength);
-                signalTrailMaterial.mainTextureScale = new Vector2(
-                    1f / patternLength,
-                    1f);
-            }
+            var rootObject = new GameObject("Biological Signal Particles");
+            signalParticleRoot = rootObject.transform;
+            formingPointSystem = CreatePointParticleSystem(
+                "Biological Signal Ready Ring",
+                Mathf.Clamp(maximumPointCount, 24, 720));
+            emittedPointSystem = CreatePointParticleSystem(
+                "Biological Signal Emitted Points",
+                Mathf.Max(2048, Mathf.Clamp(maximumPointCount, 24, 720) * 8));
             UpdateSignalClipMaterials();
+        }
+
+        private ParticleSystem CreatePointParticleSystem(
+            string systemName,
+            int maxParticles)
+        {
+            var systemObject = new GameObject(systemName);
+            systemObject.transform.SetParent(signalParticleRoot, false);
+            var system = systemObject.AddComponent<ParticleSystem>();
+            ParticleSystem.MainModule main = system.main;
+            main.loop = true;
+            main.playOnAwake = false;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.startLifetime = 1000f;
+            main.startSpeed = 0f;
+            main.startSize = 1f;
+            main.startColor = Color.white;
+            main.maxParticles = Mathf.Max(24, maxParticles);
+            main.cullingMode = ParticleSystemCullingMode.AlwaysSimulate;
+
+            ParticleSystem.EmissionModule emission = system.emission;
+            emission.enabled = false;
+            ParticleSystem.ShapeModule shape = system.shape;
+            shape.enabled = false;
+            ParticleSystem.TrailModule trails = system.trails;
+            trails.enabled = false;
+
+            var renderer = system.GetComponent<ParticleSystemRenderer>();
+            renderer.renderMode = ParticleSystemRenderMode.Billboard;
+            renderer.sortingOrder = 1261;
+            renderer.sharedMaterial = signalPointMaterial;
+            system.Play(true);
+            return system;
         }
 
         private void UpdateSignalClipMaterials()
@@ -849,10 +650,12 @@ namespace AnimalGame.RobotMap
                 signalPointMaterial,
                 centerPixels,
                 radiusPixels);
-            ApplySignalClip(
-                signalTrailMaterial,
-                centerPixels,
-                radiusPixels);
+            if (signalPointMaterial != null)
+            {
+                signalPointMaterial.SetFloat(
+                    PointCoreRatioProperty,
+                    Mathf.Clamp(signalHeadCoreRatio, 0.2f, 0.9f));
+            }
         }
 
         private void ApplySignalClip(
@@ -909,25 +712,19 @@ namespace AnimalGame.RobotMap
             DeactivateFormingSignals();
             if (scannerRoot != null)
                 scannerRoot.gameObject.SetActive(false);
-            for (int index = 0; index < signalPool.Count; index++)
-                RecycleSignalImmediately(signalPool[index]);
+            if (emittedPointSystem != null)
+                emittedPointSystem.Clear(true);
+            scanWaveActive = false;
+            revealedEntityIds.Clear();
         }
 
         private void OnDestroy()
         {
             UnsubscribeFromInput();
-            if (signalPoolRoot != null)
-                Destroy(signalPoolRoot.gameObject);
-            if (generatedSignalSprite != null)
-                Destroy(generatedSignalSprite);
-            if (generatedSignalTexture != null)
-                Destroy(generatedSignalTexture);
-            if (generatedTrailTexture != null)
-                Destroy(generatedTrailTexture);
+            if (signalParticleRoot != null)
+                Destroy(signalParticleRoot.gameObject);
             if (signalPointMaterial != null)
                 Destroy(signalPointMaterial);
-            if (signalTrailMaterial != null)
-                Destroy(signalTrailMaterial);
         }
 
         private void OnValidate()
@@ -949,7 +746,15 @@ namespace AnimalGame.RobotMap
                 readyRingPulseFrequency);
             deployedHoldDuration = Mathf.Max(0f, deployedHoldDuration);
             retractionDuration = Mathf.Max(0.05f, retractionDuration);
-            signalPointCount = Mathf.Clamp(signalPointCount, 8, 96);
+            maximumPointCount = Mathf.Clamp(maximumPointCount, 24, 720);
+            signalPointCount = Mathf.Clamp(
+                signalPointCount,
+                24,
+                maximumPointCount);
+            pointCoverageOverlap = Mathf.Clamp(
+                pointCoverageOverlap,
+                0f,
+                0.75f);
             formedRingRadius = Mathf.Max(0.01f, formedRingRadius);
             signalSpeed = Mathf.Max(0.1f, signalSpeed);
             maximumSignalDistance = Mathf.Max(0.1f, maximumSignalDistance);
@@ -965,11 +770,7 @@ namespace AnimalGame.RobotMap
             signalHeadPulseFrequency = Mathf.Max(
                 0.1f,
                 signalHeadPulseFrequency);
-            signalCollisionRadius = Mathf.Max(0.01f, signalCollisionRadius);
-            signalTrailDuration = Mathf.Max(0.01f, signalTrailDuration);
-            trailWidthRatio = Mathf.Clamp(trailWidthRatio, 0.1f, 1f);
-            trailDashLength = Mathf.Max(0.01f, trailDashLength);
-            trailGapLength = Mathf.Max(0.01f, trailGapLength);
+            scanWaveHalfThickness = Mathf.Max(0.01f, scanWaveHalfThickness);
             signalClipSoftnessPixels = Mathf.Max(
                 0f,
                 signalClipSoftnessPixels);

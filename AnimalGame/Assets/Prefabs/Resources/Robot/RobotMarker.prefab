@@ -439,19 +439,18 @@ MonoBehaviour:
   readyRingPulseFrequency: 2.5
   deployedHoldDuration: 0.12
   retractionDuration: 0.25
-  signalPointCount: 76
+  signalPointCount: 120
+  automaticAngularCoverage: 1
+  maximumPointCount: 120
+  pointCoverageOverlap: 0.1
   formedRingRadius: 0.2
   signalSpeed: 6.58
   maximumSignalDistance: 20
-  signalPointDiameter: 0.43
-  signalHeadCoreRatio: 0.5
+  signalPointDiameter: 0.1
+  signalHeadCoreRatio: 0.377
   signalHeadPulseAmount: 0.06
   signalHeadPulseFrequency: 4.5
-  signalCollisionRadius: 0.14
-  signalTrailDuration: 0.18
-  trailWidthRatio: 0.3597713
-  trailDashLength: 0.04
-  trailGapLength: 0.09
+  scanWaveHalfThickness: 0.14
   signalClipSoftnessPixels: 1.5
   temporaryRevealDuration: 1.17
   biologicalSignalColor: {r: 1, g: 0.78039217, b: 0.12156863, a: 1}
