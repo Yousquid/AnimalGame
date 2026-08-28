@@ -218,6 +218,8 @@ namespace AnimalGame.MapTest
             Vector2 uv = new Vector2(
                 Mathf.InverseLerp(bounds.min.x, bounds.max.x, worldPosition.x),
                 Mathf.InverseLerp(bounds.min.y, bounds.max.y, worldPosition.y));
+            if (!heightField.IsPlayable(uv))
+                return false;
 
             mapPositionMeters = new Vector2(
                 uv.x * mapWidthMeters,
@@ -242,6 +244,8 @@ namespace AnimalGame.MapTest
             Vector2 uv = new Vector2(
                 mapPositionMeters.x / Mathf.Max(0.0001f, mapWidthMeters),
                 mapPositionMeters.y / Mathf.Max(0.0001f, mapHeightMeters));
+            if (!heightField.IsPlayable(uv))
+                return false;
             heightMeters = SampleHeight(uv);
             return true;
         }
@@ -297,6 +301,8 @@ namespace AnimalGame.MapTest
             Vector2 uv = new Vector2(
                 mapPositionMeters.x / Mathf.Max(0.0001f, mapWidthMeters),
                 mapPositionMeters.y / Mathf.Max(0.0001f, mapHeightMeters));
+            if (!heightField.IsPlayable(uv))
+                return false;
             heightMeters = SampleDetailHeight(uv);
             return true;
         }
@@ -505,7 +511,14 @@ namespace AnimalGame.MapTest
                 minimumHeightMeters,
                 maximumHeightMeters,
                 normalizeSourceRange,
-                surfaceSmoothingSigmaMeters);
+                surfaceSmoothingSigmaMeters,
+                levelAsset != null && levelAsset.UseHeightMapBorderMask,
+                levelAsset != null
+                    ? levelAsset.HeightMapBorderMaskThreshold
+                    : 0.01f,
+                levelAsset != null
+                    ? levelAsset.HeightMapBorderInsetMeters
+                    : 0f);
         }
 
         private void CreateCamera()
@@ -541,7 +554,10 @@ namespace AnimalGame.MapTest
                 wrapMode = TextureWrapMode.Clamp
             };
 
-            var colors = new Color[generatedResolution * generatedResolution];
+            // The texture is RGBA32, so retaining four 32-bit floats per channel
+            // only multiplies temporary memory without preserving more output data.
+            // Color32 keeps the 4096 formal-map preview comfortably bounded.
+            var colors = new Color32[generatedResolution * generatedResolution];
             float onePixel = 1f / generatedResolution;
             float heightRange = maximumHeightMeters - minimumHeightMeters;
             for (int y = 0; y < generatedResolution; y++)
@@ -551,6 +567,12 @@ namespace AnimalGame.MapTest
                     Vector2 uv = new Vector2(
                         (x + 0.5f) / generatedResolution,
                         (y + 0.5f) / generatedResolution);
+                    if (!heightField.IsPlayable(uv))
+                    {
+                        colors[y * generatedResolution + x] = backgroundColor;
+                        continue;
+                    }
+
                     float height = SampleHeight(uv);
                     float normalized = Mathf.InverseLerp(minimumHeightMeters, maximumHeightMeters, height);
                     float heightRight = SampleHeight(uv + Vector2.right * onePixel);
@@ -563,7 +585,7 @@ namespace AnimalGame.MapTest
                 }
             }
 
-            generatedPreviewTexture.SetPixels(colors);
+            generatedPreviewTexture.SetPixels32(colors);
             generatedPreviewTexture.Apply(false, false);
             float runtimeWorldSize = previewResolution
                                      / Mathf.Max(1f, pixelsPerUnit);
@@ -615,6 +637,15 @@ namespace AnimalGame.MapTest
             if (!Application.isPlaying)
                 contourMaterial.hideFlags = HideFlags.DontSaveInEditor;
             contourMaterial.SetTexture("_HeightTex", heightField.SurfaceTexture);
+            bool hasPlayableMask = heightField.PlayableMaskTexture != null;
+            contourMaterial.SetTexture(
+                "_PlayableMaskTex",
+                hasPlayableMask
+                    ? heightField.PlayableMaskTexture
+                    : Texture2D.whiteTexture);
+            contourMaterial.SetFloat(
+                "_PlayableMaskEnabled",
+                hasPlayableMask ? 1f : 0f);
             contourMaterial.SetFloat("_MinimumHeight", minimumHeightMeters);
             contourMaterial.SetFloat("_MaximumHeight", maximumHeightMeters);
             contourMaterial.SetFloat("_ContourInterval", contourIntervalMeters);

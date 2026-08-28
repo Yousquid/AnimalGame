@@ -1,0 +1,159 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5369c3e47e384b0483418332bc4f2cad, type: 3}
+  m_Name: RockyMountainHeightMapLevel
+  m_EditorClassIdentifier:
+  heightMap: {fileID: 2800000, guid: 17dca7b5f48ce2544979a28d9bc9e80b, type: 3}
+  mapWidthMeters: 750
+  mapHeightMeters: 750
+  minimumHeightMeters: 0
+  maximumHeightMeters: 110
+  bakedHeightResolution: 2048
+  normalizeSourceRange: 1
+  surfaceSmoothingSigmaMeters: 2.25
+  useHeightMapBorderMask: 1
+  heightMapBorderMaskThreshold: 0.01
+  heightMapBorderInsetMeters: 2
+  previewResolution: 4096
+  contourIntervalMeters: 8
+  pixelsPerUnit: 20.22716
+  dynamicContourShader: {fileID: 4800000, guid: 66c17e2481f6472cb3cd86fe63c9f57a, type: 3}
+  minimumContourWidth: 0.7
+  maximumContourWidth: 3.68
+  maximumContourCoverage: 0.3
+  contourEdgeSoftness: 0.4
+  viewportHeightSamples: 64
+  staticWaterResolution: 1024
+  maximumStaticWaterDepthMeters: 10
+  maximumPassableStaticWaterDepthMeters: 1.2
+  staticWaterDepthMap:
+  staticWaterEditorTexture: {fileID: 2800000, guid: f14cf7b4b026aad46abb88d4d128977a, type: 3}
+  bakedStaticWaterMask: {fileID: 0}
+  staticWaterEditorTileSizeMeters: 8
+  staticWaterLayerOneSpeedMetersPerSecond: {x: 0.36, y: 0.04}
+  staticWaterLayerTwoSpeedMetersPerSecond: {x: -0.14, y: 0.22}
+  staticWaterLayerTwoScale: 1.35
+  staticWaterWaveDistortion: 0.03
+  staticWaterWaveSpeed: 0.8
+  staticWaterWaveLengthMeters: 12
+  staticWaterDeepSpeedMultiplier: 0.65
+  staticWaterMaskBakeRevision: 0
+  staticWaterEditorTint: {r: 0.18, g: 0.72, b: 1, a: 1}
+  staticWaterMaskBakeGeneratorVersion: 1
+  surfacePalette:
+  - terrainId: 1
+    displayName: Grid Test
+    patternTexture: {fileID: 2800000, guid: c3897b4bc6474024aaf596e85a1eb144, type: 3}
+    tint: {r: 1, g: 1, b: 1, a: 1}
+    opacity: 0.35
+    tileSizeMeters: 12
+    transitionMode: 3
+    transitionWidthMultiplier: 1
+    noiseStrengthMultiplier: 1
+  - terrainId: 2
+    displayName: Grass Test
+    patternTexture: {fileID: 2800000, guid: 73a13eb11e97f5d4bb1fd2ff59874c6f, type: 3}
+    tint: {r: 1, g: 1, b: 1, a: 1}
+    opacity: 0.35
+    tileSizeMeters: 4
+    transitionMode: 3
+    transitionWidthMultiplier: 1
+    noiseStrengthMultiplier: 1
+  - terrainId: 3
+    displayName: Grass
+    patternTexture: {fileID: 2800000, guid: f3e1b95583b0e4b43a52c1f82cf37d56, type: 3}
+    tint: {r: 1, g: 1, b: 1, a: 1}
+    opacity: 0.35
+    tileSizeMeters: 8
+    transitionMode: 3
+    transitionWidthMultiplier: 1
+    noiseStrengthMultiplier: 1
+  - terrainId: 4
+    displayName: Grassland
+    patternTexture: {fileID: 2800000, guid: e89ea0f9890e3384b814ee28a1526d30, type: 3}
+    tint: {r: 1, g: 1, b: 1, a: 1}
+    opacity: 0.35
+    tileSizeMeters: 8
+    transitionMode: 3
+    transitionWidthMultiplier: 1
+    noiseStrengthMultiplier: 1
+  - terrainId: 5
+    displayName: Gravel
+    patternTexture: {fileID: 2800000, guid: 7851651abf342144cafae2b72630e501, type: 3}
+    tint: {r: 1, g: 1, b: 1, a: 1}
+    opacity: 0.35
+    tileSizeMeters: 8
+    transitionMode: 3
+    transitionWidthMultiplier: 1
+    noiseStrengthMultiplier: 1
+  - terrainId: 6
+    displayName: Rock
+    patternTexture: {fileID: 2800000, guid: 82bd525b8ec8a3a4ca3bcfa24e7af959, type: 3}
+    tint: {r: 1, g: 1, b: 1, a: 1}
+    opacity: 0.35
+    tileSizeMeters: 8
+    transitionMode: 3
+    transitionWidthMultiplier: 1
+    noiseStrengthMultiplier: 1
+  - terrainId: 7
+    displayName: Water
+    patternTexture: {fileID: 2800000, guid: f14cf7b4b026aad46abb88d4d128977a, type: 3}
+    tint: {r: 1, g: 1, b: 1, a: 1}
+    opacity: 0.35
+    tileSizeMeters: 8
+    transitionMode: 3
+    transitionWidthMultiplier: 1
+    noiseStrengthMultiplier: 1
+  - terrainId: 8
+    displayName: Web
+    patternTexture: {fileID: 2800000, guid: 60656b14ece6dc2429bbfa58a73c3947, type: 3}
+    tint: {r: 1, g: 1, b: 1, a: 1}
+    opacity: 0.35
+    tileSizeMeters: 8
+    transitionMode: 3
+    transitionWidthMultiplier: 1
+    noiseStrengthMultiplier: 1
+  surfaceTransitionWidthMeters: 3
+  surfaceAlphaCoreWidthMeters: 0.8
+  surfaceAlphaBlendShare: 0.6
+  surfaceBoundaryNoiseScaleMeters: 5
+  surfaceBoundaryNoiseAmplitudeMeters: 0.8
+  surfaceScatterCellSizeMeters: 0.5
+  surfaceScatterStrength: 0.35
+  surfaceNoiseSeed: 1337
+  surfaceBakeResolution: 4096
+  surfaceMaskResolution: 1024
+  surfacePatternAlphaNormalizationStrength: 0.75
+  surfaceClosedContourAlphaEnabled: 1
+  surfaceClosedContourAlphaResolution: 1024
+  surfaceClosedContourEdgeAlphaMultiplier: 0.235
+  surfaceClosedContourEdgeHoldDistanceMeters: 1.5
+  surfaceClosedContourFadeDistanceMeters: 10
+  surfaceClosedContourCenterAlphaMultiplier: 0.02
+  surfaceClosedContourDistanceCurve: 2
+  surfaceClosedContourMinimumAreaSquareMeters: 4
+  surfaceOutsideClosedContourAlphaMultiplier: 0
+  surfaceMask:
+  surfaceDataVersion: 1
+  surfacePatternTexture: {fileID: 2800000, guid: c3897b4bc6474024aaf596e85a1eb144, type: 3}
+  surfaceTint: {r: 1, g: 1, b: 1, a: 1}
+  surfaceOpacity: 0.35
+  surfaceTileSizeMeters: 8
+  bakedSurfaceVisual: {fileID: 0}
+  surfaceRevealEdgePixels: 4
+  surfaceBakeRevision: 0
+  surfaceBakeGeneratorVersion: 10
+  backgroundColor: {r: 0.008, g: 0.012, b: 0.017, a: 1}
+  lowHeightColor: {r: 0, g: 0, b: 0, a: 1}
+  middleHeightColor: {r: 0, g: 0, b: 0, a: 1}
+  highHeightColor: {r: 0, g: 0, b: 0, a: 1}
+  contourColor: {r: 0.92, g: 0.97, b: 1, a: 1}

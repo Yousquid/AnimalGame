@@ -144,6 +144,15 @@ namespace AnimalGame.MapTest
         [SerializeField] private bool normalizeSourceRange = true;
         [SerializeField, Min(0f)] private float surfaceSmoothingSigmaMeters = 0.75f;
 
+        [Header("Playable Area")]
+        [Tooltip("Treats near-black pixels connected to the height-map border as outside the playable map. Enclosed dark valleys remain playable.")]
+        [SerializeField] private bool useHeightMapBorderMask;
+        [Tooltip("Maximum source grayscale value considered part of the connected black border.")]
+        [SerializeField, Range(0f, 0.25f)]
+        private float heightMapBorderMaskThreshold = 0.01f;
+        [Tooltip("Additional physical distance removed inside the detected silhouette, keeping the robot away from antialiased edge pixels.")]
+        [SerializeField, Min(0f)] private float heightMapBorderInsetMeters;
+
         [Header("Map Presentation")]
         [SerializeField, Range(128, 8000)] private int previewResolution = 2160;
         [SerializeField, Min(1f)] private float contourIntervalMeters = 8f;
@@ -349,6 +358,10 @@ namespace AnimalGame.MapTest
         public int BakedHeightResolution => bakedHeightResolution;
         public bool NormalizeSourceRange => normalizeSourceRange;
         public float SurfaceSmoothingSigmaMeters => surfaceSmoothingSigmaMeters;
+        public bool UseHeightMapBorderMask => useHeightMapBorderMask;
+        public float HeightMapBorderMaskThreshold =>
+            heightMapBorderMaskThreshold;
+        public float HeightMapBorderInsetMeters => heightMapBorderInsetMeters;
         public int PreviewResolution => previewResolution;
         public float ContourIntervalMeters => contourIntervalMeters;
         public float PixelsPerUnit => pixelsPerUnit;
@@ -502,6 +515,9 @@ namespace AnimalGame.MapTest
                     hash = hash * 397 ^ bakedHeightResolution;
                     hash = hash * 397 ^ normalizeSourceRange.GetHashCode();
                     hash = hash * 397 ^ surfaceSmoothingSigmaMeters.GetHashCode();
+                    hash = hash * 397 ^ useHeightMapBorderMask.GetHashCode();
+                    hash = hash * 397 ^ heightMapBorderMaskThreshold.GetHashCode();
+                    hash = hash * 397 ^ heightMapBorderInsetMeters.GetHashCode();
                     hash = hash * 397 ^ previewResolution;
                     hash = hash * 397 ^ contourIntervalMeters.GetHashCode();
                     hash = hash * 397 ^ pixelsPerUnit.GetHashCode();
@@ -1195,6 +1211,13 @@ namespace AnimalGame.MapTest
                 maximumHeightMeters);
             bakedHeightResolution = Mathf.Clamp(bakedHeightResolution, 128, 2048);
             surfaceSmoothingSigmaMeters = Mathf.Max(0f, surfaceSmoothingSigmaMeters);
+            heightMapBorderMaskThreshold = Mathf.Clamp(
+                heightMapBorderMaskThreshold,
+                0f,
+                0.25f);
+            heightMapBorderInsetMeters = Mathf.Max(
+                0f,
+                heightMapBorderInsetMeters);
             previewResolution = Mathf.Clamp(previewResolution, 128, 8000);
             contourIntervalMeters = Mathf.Max(1f, contourIntervalMeters);
             pixelsPerUnit = Mathf.Max(1f, pixelsPerUnit);

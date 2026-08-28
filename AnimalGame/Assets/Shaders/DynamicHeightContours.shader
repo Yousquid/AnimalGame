@@ -4,6 +4,8 @@ Shader "AnimalGame/Dynamic Height Contours"
     {
         [PerRendererData] _MainTex ("Base Map", 2D) = "white" {}
         _HeightTex ("Height Map", 2D) = "black" {}
+        _PlayableMaskTex ("Playable Area Mask", 2D) = "white" {}
+        _PlayableMaskEnabled ("Playable Area Mask Enabled", Float) = 0
         _SurfaceTex ("Editor-Baked Terrain Surface", 2D) = "black" {}
         _SurfaceEnabled ("Surface Enabled", Float) = 0
         _SurfaceRevealEnabled ("Surface UI Reveal Enabled", Float) = 0
@@ -76,6 +78,7 @@ Shader "AnimalGame/Dynamic Height Contours"
 
             sampler2D _MainTex;
             sampler2D _HeightTex;
+            sampler2D _PlayableMaskTex;
             sampler2D _SurfaceTex;
             sampler2D _WaterMaskTex;
             sampler2D _WaterPatternTex;
@@ -84,6 +87,7 @@ Shader "AnimalGame/Dynamic Height Contours"
             float4 _SurfaceRevealCenterPixels;
             float _SurfaceRevealRadiusPixels;
             float _SurfaceRevealEdgePixels;
+            float _PlayableMaskEnabled;
             float _WaterEnabled;
             float4 _MapSizeMeters;
             float _WaterTileSizeMeters;
@@ -171,6 +175,11 @@ Shader "AnimalGame/Dynamic Height Contours"
             fixed4 frag(v2f input) : SV_Target
             {
                 fixed4 baseColor = tex2D(_MainTex, input.uv) * input.color;
+                if (_PlayableMaskEnabled > 0.5
+                    && tex2D(_PlayableMaskTex, input.uv).r < 0.5)
+                {
+                    return baseColor;
+                }
 
                 // Terrain remains one Editor-baked texture and is revealed only
                 // inside the player UI. Water is a persistent natural feature:

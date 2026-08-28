@@ -14,4 +14,7 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/HeightMapPlayerScene.unity
     guid: 6cb03e5b6f0c4f83b67cf96ea8f663aa
+  - enabled: 1
+    path: Assets/Scenes/RockyMountainPlayerScene.unity
+    guid: 2801401f79e84e95adca2e95fe1c76ca
   m_configObjects: {}

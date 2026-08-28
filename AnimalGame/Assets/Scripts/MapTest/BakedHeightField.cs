@@ -12,6 +12,7 @@ namespace AnimalGame.MapTest
     {
         private readonly float[] detailHeightsMeters;
         private readonly float[] surfaceHeightsMeters;
+        private readonly byte[] playableMask;
 
         public int Width { get; }
         public int Height { get; }
@@ -21,6 +22,7 @@ namespace AnimalGame.MapTest
         public float SourceMinimum { get; }
         public float SourceMaximum { get; }
         public Texture2D SurfaceTexture { get; private set; }
+        public Texture2D PlayableMaskTexture { get; private set; }
 
         public float TexelSizeXMeters =>
             MapSizeMeters.x / Mathf.Max(1, Width - 1);
@@ -38,6 +40,8 @@ namespace AnimalGame.MapTest
             float sourceMaximum,
             float[] detailHeights,
             float[] surfaceHeights,
+            byte[] bakedPlayableMask,
+            Texture2D bakedPlayableMaskTexture,
             Texture2D surfaceTexture)
         {
             Width = width;
@@ -49,6 +53,8 @@ namespace AnimalGame.MapTest
             SourceMaximum = sourceMaximum;
             detailHeightsMeters = detailHeights;
             surfaceHeightsMeters = surfaceHeights;
+            playableMask = bakedPlayableMask;
+            PlayableMaskTexture = bakedPlayableMaskTexture;
             SurfaceTexture = surfaceTexture;
         }
 
@@ -59,7 +65,10 @@ namespace AnimalGame.MapTest
             float minimumHeightMeters,
             float maximumHeightMeters,
             bool normalizeSourceRange,
-            float smoothingSigmaMeters)
+            float smoothingSigmaMeters,
+            bool useHeightMapBorderMask = false,
+            float heightMapBorderMaskThreshold = 0.01f,
+            float heightMapBorderInsetMeters = 0f)
         {
             if (source == null)
                 throw new ArgumentNullException(nameof(source));
@@ -108,6 +117,17 @@ namespace AnimalGame.MapTest
 
             float texelSizeXMeters = mapSizeMeters.x / Mathf.Max(1, resolution - 1);
             float texelSizeYMeters = mapSizeMeters.y / Mathf.Max(1, resolution - 1);
+            byte[] bakedPlayableMask = useHeightMapBorderMask
+                ? BuildPlayableMask(
+                    sourcePixels,
+                    source.width,
+                    source.height,
+                    resolution,
+                    Mathf.Clamp01(heightMapBorderMaskThreshold),
+                    Mathf.Max(0f, heightMapBorderInsetMeters),
+                    texelSizeXMeters,
+                    texelSizeYMeters)
+                : null;
             float sigmaPixelsX = smoothingSigmaMeters /
                                  Mathf.Max(0.0001f, texelSizeXMeters);
             float sigmaPixelsY = smoothingSigmaMeters /
@@ -125,6 +145,12 @@ namespace AnimalGame.MapTest
                 resolution,
                 minimumHeightMeters,
                 maximumHeightMeters);
+            Texture2D playableMaskTexture = bakedPlayableMask != null
+                ? CreatePlayableMaskTexture(
+                    bakedPlayableMask,
+                    resolution,
+                    resolution)
+                : null;
 
             return new BakedHeightField(
                 resolution,
@@ -136,6 +162,8 @@ namespace AnimalGame.MapTest
                 sourceMaximum,
                 detailHeights,
                 surfaceHeights,
+                bakedPlayableMask,
+                playableMaskTexture,
                 surfaceTexture);
         }
 
@@ -147,6 +175,29 @@ namespace AnimalGame.MapTest
         public float SampleDetailHeight(Vector2 uv)
         {
             return SampleBilinear(detailHeightsMeters, uv);
+        }
+
+        /// <summary>
+        /// Returns whether a point belongs to the authored map silhouette. Levels
+        /// without a border mask keep the original rectangular playable area.
+        /// </summary>
+        public bool IsPlayable(Vector2 uv)
+        {
+            if (playableMask == null || playableMask.Length == 0)
+                return true;
+
+            if (uv.x < 0f || uv.x > 1f || uv.y < 0f || uv.y > 1f)
+                return false;
+
+            int x = Mathf.Clamp(
+                Mathf.RoundToInt(uv.x * (Width - 1)),
+                0,
+                Width - 1);
+            int y = Mathf.Clamp(
+                Mathf.RoundToInt(uv.y * (Height - 1)),
+                0,
+                Height - 1);
+            return playableMask[y * Width + x] != 0;
         }
 
         /// <summary>
@@ -170,6 +221,15 @@ namespace AnimalGame.MapTest
                 else
                     UnityEngine.Object.DestroyImmediate(SurfaceTexture);
                 SurfaceTexture = null;
+            }
+
+            if (PlayableMaskTexture != null)
+            {
+                if (Application.isPlaying)
+                    UnityEngine.Object.Destroy(PlayableMaskTexture);
+                else
+                    UnityEngine.Object.DestroyImmediate(PlayableMaskTexture);
+                PlayableMaskTexture = null;
             }
         }
 
@@ -284,6 +344,125 @@ namespace AnimalGame.MapTest
             return output;
         }
 
+        private static byte[] BuildPlayableMask(
+            Color32[] sourcePixels,
+            int sourceWidth,
+            int sourceHeight,
+            int resolution,
+            float threshold,
+            float insetMeters,
+            float texelSizeXMeters,
+            float texelSizeYMeters)
+        {
+            int sampleCount = resolution * resolution;
+            bool[] outside = new bool[sampleCount];
+            int[] queue = new int[sampleCount];
+            int queueHead = 0;
+            int queueTail = 0;
+
+            // Only low-value pixels connected to an image edge count as outside.
+            // This preserves legitimate dark valleys enclosed by mountain terrain.
+            for (int x = 0; x < resolution; x++)
+            {
+                TryEnqueueBorderPixel(x, 0);
+                TryEnqueueBorderPixel(x, resolution - 1);
+            }
+
+            for (int y = 1; y < resolution - 1; y++)
+            {
+                TryEnqueueBorderPixel(0, y);
+                TryEnqueueBorderPixel(resolution - 1, y);
+            }
+
+            while (queueHead < queueTail)
+            {
+                int index = queue[queueHead++];
+                int x = index % resolution;
+                int y = index / resolution;
+                TryEnqueueConnectedPixel(x - 1, y);
+                TryEnqueueConnectedPixel(x + 1, y);
+                TryEnqueueConnectedPixel(x, y - 1);
+                TryEnqueueConnectedPixel(x, y + 1);
+            }
+
+            int insetSteps = Mathf.CeilToInt(
+                insetMeters / Mathf.Max(
+                    0.0001f,
+                    Mathf.Min(texelSizeXMeters, texelSizeYMeters)));
+            queueHead = 0;
+            for (int step = 0; step < insetSteps; step++)
+            {
+                int layerEnd = queueTail;
+                while (queueHead < layerEnd)
+                {
+                    int index = queue[queueHead++];
+                    int x = index % resolution;
+                    int y = index / resolution;
+                    EnqueueInsetPixel(x - 1, y - 1);
+                    EnqueueInsetPixel(x, y - 1);
+                    EnqueueInsetPixel(x + 1, y - 1);
+                    EnqueueInsetPixel(x - 1, y);
+                    EnqueueInsetPixel(x + 1, y);
+                    EnqueueInsetPixel(x - 1, y + 1);
+                    EnqueueInsetPixel(x, y + 1);
+                    EnqueueInsetPixel(x + 1, y + 1);
+                }
+            }
+
+            byte[] mask = new byte[sampleCount];
+            for (int index = 0; index < sampleCount; index++)
+                mask[index] = outside[index] ? (byte)0 : byte.MaxValue;
+            return mask;
+
+            void TryEnqueueBorderPixel(int x, int y)
+            {
+                int index = y * resolution + x;
+                if (outside[index] || !IsBelowThreshold(x, y))
+                    return;
+
+                outside[index] = true;
+                queue[queueTail++] = index;
+            }
+
+            void TryEnqueueConnectedPixel(int x, int y)
+            {
+                if (x < 0 || x >= resolution || y < 0 || y >= resolution)
+                    return;
+
+                int index = y * resolution + x;
+                if (outside[index] || !IsBelowThreshold(x, y))
+                    return;
+
+                outside[index] = true;
+                queue[queueTail++] = index;
+            }
+
+            void EnqueueInsetPixel(int x, int y)
+            {
+                if (x < 0 || x >= resolution || y < 0 || y >= resolution)
+                    return;
+
+                int index = y * resolution + x;
+                if (outside[index])
+                    return;
+
+                outside[index] = true;
+                queue[queueTail++] = index;
+            }
+
+            bool IsBelowThreshold(int x, int y)
+            {
+                float u = x / (float)Mathf.Max(1, resolution - 1);
+                float v = y / (float)Mathf.Max(1, resolution - 1);
+                return SampleSource(
+                    sourcePixels,
+                    sourceWidth,
+                    sourceHeight,
+                    u,
+                    v) <= threshold;
+            }
+        }
+
         private static float[] BuildGaussianKernel(float sigmaPixels)
         {
             if (sigmaPixels <= 0.01f)
@@ -337,6 +516,29 @@ namespace AnimalGame.MapTest
             }
 
             texture.SetPixelData(normalizedHeights, 0);
+            texture.Apply(false, true);
+            return texture;
+        }
+
+        private static Texture2D CreatePlayableMaskTexture(
+            byte[] mask,
+            int width,
+            int height)
+        {
+            var texture = new Texture2D(
+                width,
+                height,
+                TextureFormat.R8,
+                false,
+                true)
+            {
+                name = "Baked Playable Area Mask",
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp,
+                hideFlags = HideFlags.DontSave
+            };
+
+            texture.SetPixelData(mask, 0);
             texture.Apply(false, true);
             return texture;
         }
