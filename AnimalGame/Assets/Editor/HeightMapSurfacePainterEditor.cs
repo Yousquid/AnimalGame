@@ -247,6 +247,9 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
             "surfaceBakeResolution");
         SerializedProperty maskResolution = serializedLevel.FindProperty(
             "surfaceMaskResolution");
+        SerializedProperty patternAlphaNormalization =
+            serializedLevel.FindProperty(
+                "surfacePatternAlphaNormalizationStrength");
         SerializedProperty closedContourAlphaEnabled =
             serializedLevel.FindProperty(
                 "surfaceClosedContourAlphaEnabled");
@@ -256,6 +259,12 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
         SerializedProperty closedContourEdgeAlpha =
             serializedLevel.FindProperty(
                 "surfaceClosedContourEdgeAlphaMultiplier");
+        SerializedProperty closedContourEdgeHoldDistance =
+            serializedLevel.FindProperty(
+                "surfaceClosedContourEdgeHoldDistanceMeters");
+        SerializedProperty closedContourFadeDistance =
+            serializedLevel.FindProperty(
+                "surfaceClosedContourFadeDistanceMeters");
         SerializedProperty closedContourCenterAlpha =
             serializedLevel.FindProperty(
                 "surfaceClosedContourCenterAlphaMultiplier");
@@ -303,6 +312,9 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
         EditorGUILayout.PropertyField(
             maskResolution,
             new GUIContent("Terrain ID Map Resolution"));
+        EditorGUILayout.PropertyField(
+            patternAlphaNormalization,
+            new GUIContent("Pattern Alpha Normalization"));
 
         EditorGUILayout.Space();
         EditorGUILayout.LabelField(
@@ -327,11 +339,17 @@ public sealed class HeightMapSurfacePainterWindow : EditorWindow
                 closedContourEdgeAlpha,
                 new GUIContent("Boundary Alpha Multiplier"));
             EditorGUILayout.PropertyField(
+                closedContourEdgeHoldDistance,
+                new GUIContent("Full Edge Width (metres)"));
+            EditorGUILayout.PropertyField(
+                closedContourFadeDistance,
+                new GUIContent("Transparent Distance (metres)"));
+            EditorGUILayout.PropertyField(
                 closedContourCenterAlpha,
                 new GUIContent("Centre Alpha Multiplier"));
             EditorGUILayout.PropertyField(
                 closedContourDistanceCurve,
-                new GUIContent("Boundary-to-Centre Curve"));
+                new GUIContent("Interior Fade Strength"));
             EditorGUILayout.PropertyField(
                 closedContourMinimumArea,
                 new GUIContent("Minimum Region Area (m²)"));
@@ -1017,7 +1035,8 @@ internal static class HeightMapSurfaceBaker
                     CopyRepeatedPatternIntoAtlas(
                         readable,
                         atlasPixels,
-                        definition.TerrainId);
+                        definition.TerrainId,
+                        level.SurfacePatternAlphaNormalizationStrength);
                 }
                 finally
                 {
@@ -1045,13 +1064,17 @@ internal static class HeightMapSurfaceBaker
     private static void CopyRepeatedPatternIntoAtlas(
         Texture2D source,
         Color32[] atlasPixels,
-        int terrainId)
+        int terrainId,
+        float alphaNormalizationStrength)
     {
         int cellX = terrainId % AtlasGridSize;
         int cellY = terrainId / AtlasGridSize;
         int cellOriginX = cellX * AtlasCellSize;
         int cellOriginY = cellY * AtlasCellSize;
         int interiorSize = AtlasCellSize - AtlasPadding * 2;
+        float alphaReference = CalculatePatternAlphaReference(source);
+        float normalizationStrength = Mathf.Clamp01(
+            alphaNormalizationStrength);
 
         for (int y = 0; y < AtlasCellSize; y++)
         {
@@ -1064,11 +1087,49 @@ internal static class HeightMapSurfaceBaker
                     (x - AtlasPadding + 0.5f) / interiorSize,
                     1f);
                 Color sampled = source.GetPixelBilinear(sourceU, sourceV);
+                if (sampled.a > 0.0001f && normalizationStrength > 0f)
+                {
+                    float normalizedAlpha = Mathf.Clamp01(
+                        sampled.a / alphaReference);
+                    sampled.a = Mathf.Lerp(
+                        sampled.a,
+                        normalizedAlpha,
+                        normalizationStrength);
+                }
                 int targetX = cellOriginX + x;
                 int targetY = cellOriginY + y;
                 atlasPixels[targetY * AtlasSize + targetX] = sampled;
             }
         }
+    }
+
+    private static float CalculatePatternAlphaReference(Texture2D source)
+    {
+        Color32[] pixels = source.GetPixels32();
+        var histogram = new int[256];
+        int nonTransparentCount = 0;
+        foreach (Color32 pixel in pixels)
+        {
+            if (pixel.a == 0)
+                continue;
+
+            histogram[pixel.a]++;
+            nonTransparentCount++;
+        }
+
+        if (nonTransparentCount == 0)
+            return 1f;
+
+        int medianRank = (nonTransparentCount - 1) / 2;
+        int accumulated = 0;
+        for (int alpha = 1; alpha < histogram.Length; alpha++)
+        {
+            accumulated += histogram[alpha];
+            if (accumulated > medianRank)
+                return alpha / 255f;
+        }
+
+        return 1f;
     }
 
     private static Texture2D CreateReadableCopy(Texture2D source)
@@ -1393,10 +1454,13 @@ internal static class HeightMapSurfaceBaker
         importer.alphaSource = TextureImporterAlphaSource.FromInput;
         importer.alphaIsTransparency = true;
         importer.isReadable = false;
-        importer.mipmapEnabled = true;
+        // The map surface is already baked at its final display resolution.
+        // Mip generation softens thin terrain marks and can create broken,
+        // dirty-looking lines in low-alpha patterns.
+        importer.mipmapEnabled = false;
         importer.wrapMode = TextureWrapMode.Clamp;
         importer.filterMode = FilterMode.Bilinear;
-        importer.textureCompression = TextureImporterCompression.CompressedHQ;
+        importer.textureCompression = TextureImporterCompression.Uncompressed;
         importer.maxTextureSize = Mathf.Clamp(
             Mathf.NextPowerOfTwo(resolution),
             256,
@@ -1550,7 +1614,9 @@ internal static class StaticClosedContourAlphaBuilder
         }
 
         var smallestContainingArea = new float[pixelCount];
-        var distanceWithinSmallestRegion = new float[pixelCount];
+        var distanceWithinSmallestRegionMeters = new float[pixelCount];
+        var maximumDistanceWithinSmallestRegionMeters =
+            new float[pixelCount];
         var labels = new int[pixelCount];
         var floodQueue = new int[pixelCount];
         var distances = new float[pixelCount];
@@ -1588,7 +1654,8 @@ internal static class StaticClosedContourAlphaBuilder
                 distances,
                 distanceHeap,
                 smallestContainingArea,
-                distanceWithinSmallestRegion);
+                distanceWithinSmallestRegionMeters,
+                maximumDistanceWithinSmallestRegionMeters);
             AccumulateClosedComponents(
                 heights,
                 resolution,
@@ -1601,7 +1668,8 @@ internal static class StaticClosedContourAlphaBuilder
                 distances,
                 distanceHeap,
                 smallestContainingArea,
-                distanceWithinSmallestRegion);
+                distanceWithinSmallestRegionMeters,
+                maximumDistanceWithinSmallestRegionMeters);
         }
 
         float edgeMultiplier =
@@ -1610,9 +1678,15 @@ internal static class StaticClosedContourAlphaBuilder
             level.SurfaceClosedContourCenterAlphaMultiplier;
         float outsideMultiplier =
             level.SurfaceOutsideClosedContourAlphaMultiplier;
-        float curve = Mathf.Max(
+        float edgeHoldDistance = Mathf.Max(
+            0f,
+            level.SurfaceClosedContourEdgeHoldDistanceMeters);
+        float configuredFadeDistance = Mathf.Max(
             0.1f,
-            level.SurfaceClosedContourDistanceCurve);
+            level.SurfaceClosedContourFadeDistanceMeters);
+        float fadeStrength = Mathf.Max(
+            0.1f,
+            level.SurfaceClosedContourFadeStrength);
         var multipliers = new float[pixelCount];
         for (int index = 0; index < pixelCount; index++)
         {
@@ -1622,13 +1696,42 @@ internal static class StaticClosedContourAlphaBuilder
                 continue;
             }
 
-            float curvedDistance = Mathf.Pow(
-                Mathf.Clamp01(distanceWithinSmallestRegion[index]),
-                curve);
+            float regionMaximumDistance =
+                maximumDistanceWithinSmallestRegionMeters[index];
+            if (regionMaximumDistance <= 0.0001f)
+            {
+                multipliers[index] = edgeMultiplier;
+                continue;
+            }
+
+            // Large regions reach the centre multiplier at a fixed physical
+            // distance, producing a truly transparent interior plateau. Small
+            // regions use their own depth so their deepest point still fades
+            // fully instead of disappearing as one uniformly bright patch.
+            float effectiveFadeDistance = Mathf.Min(
+                configuredFadeDistance,
+                regionMaximumDistance);
+            float effectiveHoldDistance = Mathf.Min(
+                edgeHoldDistance,
+                effectiveFadeDistance * 0.25f);
+            float fadeDistanceRange = Mathf.Max(
+                0.0001f,
+                effectiveFadeDistance - effectiveHoldDistance);
+            float normalizedDistance = Mathf.Clamp01(
+                (distanceWithinSmallestRegionMeters[index]
+                 - effectiveHoldDistance)
+                / fadeDistanceRange);
+            float smoothDistance = Mathf.SmoothStep(
+                0f,
+                1f,
+                normalizedDistance);
+            float fadeAmount = 1f - Mathf.Pow(
+                1f - smoothDistance,
+                fadeStrength);
             multipliers[index] = Mathf.Lerp(
                 edgeMultiplier,
                 centreMultiplier,
-                curvedDistance);
+                fadeAmount);
         }
 
         var texture = new Texture2D(
@@ -1660,7 +1763,8 @@ internal static class StaticClosedContourAlphaBuilder
         float[] distances,
         ContourDistanceHeap distanceHeap,
         float[] smallestContainingArea,
-        float[] distanceWithinSmallestRegion)
+        float[] distanceWithinSmallestRegionMeters,
+        float[] maximumDistanceWithinSmallestRegionMeters)
     {
         int pixelCount = heights.Length;
         for (int index = 0; index < pixelCount; index++)
@@ -1858,9 +1962,9 @@ internal static class StaticClosedContourAlphaBuilder
             float maximumDistance =
                 componentMaximumDistances[component];
             smallestContainingArea[index] = area;
-            distanceWithinSmallestRegion[index] = maximumDistance > 0.0001f
-                ? Mathf.Clamp01(distances[index] / maximumDistance)
-                : 0f;
+            distanceWithinSmallestRegionMeters[index] = distances[index];
+            maximumDistanceWithinSmallestRegionMeters[index] =
+                maximumDistance;
         }
     }
 

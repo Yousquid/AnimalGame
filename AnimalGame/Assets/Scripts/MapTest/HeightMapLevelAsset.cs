@@ -128,7 +128,7 @@ namespace AnimalGame.MapTest
     public sealed class HeightMapLevelAsset : ScriptableObject
     {
 #if UNITY_EDITOR
-        public const int CurrentSurfaceBakeGeneratorVersion = 7;
+        public const int CurrentSurfaceBakeGeneratorVersion = 10;
         public const int CurrentStaticWaterMaskBakeGeneratorVersion = 1;
 #endif
 
@@ -266,6 +266,10 @@ namespace AnimalGame.MapTest
         [Tooltip("Resolution of the persistent terrain-ID authoring map. Each byte stores zero or one palette ID and is not sampled at runtime.")]
         [SerializeField, Range(64, 1024)] private int surfaceMaskResolution = 512;
 
+        [Tooltip("How strongly the Editor normalizes each pattern's non-transparent alpha values before baking. Zero preserves source alpha; one makes differently authored textures use a more consistent visual alpha range. Fully transparent pixels stay transparent.")]
+        [SerializeField, Range(0f, 1f)]
+        private float surfacePatternAlphaNormalizationStrength = 0.75f;
+
         [Header("Static Closed-Contour Alpha")]
         [Tooltip("Permanently bakes stronger terrain texture alpha near contour-region boundaries and weaker alpha toward each region's centre. The map's four straight sides can close contour lines that reach an edge. This is Editor-only and never reacts to the player at runtime.")]
         [SerializeField] private bool surfaceClosedContourAlphaEnabled = true;
@@ -276,15 +280,23 @@ namespace AnimalGame.MapTest
 
         [Tooltip("Multiplier applied to terrain texture alpha at a closed contour boundary.")]
         [SerializeField, Range(0f, 2f)]
-        private float surfaceClosedContourEdgeAlphaMultiplier = 0.52f;
+        private float surfaceClosedContourEdgeAlphaMultiplier = 0.3466667f;
+
+        [Tooltip("Physical distance from a closed contour boundary that keeps the full boundary alpha multiplier before fading begins.")]
+        [SerializeField, Min(0f)]
+        private float surfaceClosedContourEdgeHoldDistanceMeters = 1.5f;
+
+        [Tooltip("Physical distance from a closed contour boundary where terrain texture alpha reaches the centre multiplier. Larger regions remain at the centre multiplier beyond this distance.")]
+        [SerializeField, Min(0.1f)]
+        private float surfaceClosedContourFadeDistanceMeters = 10f;
 
         [Tooltip("Multiplier applied to terrain texture alpha at the deepest point inside a closed contour region.")]
         [SerializeField, Range(0f, 2f)]
-        private float surfaceClosedContourCenterAlphaMultiplier = 0.015f;
+        private float surfaceClosedContourCenterAlphaMultiplier = 0.2f;
 
-        [Tooltip("Shape of the permanent boundary-to-centre alpha falloff. Values above one preserve the stronger edge alpha for longer.")]
-        [SerializeField, Range(0.1f, 4f)]
-        private float surfaceClosedContourDistanceCurve = 0.22f;
+        [Tooltip("Strength of the permanent edge-to-interior fade. Values above one make the texture disappear faster after leaving the boundary.")]
+        [SerializeField, Range(0.1f, 8f)]
+        private float surfaceClosedContourDistanceCurve = 2f;
 
         [Tooltip("Closed contour components smaller than this physical area are ignored to prevent tiny height-map specks from changing alpha.")]
         [SerializeField, Min(0f)]
@@ -529,15 +541,21 @@ namespace AnimalGame.MapTest
         public int SurfaceNoiseSeed => surfaceNoiseSeed;
         public int SurfaceBakeResolution => surfaceBakeResolution;
         public int SurfaceMaskResolution => surfaceMaskResolution;
+        public float SurfacePatternAlphaNormalizationStrength =>
+            surfacePatternAlphaNormalizationStrength;
         public bool SurfaceClosedContourAlphaEnabled =>
             surfaceClosedContourAlphaEnabled;
         public int SurfaceClosedContourAlphaResolution =>
             surfaceClosedContourAlphaResolution;
         public float SurfaceClosedContourEdgeAlphaMultiplier =>
             surfaceClosedContourEdgeAlphaMultiplier;
+        public float SurfaceClosedContourEdgeHoldDistanceMeters =>
+            surfaceClosedContourEdgeHoldDistanceMeters;
+        public float SurfaceClosedContourFadeDistanceMeters =>
+            surfaceClosedContourFadeDistanceMeters;
         public float SurfaceClosedContourCenterAlphaMultiplier =>
             surfaceClosedContourCenterAlphaMultiplier;
-        public float SurfaceClosedContourDistanceCurve =>
+        public float SurfaceClosedContourFadeStrength =>
             surfaceClosedContourDistanceCurve;
         public float SurfaceClosedContourMinimumAreaSquareMeters =>
             surfaceClosedContourMinimumAreaSquareMeters;
@@ -962,9 +980,13 @@ namespace AnimalGame.MapTest
                 hash = hash * 397 ^ surfaceNoiseSeed;
                 hash = hash * 397 ^ surfaceBakeResolution;
                 hash = hash * 397 ^ surfaceMaskResolution;
+                hash = hash * 397
+                       ^ surfacePatternAlphaNormalizationStrength.GetHashCode();
                 hash = hash * 397 ^ surfaceClosedContourAlphaEnabled.GetHashCode();
                 hash = hash * 397 ^ surfaceClosedContourAlphaResolution;
                 hash = hash * 397 ^ surfaceClosedContourEdgeAlphaMultiplier.GetHashCode();
+                hash = hash * 397 ^ surfaceClosedContourEdgeHoldDistanceMeters.GetHashCode();
+                hash = hash * 397 ^ surfaceClosedContourFadeDistanceMeters.GetHashCode();
                 hash = hash * 397 ^ surfaceClosedContourCenterAlphaMultiplier.GetHashCode();
                 hash = hash * 397 ^ surfaceClosedContourDistanceCurve.GetHashCode();
                 hash = hash * 397 ^ surfaceClosedContourMinimumAreaSquareMeters.GetHashCode();
@@ -1231,6 +1253,8 @@ namespace AnimalGame.MapTest
             surfaceScatterStrength = Mathf.Clamp01(surfaceScatterStrength);
             surfaceBakeResolution = Mathf.Clamp(surfaceBakeResolution, 256, 4096);
             surfaceMaskResolution = Mathf.Clamp(surfaceMaskResolution, 64, 1024);
+            surfacePatternAlphaNormalizationStrength = Mathf.Clamp01(
+                surfacePatternAlphaNormalizationStrength);
             surfaceClosedContourAlphaResolution = Mathf.Clamp(
                 surfaceClosedContourAlphaResolution,
                 128,
@@ -1239,6 +1263,12 @@ namespace AnimalGame.MapTest
                 surfaceClosedContourEdgeAlphaMultiplier,
                 0f,
                 2f);
+            surfaceClosedContourEdgeHoldDistanceMeters = Mathf.Max(
+                0f,
+                surfaceClosedContourEdgeHoldDistanceMeters);
+            surfaceClosedContourFadeDistanceMeters = Mathf.Max(
+                0.1f,
+                surfaceClosedContourFadeDistanceMeters);
             surfaceClosedContourCenterAlphaMultiplier = Mathf.Clamp(
                 surfaceClosedContourCenterAlphaMultiplier,
                 0f,
@@ -1246,7 +1276,7 @@ namespace AnimalGame.MapTest
             surfaceClosedContourDistanceCurve = Mathf.Clamp(
                 surfaceClosedContourDistanceCurve,
                 0.1f,
-                4f);
+                8f);
             surfaceClosedContourMinimumAreaSquareMeters = Mathf.Max(
                 0f,
                 surfaceClosedContourMinimumAreaSquareMeters);
