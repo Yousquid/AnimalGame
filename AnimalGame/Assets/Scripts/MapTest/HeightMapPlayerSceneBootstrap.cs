@@ -32,6 +32,9 @@ namespace AnimalGame.MapTest
         private float displayedFramesPerSecond;
         private float nextFrameRateRefreshTime;
 
+        public Vector2 PlayerSpawnMapPositionMeters =>
+            playerSpawnMapPositionMeters;
+
         private void Awake()
         {
             map = FindObjectOfType<MapTestSceneController>();

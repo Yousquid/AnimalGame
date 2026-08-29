@@ -144,7 +144,18 @@ namespace AnimalGame.MapTest
         [SerializeField] private bool normalizeSourceRange = true;
         [SerializeField, Min(0f)] private float surfaceSmoothingSigmaMeters = 0.75f;
 
+        [Tooltip("Gaussian standard deviation in map meters applied only to the detail-height channel used by normal traversal step detection. Set to zero to preserve the original behavior for a level.")]
+        [SerializeField, Min(0f)] private float detailSmoothingSigmaMeters;
+
+        [Tooltip("A raw step at least this tall can bypass detail smoothing when it remains present across the confirmation distance. Set to zero to disable raw large-step preservation.")]
+        [SerializeField, Min(0f)] private float preserveLargeStepHeightMeters = 1.8f;
+
+        [Tooltip("Distance sampled on each side of a suspected raw step to distinguish a persistent ledge or cliff from a narrow image artifact.")]
+        [SerializeField, Min(0f)] private float largeStepConfirmationDistanceMeters = 1f;
+
         [Header("Playable Area")]
+        [Tooltip("Optional explicit black/white playable-area mask. White is playable and black is outside. When assigned, this takes priority over height-map border detection.")]
+        [SerializeField] private Texture2D playableAreaMask;
         [Tooltip("Treats near-black pixels connected to the height-map border as outside the playable map. Enclosed dark valleys remain playable.")]
         [SerializeField] private bool useHeightMapBorderMask;
         [Tooltip("Maximum source grayscale value considered part of the connected black border.")]
@@ -358,6 +369,12 @@ namespace AnimalGame.MapTest
         public int BakedHeightResolution => bakedHeightResolution;
         public bool NormalizeSourceRange => normalizeSourceRange;
         public float SurfaceSmoothingSigmaMeters => surfaceSmoothingSigmaMeters;
+        public float DetailSmoothingSigmaMeters => detailSmoothingSigmaMeters;
+        public float PreserveLargeStepHeightMeters =>
+            preserveLargeStepHeightMeters;
+        public float LargeStepConfirmationDistanceMeters =>
+            largeStepConfirmationDistanceMeters;
+        public Texture2D PlayableAreaMask => playableAreaMask;
         public bool UseHeightMapBorderMask => useHeightMapBorderMask;
         public float HeightMapBorderMaskThreshold =>
             heightMapBorderMaskThreshold;
@@ -515,6 +532,13 @@ namespace AnimalGame.MapTest
                     hash = hash * 397 ^ bakedHeightResolution;
                     hash = hash * 397 ^ normalizeSourceRange.GetHashCode();
                     hash = hash * 397 ^ surfaceSmoothingSigmaMeters.GetHashCode();
+                    hash = hash * 397 ^ detailSmoothingSigmaMeters.GetHashCode();
+                    hash = hash * 397 ^ preserveLargeStepHeightMeters.GetHashCode();
+                    hash = hash * 397 ^
+                           largeStepConfirmationDistanceMeters.GetHashCode();
+                    hash = hash * 397 ^ (playableAreaMask != null
+                        ? playableAreaMask.GetInstanceID()
+                        : 0);
                     hash = hash * 397 ^ useHeightMapBorderMask.GetHashCode();
                     hash = hash * 397 ^ heightMapBorderMaskThreshold.GetHashCode();
                     hash = hash * 397 ^ heightMapBorderInsetMeters.GetHashCode();
@@ -1211,6 +1235,13 @@ namespace AnimalGame.MapTest
                 maximumHeightMeters);
             bakedHeightResolution = Mathf.Clamp(bakedHeightResolution, 128, 2048);
             surfaceSmoothingSigmaMeters = Mathf.Max(0f, surfaceSmoothingSigmaMeters);
+            detailSmoothingSigmaMeters = Mathf.Max(0f, detailSmoothingSigmaMeters);
+            preserveLargeStepHeightMeters = Mathf.Max(
+                0f,
+                preserveLargeStepHeightMeters);
+            largeStepConfirmationDistanceMeters = Mathf.Max(
+                0f,
+                largeStepConfirmationDistanceMeters);
             heightMapBorderMaskThreshold = Mathf.Clamp(
                 heightMapBorderMaskThreshold,
                 0f,

@@ -42,6 +42,9 @@ namespace AnimalGame.MapTest
         [Tooltip("Gaussian standard deviation in logical map meters used to reconstruct a continuous physical surface from 8-bit height steps. About 99.7% of the smoothing kernel lies within three times this distance.")]
         [SerializeField, Min(0f)] private float surfaceSmoothingSigmaMeters = 0.75f;
 
+        [Tooltip("Gaussian standard deviation in logical map meters applied only to detail-height samples used for normal traversal step detection. Zero preserves the original unfiltered detail channel.")]
+        [SerializeField, Min(0f)] private float detailSmoothingSigmaMeters;
+
         [Header("Visualization")]
         [Tooltip("Resolution of the generated color-map sprite. This changes visual sharpness only; physical height precision is controlled by Baked Height Resolution.")]
         [SerializeField, Range(128, 8000)] private int previewResolution = 512;
@@ -198,6 +201,13 @@ namespace AnimalGame.MapTest
                 : minimumHeightMeters;
         }
 
+        public float SampleRawDetailHeight(Vector2 uv)
+        {
+            return heightField != null
+                ? heightField.SampleRawDetailHeight(uv)
+                : minimumHeightMeters;
+        }
+
         public bool TrySampleWorldPosition(
             Vector2 worldPosition,
             out Vector2 mapPositionMeters,
@@ -304,6 +314,30 @@ namespace AnimalGame.MapTest
             if (!heightField.IsPlayable(uv))
                 return false;
             heightMeters = SampleDetailHeight(uv);
+            return true;
+        }
+
+        public bool TrySampleRawDetailMapPosition(
+            Vector2 mapPositionMeters,
+            out float heightMeters)
+        {
+            heightMeters = 0f;
+
+            if (!HasGeneratedMap
+                || mapPositionMeters.x < 0f
+                || mapPositionMeters.x > mapWidthMeters
+                || mapPositionMeters.y < 0f
+                || mapPositionMeters.y > mapHeightMeters)
+            {
+                return false;
+            }
+
+            Vector2 uv = new Vector2(
+                mapPositionMeters.x / Mathf.Max(0.0001f, mapWidthMeters),
+                mapPositionMeters.y / Mathf.Max(0.0001f, mapHeightMeters));
+            if (!heightField.IsPlayable(uv))
+                return false;
+            heightMeters = SampleRawDetailHeight(uv);
             return true;
         }
 
@@ -446,6 +480,8 @@ namespace AnimalGame.MapTest
             normalizeSourceRange = levelAsset.NormalizeSourceRange;
             surfaceSmoothingSigmaMeters =
                 levelAsset.SurfaceSmoothingSigmaMeters;
+            detailSmoothingSigmaMeters =
+                levelAsset.DetailSmoothingSigmaMeters;
             previewResolution = levelAsset.PreviewResolution;
             contourIntervalMeters = levelAsset.ContourIntervalMeters;
             pixelsPerUnit = levelAsset.PixelsPerUnit;
@@ -512,13 +548,17 @@ namespace AnimalGame.MapTest
                 maximumHeightMeters,
                 normalizeSourceRange,
                 surfaceSmoothingSigmaMeters,
+                detailSmoothingSigmaMeters,
                 levelAsset != null && levelAsset.UseHeightMapBorderMask,
                 levelAsset != null
                     ? levelAsset.HeightMapBorderMaskThreshold
                     : 0.01f,
                 levelAsset != null
                     ? levelAsset.HeightMapBorderInsetMeters
-                    : 0f);
+                    : 0f,
+                levelAsset != null
+                    ? levelAsset.PlayableAreaMask
+                    : null);
         }
 
         private void CreateCamera()
@@ -999,6 +1039,7 @@ namespace AnimalGame.MapTest
             maximumHeightMeters = Mathf.Max(minimumHeightMeters + 0.01f, maximumHeightMeters);
             bakedHeightResolution = Mathf.Clamp(bakedHeightResolution, 128, 2048);
             surfaceSmoothingSigmaMeters = Mathf.Max(0f, surfaceSmoothingSigmaMeters);
+            detailSmoothingSigmaMeters = Mathf.Max(0f, detailSmoothingSigmaMeters);
             previewResolution = Mathf.Clamp(previewResolution, 128, 8000);
             contourIntervalMeters = Mathf.Max(1f, contourIntervalMeters);
             pixelsPerUnit = Mathf.Max(1f, pixelsPerUnit);

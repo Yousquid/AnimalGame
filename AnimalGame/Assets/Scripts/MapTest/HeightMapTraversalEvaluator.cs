@@ -266,6 +266,8 @@ namespace AnimalGame.MapTest
         private MapTestSceneController map;
         private readonly float[] stepPreviousHeightScratch = new float[9];
         private readonly float[] stepResidualScratch = new float[9];
+        private readonly float[] stepRawPreviousHeightScratch = new float[9];
+        private readonly float[] stepRawResidualScratch = new float[9];
         private readonly float[] tumbleStartSurfaceScratch = new float[9];
         private readonly float[] tumblePreviousSurfaceScratch = new float[9];
         private readonly float[] tumblePreviousDetailScratch = new float[9];
@@ -595,7 +597,7 @@ namespace AnimalGame.MapTest
                 if (!map.TrySampleMapPosition(
                         samplePosition,
                         out float surfaceHeight)
-                    || !map.TrySampleDetailMapPosition(
+                    || !map.TrySampleRawDetailMapPosition(
                         samplePosition,
                         out float detailHeight))
                 {
@@ -1250,6 +1252,25 @@ namespace AnimalGame.MapTest
                 Mathf.CeilToInt(length / Mathf.Max(0.1f, stepProbeSpacingMeters)));
             int lateralSamples = EnsureOdd(stepLateralSamples, 1, 9);
             float actualSpacing = length / segments;
+            HeightMapLevelAsset levelAsset = map != null
+                ? map.LevelAsset
+                : null;
+            float preserveLargeStepHeight = levelAsset != null
+                ? Mathf.Max(0f, levelAsset.PreserveLargeStepHeightMeters)
+                : 0f;
+            float confirmationDistance = levelAsset != null
+                ? Mathf.Max(
+                    0f,
+                    levelAsset.LargeStepConfirmationDistanceMeters)
+                : 0f;
+            // The filtered channel handles ordinary steps. A raw spike is only
+            // restored as a blocker when the height difference is still present
+            // beyond the suspected transition on most of the swept lanes.
+            bool preservePersistentLargeSteps = levelAsset != null
+                                                && levelAsset.DetailSmoothingSigmaMeters
+                                                > 0.0001f
+                                                && preserveLargeStepHeight
+                                                > 0.0001f;
 
             Vector2 footprintBack = center - forward * (length * 0.5f);
             for (int lateralIndex = 0; lateralIndex < lateralSamples; lateralIndex++)
@@ -1264,6 +1285,14 @@ namespace AnimalGame.MapTest
                 if (!map.TrySampleDetailMapPosition(
                         previousPosition,
                         out stepPreviousHeightScratch[lateralIndex]))
+                {
+                    return false;
+                }
+
+                if (preservePersistentLargeSteps
+                    && !map.TrySampleRawDetailMapPosition(
+                        previousPosition,
+                        out stepRawPreviousHeightScratch[lateralIndex]))
                 {
                     return false;
                 }
@@ -1298,14 +1327,111 @@ namespace AnimalGame.MapTest
                     stepResidualScratch[lateralIndex] = Mathf.Abs(
                         measuredHeightChange - expectedSlopeChange);
                     stepPreviousHeightScratch[lateralIndex] = currentHeight;
+
+                    if (preservePersistentLargeSteps)
+                    {
+                        if (!map.TrySampleRawDetailMapPosition(
+                                currentPosition,
+                                out float currentRawHeight))
+                        {
+                            return false;
+                        }
+
+                        float measuredRawHeightChange = currentRawHeight
+                            - stepRawPreviousHeightScratch[lateralIndex];
+                        stepRawResidualScratch[lateralIndex] = Mathf.Abs(
+                            measuredRawHeightChange - expectedSlopeChange);
+                        stepRawPreviousHeightScratch[lateralIndex] =
+                            currentRawHeight;
+                    }
                 }
 
                 SortAscending(stepResidualScratch, lateralSamples);
                 float medianResidual = stepResidualScratch[lateralSamples / 2];
                 maximumResidual = Mathf.Max(maximumResidual, medianResidual);
+
+                if (!preservePersistentLargeSteps)
+                    continue;
+
+                SortAscending(stepRawResidualScratch, lateralSamples);
+                float medianRawResidual =
+                    stepRawResidualScratch[lateralSamples / 2];
+                if (medianRawResidual <= maximumStepHeightMeters)
+                    continue;
+
+                Vector2 transitionCenter = footprintBack
+                                           + forward * (
+                                               forwardOffset
+                                               - actualSpacing * 0.5f);
+                if (TryConfirmPersistentLargeRawStep(
+                        transitionCenter,
+                        forward,
+                        right,
+                        width,
+                        lateralSamples,
+                        actualSpacing,
+                        confirmationDistance,
+                        preserveLargeStepHeight,
+                        out float confirmedRawHeightDifference))
+                {
+                    maximumResidual = Mathf.Max(
+                        maximumResidual,
+                        confirmedRawHeightDifference);
+                }
             }
 
             return true;
+        }
+
+        private bool TryConfirmPersistentLargeRawStep(
+            Vector2 transitionCenter,
+            Vector2 forward,
+            Vector2 right,
+            float width,
+            int lateralSamples,
+            float actualSpacing,
+            float confirmationDistance,
+            float requiredHeightDifference,
+            out float confirmedHeightDifference)
+        {
+            confirmedHeightDifference = 0f;
+            float halfSpan = actualSpacing * 0.5f + confirmationDistance;
+
+            for (int lateralIndex = 0;
+                 lateralIndex < lateralSamples;
+                 lateralIndex++)
+            {
+                float lateral = lateralSamples == 1
+                    ? 0f
+                    : Mathf.Lerp(
+                        -width * 0.5f,
+                        width * 0.5f,
+                        lateralIndex / (float)(lateralSamples - 1));
+                Vector2 lateralOffset = right * lateral;
+                Vector2 beforePosition = transitionCenter
+                                         - forward * halfSpan
+                                         + lateralOffset;
+                Vector2 afterPosition = transitionCenter
+                                        + forward * halfSpan
+                                        + lateralOffset;
+                if (!map.TrySampleRawDetailMapPosition(
+                        beforePosition,
+                        out float beforeHeight)
+                    || !map.TrySampleRawDetailMapPosition(
+                        afterPosition,
+                        out float afterHeight))
+                {
+                    return false;
+                }
+
+                stepRawResidualScratch[lateralIndex] = Mathf.Abs(
+                    afterHeight - beforeHeight);
+            }
+
+            SortAscending(stepRawResidualScratch, lateralSamples);
+            confirmedHeightDifference =
+                stepRawResidualScratch[lateralSamples / 2];
+            return confirmedHeightDifference >= requiredHeightDifference;
         }
 
         private static void SortAscending(float[] values, int count)
