@@ -149,6 +149,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   keyboardToggleKey: 112
+  keyboardFocusAndShutterKey: 32
   rightStickDeadZone: 0.2
   rightStickExponent: 1.35
   guideOriginSideOffset: 0
@@ -159,6 +160,15 @@ MonoBehaviour:
   lateralFramePadding: 0.2
   lateralAimSpeed: 5
   depthAimSpeed: 4
+  focusDuration: 0.75
+  focusCancelBlendDuration: 0.25
+  focusZoomMagnification: 1.3
+  normalCameraAimFollowFraction: 0.5
+  focusedCameraAimFollowFraction: 1
+  focusRetargetCancelDeadZone: 0.3
+  shutterFlashInDuration: 0.04
+  shutterFlashHoldDuration: 0.02
+  shutterFlashOutDuration: 0.14
   entryDuration: 0.7
   exitDuration: 0.6
   photoCameraPositionDamping: 0.15

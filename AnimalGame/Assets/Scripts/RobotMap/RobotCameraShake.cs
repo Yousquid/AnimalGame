@@ -367,6 +367,7 @@ namespace AnimalGame.RobotMap
         private RobotHeightMotionDetector heightMotion;
         private float baseOrthographicSize;
         private float scanZoomMultiplier = 1f;
+        private float photoFocusMagnification = 1f;
         private float scanChargeShakeStrength;
         private float scanChargePositionAmplitude;
         private float scanChargeRotationAmplitude;
@@ -428,6 +429,11 @@ namespace AnimalGame.RobotMap
         public void SetScanZoomMultiplier(float multiplier)
         {
             scanZoomMultiplier = Mathf.Clamp(multiplier, 0.05f, 4f);
+        }
+
+        public void SetPhotoFocusMagnification(float magnification)
+        {
+            photoFocusMagnification = Mathf.Clamp(magnification, 1f, 4f);
         }
 
         public void SetScanChargeShake(
@@ -1295,7 +1301,9 @@ namespace AnimalGame.RobotMap
         {
             return Mathf.Max(
                 0.01f,
-                baseOrthographicSize * scanZoomMultiplier);
+                baseOrthographicSize
+                * scanZoomMultiplier
+                / Mathf.Max(1f, photoFocusMagnification));
         }
 
         private void UpdateGamepadRumble(float deltaTime)
@@ -1717,6 +1725,7 @@ namespace AnimalGame.RobotMap
             ResetShakeState();
             StopGamepadRumble();
             scanZoomMultiplier = 1f;
+            photoFocusMagnification = 1f;
             SetScanChargeShake(0f, 0f, 0f, 1f);
             SetPhotoModeRevealShake(0f, 0f, 0f, 1f);
             if (attachedCamera != null)

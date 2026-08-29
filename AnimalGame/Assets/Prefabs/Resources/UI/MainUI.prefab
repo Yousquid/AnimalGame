@@ -13,6 +13,7 @@ GameObject:
   - component: {fileID: 114000001}
   - component: {fileID: 114000002}
   - component: {fileID: 114000006}
+  - component: {fileID: 114000007}
   m_Layer: 5
   m_Name: MainUI
   m_TagString: Untagged
@@ -138,6 +139,45 @@ MonoBehaviour:
   rangeOutsideDimColor: {r: 0, g: 0, b: 0, a: 0.82}
   rangeDimEdgeSoftnessPixels: 2
   rangeDimPlayerProtectionRadiusPixels: 48
+  focusDimShader: {fileID: 4800000, guid: b56e7d74b0a54815aee54d8df7b32e6c, type: 3}
+  focusOutsideBrightness: 0.3
+  focusDimEdgeSoftnessPixels: 3
+  focusFramePeakScale: 1.2
+  focusAimStartScale: 3.5
+  focusAimFadeOutEnd: 0.08
+  focusAimFadeInEnd: 0.24
+  focusCancelVisualBlendDuration: 0.18
+  shutterFlashColor: {r: 1, g: 1, b: 1, a: 1}
+--- !u!114 &114000007
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 100000000}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e3f75e7fa7244a6f9f8b6ad12e5c3401, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  referenceLayoutSprite: {fileID: 21300000, guid: c522015a1e5b0df44880033aa904c00f, type: 3}
+  showReferenceLayoutOverlay: 1
+  frameInsetNormalized: 0.025
+  minimumSubjectCoverage: 0.18
+  minimumSubjectLongestSidePixels: 24
+  minimumSubjectAreaPixels: 400
+  coverageScoreWeight: 0.55
+  centerednessScoreWeight: 0.3
+  sizeScoreWeight: 0.15
+  resultFont: {fileID: 0}
+  entryDuration: 0.45
+  backgroundColor: {r: 0.008, g: 0.012, b: 0.014, a: 1}
+  gridColor: {r: 0.34, g: 0.38, b: 0.4, a: 0.24}
+  primaryColor: {r: 0.94, g: 0.98, b: 1, a: 1}
+  defaultAccentColor: {r: 1, g: 0.82, b: 0.18, a: 1}
+  closeKey: 98
+  alternateCloseKey: 27
+  saveKey: 121
 --- !u!1 &100000001
 GameObject:
   m_ObjectHideFlags: 0

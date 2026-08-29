@@ -105,6 +105,50 @@ namespace AnimalGame.RobotMap
             return ReadBalance();
         }
 
+        public static bool IsRightShoulderHeld()
+        {
+#if ENABLE_INPUT_SYSTEM
+            bool hasInputSystemGamepad = false;
+            foreach (Gamepad gamepad in Gamepad.all)
+            {
+                if (gamepad == null || !gamepad.added)
+                    continue;
+
+                hasInputSystemGamepad = true;
+                if (gamepad.rightShoulder.isPressed)
+                    return true;
+            }
+
+            if (hasInputSystemGamepad)
+                return false;
+#endif
+
+            RefreshDeviceIfNeeded();
+            return Input.GetKey(KeyCode.JoystickButton5);
+        }
+
+        public static bool WasRightShoulderPressedThisFrame()
+        {
+#if ENABLE_INPUT_SYSTEM
+            bool hasInputSystemGamepad = false;
+            foreach (Gamepad gamepad in Gamepad.all)
+            {
+                if (gamepad == null || !gamepad.added)
+                    continue;
+
+                hasInputSystemGamepad = true;
+                if (gamepad.rightShoulder.wasPressedThisFrame)
+                    return true;
+            }
+
+            if (hasInputSystemGamepad)
+                return false;
+#endif
+
+            RefreshDeviceIfNeeded();
+            return Input.GetKeyDown(KeyCode.JoystickButton5);
+        }
+
         public static bool WasWestFaceButtonPressedThisFrame()
         {
 #if ENABLE_INPUT_SYSTEM
@@ -130,6 +174,52 @@ namespace AnimalGame.RobotMap
             return ActiveFamily == LegacyGamepadFamily.Sony
                 ? Input.GetKeyDown(KeyCode.JoystickButton0)
                 : Input.GetKeyDown(KeyCode.JoystickButton2);
+        }
+
+        public static bool WasEastFaceButtonPressedThisFrame()
+        {
+#if ENABLE_INPUT_SYSTEM
+            bool hasInputSystemGamepad = false;
+            foreach (Gamepad gamepad in Gamepad.all)
+            {
+                if (gamepad == null || !gamepad.added)
+                    continue;
+
+                hasInputSystemGamepad = true;
+                if (gamepad.buttonEast.wasPressedThisFrame)
+                    return true;
+            }
+
+            if (hasInputSystemGamepad)
+                return false;
+#endif
+
+            RefreshDeviceIfNeeded();
+            return ActiveFamily == LegacyGamepadFamily.Sony
+                ? Input.GetKeyDown(KeyCode.JoystickButton2)
+                : Input.GetKeyDown(KeyCode.JoystickButton1);
+        }
+
+        public static bool WasNorthFaceButtonPressedThisFrame()
+        {
+#if ENABLE_INPUT_SYSTEM
+            bool hasInputSystemGamepad = false;
+            foreach (Gamepad gamepad in Gamepad.all)
+            {
+                if (gamepad == null || !gamepad.added)
+                    continue;
+
+                hasInputSystemGamepad = true;
+                if (gamepad.buttonNorth.wasPressedThisFrame)
+                    return true;
+            }
+
+            if (hasInputSystemGamepad)
+                return false;
+#endif
+
+            RefreshDeviceIfNeeded();
+            return Input.GetKeyDown(KeyCode.JoystickButton3);
         }
 
         public static float ReadTriggerThrottle()

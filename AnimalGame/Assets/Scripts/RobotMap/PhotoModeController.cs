@@ -12,6 +12,10 @@ namespace AnimalGame.RobotMap
         [Tooltip("Keyboard fallback used to enter or leave photo mode while testing without a gamepad.")]
         [SerializeField] private KeyCode keyboardToggleKey = KeyCode.P;
 
+        [Tooltip("Keyboard fallback for the RB focus-and-shutter interaction.")]
+        [SerializeField] private KeyCode keyboardFocusAndShutterKey =
+            KeyCode.Space;
+
         [Tooltip("Radial dead zone applied to the right stick while positioning the photo frame.")]
         [SerializeField, Range(0f, 0.9f)] private float rightStickDeadZone = 0.2f;
 
@@ -46,6 +50,42 @@ namespace AnimalGame.RobotMap
         [Tooltip("Maximum near/far photo-frame motion speed in world units per second.")]
         [SerializeField, Min(0f)] private float depthAimSpeed = 4f;
 
+        [Header("Focus")]
+        [Tooltip("How long RB must remain held to complete focus.")]
+        [SerializeField, Min(0.05f)] private float focusDuration = 0.75f;
+
+        [Tooltip("Seconds used to return camera and UI presentation after focus is cancelled.")]
+        [SerializeField, Min(0.05f)] private float focusCancelBlendDuration =
+            0.25f;
+
+        [Tooltip("Final camera magnification after focus completes.")]
+        [SerializeField, Min(1f)] private float focusZoomMagnification = 1.3f;
+
+        [Tooltip("Fraction of the aim offset used by the camera while normally framing a photo.")]
+        [SerializeField, Range(0f, 1f)]
+        private float normalCameraAimFollowFraction = 0.5f;
+
+        [Tooltip("Fraction of the aim offset used by the camera after focus completes.")]
+        [SerializeField, Range(0f, 1f)]
+        private float focusedCameraAimFollowFraction = 1f;
+
+        [Tooltip("Right-stick magnitude that cancels a completed focus so the frame can be repositioned. This remains above normal stick drift.")]
+        [SerializeField, Range(0.1f, 1f)]
+        private float focusRetargetCancelDeadZone = 0.3f;
+
+        [Header("Shutter")]
+        [Tooltip("Seconds for the white shutter flash to reach full opacity.")]
+        [SerializeField, Min(0.01f)] private float shutterFlashInDuration =
+            0.04f;
+
+        [Tooltip("Seconds the shutter flash remains fully white.")]
+        [SerializeField, Min(0f)] private float shutterFlashHoldDuration =
+            0.02f;
+
+        [Tooltip("Seconds for the white shutter flash to fade away.")]
+        [SerializeField, Min(0.01f)] private float shutterFlashOutDuration =
+            0.14f;
+
         [Header("Transition Presentation")]
         [Tooltip("Seconds during which the photo range is revealed and all player commands are locked.")]
         [SerializeField, Min(0.05f)] private float entryDuration = 0.7f;
@@ -75,7 +115,63 @@ namespace AnimalGame.RobotMap
         public bool IsActive => state != PhotoModeState.Inactive;
         public bool IsEntering => state == PhotoModeState.Entering;
         public bool IsExiting => state == PhotoModeState.Exiting;
-        public bool IsInputLocked => IsEntering || IsExiting;
+        public bool IsFocusing => captureState == PhotoCaptureState.Focusing;
+        public bool IsFocusComplete =>
+            captureState == PhotoCaptureState.Focused
+            || captureState == PhotoCaptureState.Capturing;
+        public bool IsCapturing =>
+            captureState == PhotoCaptureState.Capturing;
+        public bool IsReviewing =>
+            captureState == PhotoCaptureState.Reviewing;
+        public bool IsInputLocked =>
+            IsEntering
+            || IsExiting
+            || captureState != PhotoCaptureState.Framing;
+        public float FocusProgress01
+        {
+            get
+            {
+                if (captureState == PhotoCaptureState.Focusing)
+                {
+                    return Mathf.Clamp01(
+                        focusElapsed / Mathf.Max(0.05f, focusDuration));
+                }
+
+                return IsFocusComplete ? 1f : 0f;
+            }
+        }
+        public float FocusPresentation01 => focusPresentation01;
+        public float ShutterFlash01
+        {
+            get
+            {
+                if (captureState != PhotoCaptureState.Capturing)
+                    return 0f;
+
+                float flashIn = Mathf.Max(0.01f, shutterFlashInDuration);
+                float holdEnd = flashIn
+                                + Mathf.Max(0f, shutterFlashHoldDuration);
+                if (shutterElapsed < flashIn)
+                {
+                    return Mathf.SmoothStep(
+                        0f,
+                        1f,
+                        shutterElapsed / flashIn);
+                }
+
+                if (shutterElapsed <= holdEnd)
+                    return 1f;
+
+                float flashOut = Mathf.Max(0.01f, shutterFlashOutDuration);
+                return 1f - Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    Mathf.InverseLerp(
+                        holdEnd,
+                        holdEnd + flashOut,
+                        shutterElapsed));
+            }
+        }
         public float Reveal01
         {
             get
@@ -125,6 +221,7 @@ namespace AnimalGame.RobotMap
         }
 
         public event Action<bool> ModeChanged;
+        public event Action PhotoCaptured;
 
         private enum PhotoModeState
         {
@@ -132,6 +229,15 @@ namespace AnimalGame.RobotMap
             Entering,
             Active,
             Exiting
+        }
+
+        private enum PhotoCaptureState
+        {
+            Framing,
+            Focusing,
+            Focused,
+            Capturing,
+            Reviewing
         }
 
         private RobotMover mover;
@@ -143,6 +249,14 @@ namespace AnimalGame.RobotMap
         private float entryElapsed;
         private float exitElapsed;
         private bool photoStickArmed;
+        private PhotoCaptureState captureState;
+        private float focusElapsed;
+        private float focusPresentation01;
+        private float focusPresentationVelocity;
+        private bool shutterArmed;
+        private float shutterElapsed;
+        private bool captureMomentFired;
+        private bool photoReviewRequested;
 
         private void Awake()
         {
@@ -186,18 +300,24 @@ namespace AnimalGame.RobotMap
 
             if (state == PhotoModeState.Entering)
             {
+                UpdateFocusPresentation();
                 UpdateEntryPresentation();
                 return;
             }
 
             if (state == PhotoModeState.Exiting)
             {
+                UpdateFocusPresentation();
                 UpdateExitPresentation();
                 return;
             }
 
-            UpdateAimFromRightStick();
+            UpdateCaptureState();
+            UpdateFocusPresentation();
+            if (captureState == PhotoCaptureState.Framing)
+                UpdateAimFromRightStick();
             UpdateAimFollowTarget();
+            ApplyFocusCameraPresentation();
         }
 
         public void InitializeCamera(
@@ -219,6 +339,8 @@ namespace AnimalGame.RobotMap
                     AimFollowTarget,
                     photoCameraPositionDamping);
             }
+
+            ApplyFocusCameraPresentation();
         }
 
         public void SetPhotoModeActive(bool active)
@@ -238,6 +360,7 @@ namespace AnimalGame.RobotMap
                 entryElapsed = 0f;
                 exitElapsed = 0f;
                 photoStickArmed = false;
+                ResetCaptureState(true);
                 mover?.SetPhotoModeInputLocked(true);
                 cameraFollow?.FollowTarget(
                     AimFollowTarget,
@@ -287,6 +410,213 @@ namespace AnimalGame.RobotMap
                 maximumAimDistance));
         }
 
+        public bool RequestPhotoReview()
+        {
+            if (captureState != PhotoCaptureState.Capturing
+                || !captureMomentFired)
+            {
+                return false;
+            }
+
+            photoReviewRequested = true;
+            return true;
+        }
+
+        public void EndPhotoReview()
+        {
+            if (captureState != PhotoCaptureState.Reviewing)
+                return;
+
+            captureState = PhotoCaptureState.Framing;
+            focusElapsed = 0f;
+            shutterArmed = false;
+            shutterElapsed = 0f;
+            captureMomentFired = false;
+            photoReviewRequested = false;
+            if (state == PhotoModeState.Active)
+                mover?.SetPhotoModeInputLocked(false);
+        }
+
+        private void UpdateCaptureState()
+        {
+            bool shoulderHeld = Input.GetKey(keyboardFocusAndShutterKey)
+                                || AdaptiveLegacyGamepadInput
+                                    .IsRightShoulderHeld();
+            bool shoulderPressed = Input.GetKeyDown(
+                                       keyboardFocusAndShutterKey)
+                                   || AdaptiveLegacyGamepadInput
+                                       .WasRightShoulderPressedThisFrame();
+            float deltaTime = Mathf.Max(0f, Time.unscaledDeltaTime);
+
+            switch (captureState)
+            {
+                case PhotoCaptureState.Framing:
+                    if (shoulderPressed)
+                        BeginFocus();
+                    break;
+
+                case PhotoCaptureState.Focusing:
+                    if (!shoulderHeld)
+                    {
+                        CancelFocus();
+                        break;
+                    }
+
+                    focusElapsed = Mathf.Min(
+                        focusDuration,
+                        focusElapsed + deltaTime);
+                    if (FocusProgress01 >= 1f)
+                        CompleteFocus();
+                    break;
+
+                case PhotoCaptureState.Focused:
+                    if (AdaptiveLegacyGamepadInput
+                            .ReadRightStick().magnitude
+                        > focusRetargetCancelDeadZone)
+                    {
+                        CancelFocus();
+                        break;
+                    }
+
+                    if (!shoulderHeld)
+                        shutterArmed = true;
+                    if (shutterArmed && shoulderPressed)
+                        BeginCapture();
+                    break;
+
+                case PhotoCaptureState.Capturing:
+                    UpdateShutter(deltaTime);
+                    break;
+
+                case PhotoCaptureState.Reviewing:
+                    break;
+            }
+        }
+
+        private void BeginFocus()
+        {
+            captureState = PhotoCaptureState.Focusing;
+            focusElapsed = 0f;
+            shutterArmed = false;
+            shutterElapsed = 0f;
+            captureMomentFired = false;
+            photoReviewRequested = false;
+            mover?.SetPhotoModeInputLocked(true);
+        }
+
+        private void CompleteFocus()
+        {
+            focusElapsed = Mathf.Max(0.05f, focusDuration);
+            captureState = PhotoCaptureState.Focused;
+            shutterArmed = false;
+            mover?.SetPhotoModeInputLocked(true);
+        }
+
+        private void CancelFocus()
+        {
+            captureState = PhotoCaptureState.Framing;
+            focusElapsed = 0f;
+            shutterArmed = false;
+            shutterElapsed = 0f;
+            captureMomentFired = false;
+            photoReviewRequested = false;
+            if (state == PhotoModeState.Active)
+                mover?.SetPhotoModeInputLocked(false);
+        }
+
+        private void BeginCapture()
+        {
+            captureState = PhotoCaptureState.Capturing;
+            shutterElapsed = 0f;
+            captureMomentFired = false;
+            shutterArmed = false;
+            photoReviewRequested = false;
+            mover?.SetPhotoModeInputLocked(true);
+        }
+
+        private void UpdateShutter(float deltaTime)
+        {
+            float flashIn = Mathf.Max(0.01f, shutterFlashInDuration);
+            float hold = Mathf.Max(0f, shutterFlashHoldDuration);
+            float flashOut = Mathf.Max(0.01f, shutterFlashOutDuration);
+            float totalDuration = flashIn + hold + flashOut;
+            shutterElapsed = Mathf.Min(
+                totalDuration,
+                shutterElapsed + deltaTime);
+
+            if (!captureMomentFired && shutterElapsed >= flashIn)
+            {
+                captureMomentFired = true;
+                PhotoCaptured?.Invoke();
+            }
+
+            if (shutterElapsed < totalDuration)
+                return;
+
+            bool enterReview = photoReviewRequested;
+            captureState = enterReview
+                ? PhotoCaptureState.Reviewing
+                : PhotoCaptureState.Framing;
+            focusElapsed = 0f;
+            shutterArmed = false;
+            captureMomentFired = false;
+            photoReviewRequested = false;
+            mover?.SetPhotoModeInputLocked(enterReview);
+        }
+
+        private void UpdateFocusPresentation()
+        {
+            bool focusPresentationActive =
+                captureState == PhotoCaptureState.Focusing
+                || captureState == PhotoCaptureState.Focused
+                || captureState == PhotoCaptureState.Capturing;
+            if (focusPresentationActive)
+            {
+                focusPresentation01 = FocusProgress01;
+                focusPresentationVelocity = 0f;
+                return;
+            }
+
+            focusPresentation01 = Mathf.SmoothDamp(
+                focusPresentation01,
+                0f,
+                ref focusPresentationVelocity,
+                Mathf.Max(0.05f, focusCancelBlendDuration),
+                Mathf.Infinity,
+                Mathf.Max(0f, Time.unscaledDeltaTime));
+            if (focusPresentation01 <= 0.0001f)
+            {
+                focusPresentation01 = 0f;
+                focusPresentationVelocity = 0f;
+            }
+        }
+
+        private void ApplyFocusCameraPresentation()
+        {
+            float easedFocus = Mathf.SmoothStep(
+                0f,
+                1f,
+                focusPresentation01);
+            cameraShake?.SetPhotoFocusMagnification(
+                Mathf.Lerp(1f, focusZoomMagnification, easedFocus));
+        }
+
+        private void ResetCaptureState(bool resetPresentation)
+        {
+            captureState = PhotoCaptureState.Framing;
+            focusElapsed = 0f;
+            shutterArmed = false;
+            shutterElapsed = 0f;
+            captureMomentFired = false;
+            photoReviewRequested = false;
+            if (!resetPresentation)
+                return;
+
+            focusPresentation01 = 0f;
+            focusPresentationVelocity = 0f;
+            cameraShake?.SetPhotoFocusMagnification(1f);
+        }
+
         private void UpdateAimFromRightStick()
         {
             Vector2 rawStick = AdaptiveLegacyGamepadInput.ReadRightStick();
@@ -326,6 +656,7 @@ namespace AnimalGame.RobotMap
                 entryDuration,
                 entryElapsed + Mathf.Max(0f, Time.unscaledDeltaTime));
             UpdateAimFollowTarget();
+            ApplyFocusCameraPresentation();
 
             float progress = Reveal01;
             float shakeEnvelope = Mathf.Sin(progress * Mathf.PI);
@@ -351,6 +682,7 @@ namespace AnimalGame.RobotMap
             state = PhotoModeState.Exiting;
             exitElapsed = 0f;
             photoStickArmed = false;
+            ResetCaptureState(false);
             mover?.SetPhotoModeInputLocked(true);
             cameraFollow?.FollowBalanceTargetSmooth(
                 balance,
@@ -369,6 +701,7 @@ namespace AnimalGame.RobotMap
                 exitDuration,
                 exitElapsed + Mathf.Max(0f, Time.unscaledDeltaTime));
             UpdateAimFollowTarget();
+            ApplyFocusCameraPresentation();
 
             float progress = Mathf.Clamp01(
                 exitElapsed / Mathf.Max(0.05f, exitDuration));
@@ -391,6 +724,7 @@ namespace AnimalGame.RobotMap
             entryElapsed = 0f;
             exitElapsed = 0f;
             photoStickArmed = false;
+            ResetCaptureState(true);
             mover?.SetPhotoModeInputLocked(false);
             cameraShake?.SetPhotoModeRevealShake(0f, 0f, 0f, 1f);
             ModeChanged?.Invoke(false);
@@ -403,6 +737,7 @@ namespace AnimalGame.RobotMap
             entryElapsed = 0f;
             exitElapsed = 0f;
             photoStickArmed = false;
+            ResetCaptureState(true);
             mover?.SetPhotoModeInputLocked(false);
             cameraShake?.SetPhotoModeRevealShake(0f, 0f, 0f, 1f);
             if (wasActive)
@@ -455,9 +790,13 @@ namespace AnimalGame.RobotMap
             if (aimFollowTarget == null)
                 return;
 
+            float followFraction = Mathf.Lerp(
+                normalCameraAimFollowFraction,
+                focusedCameraAimFollowFraction,
+                Mathf.SmoothStep(0f, 1f, focusPresentation01));
             aimFollowTarget.localPosition = new Vector3(
-                AimLocalPosition.x * 0.5f,
-                AimLocalPosition.y * 0.5f,
+                AimLocalPosition.x * followFraction,
+                AimLocalPosition.y * followFraction,
                 0f);
             aimFollowTarget.localRotation = Quaternion.identity;
         }
@@ -547,6 +886,30 @@ namespace AnimalGame.RobotMap
             lateralFramePadding = Mathf.Max(0f, lateralFramePadding);
             lateralAimSpeed = Mathf.Max(0f, lateralAimSpeed);
             depthAimSpeed = Mathf.Max(0f, depthAimSpeed);
+            focusDuration = Mathf.Max(0.05f, focusDuration);
+            focusCancelBlendDuration = Mathf.Max(
+                0.05f,
+                focusCancelBlendDuration);
+            focusZoomMagnification = Mathf.Max(
+                1f,
+                focusZoomMagnification);
+            normalCameraAimFollowFraction = Mathf.Clamp01(
+                normalCameraAimFollowFraction);
+            focusedCameraAimFollowFraction = Mathf.Clamp01(
+                focusedCameraAimFollowFraction);
+            focusRetargetCancelDeadZone = Mathf.Clamp(
+                focusRetargetCancelDeadZone,
+                0.1f,
+                1f);
+            shutterFlashInDuration = Mathf.Max(
+                0.01f,
+                shutterFlashInDuration);
+            shutterFlashHoldDuration = Mathf.Max(
+                0f,
+                shutterFlashHoldDuration);
+            shutterFlashOutDuration = Mathf.Max(
+                0.01f,
+                shutterFlashOutDuration);
             entryDuration = Mathf.Max(0.05f, entryDuration);
             exitDuration = Mathf.Max(0.05f, exitDuration);
             photoCameraPositionDamping = Mathf.Max(
