@@ -94,6 +94,7 @@ namespace AnimalGame.RobotMap
         [SerializeField, Min(0.01f)] private float scanWaveHalfThickness = 0.14f;
         [Tooltip("Softness of the circular player-UI clipping edge, in screen pixels.")]
         [SerializeField, Min(0f)] private float signalClipSoftnessPixels = 1.5f;
+        [Tooltip("Temporary reveal duration retained for non-animal biological targets. Scanned animals are discovered permanently.")]
         [SerializeField, Min(0.1f)] private float temporaryRevealDuration = 5f;
 
         [Tooltip("Color used by every biological signal point.")]
@@ -570,7 +571,10 @@ namespace AnimalGame.RobotMap
                     || distance - targetRadius > outerRadius)
                     continue;
                 revealedEntityIds.Add(entityId);
-                entity.RevealTemporarily(temporaryRevealDuration);
+                if (entity.Kind == DiscoverableKind.Animal)
+                    entity.SetDiscovered(true);
+                else
+                    entity.RevealTemporarily(temporaryRevealDuration);
             }
         }
 

@@ -106,6 +106,10 @@ namespace AnimalGame.MapTest
                 mainUiObject.GetComponentInChildren<ScanChargeUI>(true);
             PhotoModeUI photoModeUi =
                 mainUiObject.GetComponent<PhotoModeUI>();
+            PhotoResultUI photoResultUi =
+                mainUiObject.GetComponent<PhotoResultUI>();
+            if (photoResultUi == null)
+                photoResultUi = mainUiObject.AddComponent<PhotoResultUI>();
 
             if (map == null || robot == null || camera == null || cameraFollow == null
                 || traversalEvaluator == null || traversalOverlay == null
@@ -134,6 +138,7 @@ namespace AnimalGame.MapTest
             scanChargeUi.SetPhotoModeController(photoMode);
             bioScan.Initialize(scanChargeUi);
             photoModeUi.Initialize(photoMode, camera);
+            photoResultUi.Initialize(photoMode, photoModeUi, camera, map);
             RobotTumbleUiRotation uiRotation =
                 mainUiObject.GetComponent<RobotTumbleUiRotation>();
             if (uiRotation == null)

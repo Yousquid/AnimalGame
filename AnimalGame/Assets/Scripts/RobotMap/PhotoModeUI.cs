@@ -66,19 +66,64 @@ namespace AnimalGame.RobotMap
         [SerializeField, Min(0f)]
         private float rangeDimPlayerProtectionRadiusPixels = 48f;
 
+        [Header("Focus Presentation")]
+        [Tooltip("Shader used to darken the screen outside the camera frame while focusing.")]
+        [SerializeField] private Shader focusDimShader;
+
+        [Tooltip("Brightness retained outside the camera frame when focus completes.")]
+        [SerializeField, Range(0f, 1f)]
+        private float focusOutsideBrightness = 0.3f;
+
+        [Tooltip("Softness of the focus cutout edge, in screen pixels.")]
+        [SerializeField, Min(0f)]
+        private float focusDimEdgeSoftnessPixels = 3f;
+
+        [Tooltip("Largest camera-frame scale reached during the focus pulse.")]
+        [SerializeField, Min(1f)] private float focusFramePeakScale = 1.2f;
+
+        [Tooltip("Scale at which the two aim marks reappear during focus.")]
+        [SerializeField, Min(1f)] private float focusAimStartScale = 3.5f;
+
+        [Tooltip("Normalized focus time at which the original aim marks have disappeared.")]
+        [SerializeField, Range(0.01f, 0.4f)]
+        private float focusAimFadeOutEnd = 0.08f;
+
+        [Tooltip("Normalized focus time at which the enlarged aim marks finish reappearing.")]
+        [SerializeField, Range(0.05f, 0.6f)]
+        private float focusAimFadeInEnd = 0.24f;
+
+        [Tooltip("Seconds used to smoothly restore frame and aim artwork after focus cancellation.")]
+        [SerializeField, Min(0.01f)]
+        private float focusCancelVisualBlendDuration = 0.18f;
+
+        [Header("Shutter Flash")]
+        [SerializeField] private Color shutterFlashColor = Color.white;
+
         private PhotoModeController controller;
         private Camera mapCamera;
         private Canvas rootCanvas;
         private Canvas playerRangeCanvas;
         private RectTransform playerRangeCanvasRoot;
+        private Canvas shutterFlashCanvas;
+        private RectTransform shutterFlashCanvasRoot;
         private RectTransform visualRoot;
         private RectTransform frameRoot;
+        private RectTransform aimRoot;
         private PhotoRangeDimGraphic rangeDim;
+        private PhotoFocusDimGraphic focusDim;
         private PhotoRangeGuideGraphic rangeGuide;
+        private readonly Vector3[] captureFrameWorldCorners = new Vector3[4];
         private readonly Image[] frameStrokeImages = new Image[12];
         private Image frameImage;
         private Image bigAimImage;
         private Image smallAimImage;
+        private Image shutterFlashImage;
+        private float displayedFocusFrameScale = 1f;
+        private float displayedFocusFrameScaleVelocity;
+        private float displayedFocusAimScale = 1f;
+        private float displayedFocusAimScaleVelocity;
+        private float displayedFocusAimAlpha = 1f;
+        private float displayedFocusAimAlphaVelocity;
 
         private void Awake()
         {
@@ -114,7 +159,67 @@ namespace AnimalGame.RobotMap
                 rangeDim.color = rangeOutsideDimColor;
             }
 
-            SetVisible(controller != null && controller.IsActive);
+            if (focusDim != null)
+            {
+                focusDim.Configure(
+                    rootCanvas,
+                    frameRoot,
+                    focusDimShader,
+                    focusDimEdgeSoftnessPixels);
+                focusDim.color = new Color(
+                    0f,
+                    0f,
+                    0f,
+                    1f - focusOutsideBrightness);
+            }
+
+            SetVisible(
+                controller != null
+                && controller.IsActive
+                && !controller.IsReviewing);
+        }
+
+        public bool TryGetCaptureFrameScreenCorners(
+            Vector2[] screenCorners,
+            float insetNormalizedPerSide = 0f)
+        {
+            if (screenCorners == null
+                || screenCorners.Length < 4
+                || frameRoot == null
+                || controller == null
+                || !controller.IsActive)
+            {
+                return false;
+            }
+
+            frameRoot.GetWorldCorners(captureFrameWorldCorners);
+            Camera eventCamera = rootCanvas != null
+                                 && rootCanvas.renderMode
+                                 == RenderMode.ScreenSpaceOverlay
+                ? null
+                : mapCamera;
+            Vector2 center = Vector2.zero;
+            for (int index = 0; index < 4; index++)
+            {
+                screenCorners[index] =
+                    RectTransformUtility.WorldToScreenPoint(
+                        eventCamera,
+                        captureFrameWorldCorners[index]);
+                center += screenCorners[index];
+            }
+
+            center *= 0.25f;
+            float cornerInset = Mathf.Clamp01(
+                insetNormalizedPerSide * 2f);
+            for (int index = 0; index < 4; index++)
+            {
+                screenCorners[index] = Vector2.Lerp(
+                    screenCorners[index],
+                    center,
+                    cornerInset);
+            }
+
+            return true;
         }
 
         private void LateUpdate()
@@ -122,9 +227,12 @@ namespace AnimalGame.RobotMap
             if (visualRoot == null)
                 EnsureVisuals();
 
+            UpdateShutterFlash();
+
             bool visible = controller != null
                            && mapCamera != null
-                           && controller.IsActive;
+                           && controller.IsActive
+                           && !controller.IsReviewing;
             SetVisible(visible);
             if (!visible || frameRoot == null)
                 return;
@@ -184,6 +292,9 @@ namespace AnimalGame.RobotMap
                     maximumRangeScale);
             }
 
+            UpdateFocusArtworkPresentation();
+            displayedFrameScale *= displayedFocusFrameScale;
+
             frameRoot.localScale = new Vector3(
                 displayedFrameScale,
                 displayedFrameScale,
@@ -192,21 +303,138 @@ namespace AnimalGame.RobotMap
                 0f,
                 0f,
                 CalculateFrameTiltDegrees());
+            if (aimRoot != null)
+            {
+                aimRoot.localScale = new Vector3(
+                    displayedFocusAimScale,
+                    displayedFocusAimScale,
+                    1f);
+            }
+
             UpdateFrameStroke(displayedFrameScale, frameReveal);
             SetArtworkAlpha(frameImage, frameReveal);
             SetArtworkAlpha(
                 bigAimImage,
-                SmoothReveal(reveal, 0.5f, 0.9f));
+                SmoothReveal(reveal, 0.5f, 0.9f)
+                * displayedFocusAimAlpha);
             SetArtworkAlpha(
                 smallAimImage,
-                SmoothReveal(reveal, 0.62f, 1f));
+                SmoothReveal(reveal, 0.62f, 1f)
+                * displayedFocusAimAlpha);
             float guideReveal = SmoothReveal(
                 reveal,
                 guideRevealStart,
                 guideRevealEnd);
-            rangeDim?.UpdatePresentation(guideReveal);
+            float focusPresentation = controller.FocusPresentation01;
+            rangeDim?.UpdatePresentation(
+                guideReveal * (1f - focusPresentation));
+            focusDim?.UpdatePresentation(focusPresentation);
             rangeGuide?.UpdatePlayerScreenAnchor();
             rangeGuide?.SetReveal(guideReveal);
+        }
+
+        private void UpdateFocusArtworkPresentation()
+        {
+            if (controller == null)
+                return;
+
+            if (controller.IsFocusing)
+            {
+                float progress = controller.FocusProgress01;
+                displayedFocusFrameScale = 1f
+                    + (focusFramePeakScale - 1f)
+                    * Mathf.Sin(progress * Mathf.PI);
+                displayedFocusFrameScaleVelocity = 0f;
+
+                if (progress <= focusAimFadeOutEnd)
+                {
+                    float disappear = Mathf.SmoothStep(
+                        0f,
+                        1f,
+                        progress / Mathf.Max(0.01f, focusAimFadeOutEnd));
+                    displayedFocusAimAlpha = 1f - disappear;
+                    displayedFocusAimScale = Mathf.Lerp(
+                        1f,
+                        focusAimStartScale,
+                        disappear);
+                }
+                else
+                {
+                    float appear = Mathf.SmoothStep(
+                        0f,
+                        1f,
+                        Mathf.InverseLerp(
+                            focusAimFadeOutEnd,
+                            focusAimFadeInEnd,
+                            progress));
+                    float shrink = Mathf.SmoothStep(
+                        0f,
+                        1f,
+                        Mathf.InverseLerp(
+                            focusAimFadeOutEnd,
+                            1f,
+                            progress));
+                    displayedFocusAimAlpha = appear;
+                    displayedFocusAimScale = Mathf.Lerp(
+                        focusAimStartScale,
+                        1f,
+                        shrink);
+                }
+
+                displayedFocusAimAlphaVelocity = 0f;
+                displayedFocusAimScaleVelocity = 0f;
+                return;
+            }
+
+            if (controller.IsFocusComplete)
+            {
+                displayedFocusFrameScale = 1f;
+                displayedFocusAimScale = 1f;
+                displayedFocusAimAlpha = 1f;
+                displayedFocusFrameScaleVelocity = 0f;
+                displayedFocusAimScaleVelocity = 0f;
+                displayedFocusAimAlphaVelocity = 0f;
+                return;
+            }
+
+            float blendDuration = Mathf.Max(
+                0.01f,
+                focusCancelVisualBlendDuration);
+            float deltaTime = Mathf.Max(0f, Time.unscaledDeltaTime);
+            displayedFocusFrameScale = Mathf.SmoothDamp(
+                displayedFocusFrameScale,
+                1f,
+                ref displayedFocusFrameScaleVelocity,
+                blendDuration,
+                Mathf.Infinity,
+                deltaTime);
+            displayedFocusAimScale = Mathf.SmoothDamp(
+                displayedFocusAimScale,
+                1f,
+                ref displayedFocusAimScaleVelocity,
+                blendDuration,
+                Mathf.Infinity,
+                deltaTime);
+            displayedFocusAimAlpha = Mathf.SmoothDamp(
+                displayedFocusAimAlpha,
+                1f,
+                ref displayedFocusAimAlphaVelocity,
+                blendDuration,
+                Mathf.Infinity,
+                deltaTime);
+        }
+
+        private void UpdateShutterFlash()
+        {
+            if (shutterFlashImage == null)
+                return;
+
+            float flash = controller != null
+                ? controller.ShutterFlash01
+                : 0f;
+            Color displayedColor = shutterFlashColor;
+            displayedColor.a *= Mathf.Clamp01(flash);
+            shutterFlashImage.color = displayedColor;
         }
 
         private float CalculateRevealScale(float frameReveal)
@@ -392,6 +620,7 @@ namespace AnimalGame.RobotMap
             StretchToParent(visualRoot);
 
             CreatePlayerRangeCanvas();
+            CreateShutterFlashCanvas();
             GameObject dimObject = CreateUiObject(
                 "Photo Range Outside Dim",
                 playerRangeCanvasRoot,
@@ -402,6 +631,21 @@ namespace AnimalGame.RobotMap
             rangeDim = dimObject.AddComponent<PhotoRangeDimGraphic>();
             rangeDim.raycastTarget = false;
             rangeDim.color = rangeOutsideDimColor;
+
+            GameObject focusDimObject = CreateUiObject(
+                "Photo Focus Outside Dim",
+                playerRangeCanvasRoot,
+                true);
+            RectTransform focusDimTransform =
+                focusDimObject.GetComponent<RectTransform>();
+            StretchToParent(focusDimTransform);
+            focusDim = focusDimObject.AddComponent<PhotoFocusDimGraphic>();
+            focusDim.raycastTarget = false;
+            focusDim.color = new Color(
+                0f,
+                0f,
+                0f,
+                1f - focusOutsideBrightness);
 
             GameObject rangeObject = CreateUiObject(
                 "Photo Range Dashed Guides",
@@ -444,14 +688,21 @@ namespace AnimalGame.RobotMap
                 frameRoot,
                 cameraFrameSprite,
                 cameraFrameColor);
+
+            GameObject aimRootObject = CreateUiObject(
+                "Camera Aim Root",
+                frameRoot,
+                false);
+            aimRoot = aimRootObject.GetComponent<RectTransform>();
+            StretchToParent(aimRoot);
             bigAimImage = CreateArtworkImage(
                 "camera_aim_big",
-                frameRoot,
+                aimRoot,
                 cameraAimBigSprite,
                 cameraFrameColor);
             smallAimImage = CreateArtworkImage(
                 "camera_aim_small",
-                frameRoot,
+                aimRoot,
                 cameraAimSmallSprite,
                 cameraFrameColor);
 
@@ -498,6 +749,46 @@ namespace AnimalGame.RobotMap
             targetScaler.referencePixelsPerUnit = 100f;
         }
 
+        private void CreateShutterFlashCanvas()
+        {
+            if (shutterFlashCanvasRoot != null)
+                return;
+
+            var canvasObject = new GameObject(
+                "Photo Shutter Flash UI",
+                typeof(RectTransform),
+                typeof(Canvas),
+                typeof(CanvasScaler));
+            canvasObject.layer = LayerMask.NameToLayer("UI");
+            shutterFlashCanvasRoot =
+                canvasObject.GetComponent<RectTransform>();
+            shutterFlashCanvas = canvasObject.GetComponent<Canvas>();
+            shutterFlashCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            shutterFlashCanvas.overrideSorting = true;
+            shutterFlashCanvas.sortingLayerID = rootCanvas.sortingLayerID;
+            shutterFlashCanvas.sortingOrder = rootCanvas.sortingOrder + 2;
+
+            CanvasScaler targetScaler =
+                canvasObject.GetComponent<CanvasScaler>();
+            targetScaler.uiScaleMode =
+                CanvasScaler.ScaleMode.ConstantPixelSize;
+            targetScaler.scaleFactor = 1f;
+            targetScaler.referencePixelsPerUnit = 100f;
+
+            GameObject flashObject = CreateUiObject(
+                "Photo Shutter White Flash",
+                shutterFlashCanvasRoot,
+                true);
+            RectTransform flashTransform =
+                flashObject.GetComponent<RectTransform>();
+            StretchToParent(flashTransform);
+            shutterFlashImage = flashObject.AddComponent<Image>();
+            shutterFlashImage.raycastTarget = false;
+            Color transparentFlash = shutterFlashColor;
+            transparentFlash.a = 0f;
+            shutterFlashImage.color = transparentFlash;
+        }
+
         private void SetVisible(bool visible)
         {
             if (visualRoot != null
@@ -507,7 +798,12 @@ namespace AnimalGame.RobotMap
                 if (visible)
                 {
                     rangeDim?.SetVerticesDirty();
+                    focusDim?.SetVerticesDirty();
                     rangeGuide?.SetVerticesDirty();
+                }
+                else
+                {
+                    ResetFocusArtworkPresentation();
                 }
             }
 
@@ -518,6 +814,16 @@ namespace AnimalGame.RobotMap
                 if (visible)
                     rangeGuide?.SetVerticesDirty();
             }
+        }
+
+        private void ResetFocusArtworkPresentation()
+        {
+            displayedFocusFrameScale = 1f;
+            displayedFocusFrameScaleVelocity = 0f;
+            displayedFocusAimScale = 1f;
+            displayedFocusAimScaleVelocity = 0f;
+            displayedFocusAimAlpha = 1f;
+            displayedFocusAimAlphaVelocity = 0f;
         }
 
         private static GameObject CreateUiObject(
@@ -593,6 +899,24 @@ namespace AnimalGame.RobotMap
             rangeDimPlayerProtectionRadiusPixels = Mathf.Max(
                 0f,
                 rangeDimPlayerProtectionRadiusPixels);
+            focusOutsideBrightness = Mathf.Clamp01(
+                focusOutsideBrightness);
+            focusDimEdgeSoftnessPixels = Mathf.Max(
+                0f,
+                focusDimEdgeSoftnessPixels);
+            focusFramePeakScale = Mathf.Max(1f, focusFramePeakScale);
+            focusAimStartScale = Mathf.Max(1f, focusAimStartScale);
+            focusAimFadeOutEnd = Mathf.Clamp(
+                focusAimFadeOutEnd,
+                0.01f,
+                0.4f);
+            focusAimFadeInEnd = Mathf.Clamp(
+                focusAimFadeInEnd,
+                focusAimFadeOutEnd + 0.01f,
+                0.6f);
+            focusCancelVisualBlendDuration = Mathf.Max(
+                0.01f,
+                focusCancelVisualBlendDuration);
             guideRevealStart = Mathf.Clamp(guideRevealStart, 0f, 0.99f);
             guideRevealEnd = Mathf.Clamp(
                 guideRevealEnd,
@@ -610,8 +934,181 @@ namespace AnimalGame.RobotMap
         {
             if (playerRangeCanvasRoot != null)
                 Destroy(playerRangeCanvasRoot.gameObject);
+            if (shutterFlashCanvasRoot != null)
+                Destroy(shutterFlashCanvasRoot.gameObject);
         }
 
+    }
+
+    public sealed class PhotoFocusDimGraphic : MaskableGraphic
+    {
+        private static readonly int CornerAId =
+            Shader.PropertyToID("_CornerA");
+        private static readonly int CornerBId =
+            Shader.PropertyToID("_CornerB");
+        private static readonly int CornerCId =
+            Shader.PropertyToID("_CornerC");
+        private static readonly int CornerDId =
+            Shader.PropertyToID("_CornerD");
+        private static readonly int RevealId =
+            Shader.PropertyToID("_Reveal");
+        private static readonly int EdgeSoftnessId =
+            Shader.PropertyToID("_EdgeSoftnessPixels");
+
+        private readonly Vector3[] frameWorldCorners = new Vector3[4];
+        private Canvas sourceCanvas;
+        private RectTransform frameRoot;
+        private Material runtimeMaterial;
+        private float edgeSoftnessPixels = 3f;
+
+        public void Configure(
+            Canvas canvas,
+            RectTransform focusFrame,
+            Shader dimShader,
+            float configuredEdgeSoftnessPixels)
+        {
+            sourceCanvas = canvas;
+            frameRoot = focusFrame;
+            edgeSoftnessPixels = Mathf.Max(
+                0f,
+                configuredEdgeSoftnessPixels);
+
+            Shader activeShader = dimShader != null
+                ? dimShader
+                : Shader.Find("UI/Photo Focus Dim");
+            if (activeShader == null)
+            {
+                Debug.LogError(
+                    "PhotoFocusDimGraphic could not find the "
+                    + "UI/Photo Focus Dim shader.",
+                    this);
+                return;
+            }
+
+            if (runtimeMaterial == null
+                || runtimeMaterial.shader != activeShader)
+            {
+                DestroyRuntimeMaterial();
+                runtimeMaterial = new Material(activeShader)
+                {
+                    name = "Runtime Photo Focus Dim Material",
+                    hideFlags = HideFlags.DontSave
+                };
+                material = runtimeMaterial;
+            }
+
+            runtimeMaterial.SetFloat(EdgeSoftnessId, edgeSoftnessPixels);
+            runtimeMaterial.SetFloat(RevealId, 0f);
+            SetAllDirty();
+        }
+
+        public void UpdatePresentation(float reveal)
+        {
+            if (runtimeMaterial == null)
+                return;
+
+            float clampedReveal = Mathf.Clamp01(reveal);
+            runtimeMaterial.SetFloat(RevealId, clampedReveal);
+            if (frameRoot == null || clampedReveal <= 0f)
+                return;
+
+            frameRoot.GetWorldCorners(frameWorldCorners);
+            Camera eventCamera = null;
+            if (sourceCanvas != null
+                && sourceCanvas.renderMode != RenderMode.ScreenSpaceOverlay)
+            {
+                eventCamera = sourceCanvas.worldCamera;
+            }
+
+            float inverseWidth = 1f / Mathf.Max(1f, Screen.width);
+            float inverseHeight = 1f / Mathf.Max(1f, Screen.height);
+            Vector2 bottomLeft = NormalizeScreenPoint(
+                RectTransformUtility.WorldToScreenPoint(
+                    eventCamera,
+                    frameWorldCorners[0]),
+                inverseWidth,
+                inverseHeight);
+            Vector2 topLeft = NormalizeScreenPoint(
+                RectTransformUtility.WorldToScreenPoint(
+                    eventCamera,
+                    frameWorldCorners[1]),
+                inverseWidth,
+                inverseHeight);
+            Vector2 topRight = NormalizeScreenPoint(
+                RectTransformUtility.WorldToScreenPoint(
+                    eventCamera,
+                    frameWorldCorners[2]),
+                inverseWidth,
+                inverseHeight);
+            Vector2 bottomRight = NormalizeScreenPoint(
+                RectTransformUtility.WorldToScreenPoint(
+                    eventCamera,
+                    frameWorldCorners[3]),
+                inverseWidth,
+                inverseHeight);
+
+            runtimeMaterial.SetVector(
+                CornerAId,
+                new Vector4(bottomLeft.x, bottomLeft.y, 0f, 0f));
+            runtimeMaterial.SetVector(
+                CornerBId,
+                new Vector4(topLeft.x, topLeft.y, 0f, 0f));
+            runtimeMaterial.SetVector(
+                CornerCId,
+                new Vector4(topRight.x, topRight.y, 0f, 0f));
+            runtimeMaterial.SetVector(
+                CornerDId,
+                new Vector4(bottomRight.x, bottomRight.y, 0f, 0f));
+        }
+
+        protected override void OnPopulateMesh(VertexHelper vertexHelper)
+        {
+            vertexHelper.Clear();
+            Rect rect = rectTransform.rect;
+            UIVertex vertex = UIVertex.simpleVert;
+            vertex.color = color;
+            var quad = new UIVertex[4];
+
+            vertex.position = new Vector2(rect.xMin, rect.yMin);
+            vertex.uv0 = new Vector2(0f, 0f);
+            quad[0] = vertex;
+            vertex.position = new Vector2(rect.xMin, rect.yMax);
+            vertex.uv0 = new Vector2(0f, 1f);
+            quad[1] = vertex;
+            vertex.position = new Vector2(rect.xMax, rect.yMax);
+            vertex.uv0 = new Vector2(1f, 1f);
+            quad[2] = vertex;
+            vertex.position = new Vector2(rect.xMax, rect.yMin);
+            vertex.uv0 = new Vector2(1f, 0f);
+            quad[3] = vertex;
+            vertexHelper.AddUIVertexQuad(quad);
+        }
+
+        protected override void OnDestroy()
+        {
+            DestroyRuntimeMaterial();
+            base.OnDestroy();
+        }
+
+        private static Vector2 NormalizeScreenPoint(
+            Vector2 screenPoint,
+            float inverseWidth,
+            float inverseHeight)
+        {
+            return new Vector2(
+                screenPoint.x * inverseWidth,
+                screenPoint.y * inverseHeight);
+        }
+
+        private void DestroyRuntimeMaterial()
+        {
+            if (runtimeMaterial == null)
+                return;
+
+            material = null;
+            Destroy(runtimeMaterial);
+            runtimeMaterial = null;
+        }
     }
 
     public sealed class PhotoRangeDimGraphic : MaskableGraphic
