@@ -25,6 +25,7 @@ namespace AnimalGame.Animals
         public float CurrentSpeedMetersPerSecond { get; private set; }
         public Vector2 TargetMapPosition { get; private set; }
         public Vector2 FacingMapDirection { get; private set; } = Vector2.up;
+        public bool IsAerialMovement { get; private set; }
         public Vector2 CurrentMapPosition
         {
             get
@@ -66,11 +67,39 @@ namespace AnimalGame.Animals
             Vector2 mapPositionMeters,
             float speedMetersPerSecond)
         {
+            return SetTargetInternal(
+                mapPositionMeters,
+                speedMetersPerSecond,
+                false);
+        }
+
+        /// <summary>
+        /// Starts an unobstructed straight-line flight to a playable map
+        /// position. Unlike normal ground movement, this does not steer around
+        /// or collide with placed-object footprints. Map bounds are still
+        /// sampled on every step.
+        /// </summary>
+        public bool SetAerialTarget(
+            Vector2 mapPositionMeters,
+            float speedMetersPerSecond)
+        {
+            return SetTargetInternal(
+                mapPositionMeters,
+                speedMetersPerSecond,
+                true);
+        }
+
+        private bool SetTargetInternal(
+            Vector2 mapPositionMeters,
+            float speedMetersPerSecond,
+            bool aerialMovement)
+        {
             if (map == null || !map.TrySampleMapPosition(mapPositionMeters, out _))
                 return false;
 
             TargetMapPosition = mapPositionMeters;
             targetSpeedMetersPerSecond = Mathf.Max(0f, speedMetersPerSecond);
+            IsAerialMovement = aerialMovement;
             HasTarget = true;
             HasArrived = false;
             return true;
@@ -81,6 +110,7 @@ namespace AnimalGame.Animals
             HasTarget = false;
             HasArrived = false;
             CurrentSpeedMetersPerSecond = 0f;
+            IsAerialMovement = false;
         }
 
         public void FaceMapPosition(Vector2 mapPositionMeters)
@@ -112,6 +142,7 @@ namespace AnimalGame.Animals
                     HasTarget = false;
                     HasArrived = true;
                     CurrentSpeedMetersPerSecond = 0f;
+                    IsAerialMovement = false;
                 }
                 else
                 {
@@ -119,7 +150,7 @@ namespace AnimalGame.Animals
                         distance,
                         targetSpeedMetersPerSecond * deltaTime);
                     if (step > 0f
-                        && TryChooseMovementDirection(
+                        && TryChooseMovementDirectionForCurrentMode(
                             currentMapPosition,
                             toTarget / distance,
                             step,
@@ -154,6 +185,7 @@ namespace AnimalGame.Animals
             HasTarget = false;
             HasArrived = true;
             CurrentSpeedMetersPerSecond = 0f;
+            IsAerialMovement = false;
             return true;
         }
 
@@ -218,6 +250,33 @@ namespace AnimalGame.Animals
 
             movementDirection = Vector2.zero;
             return false;
+        }
+
+        private bool TryChooseMovementDirectionForCurrentMode(
+            Vector2 currentMapPosition,
+            Vector2 directDirection,
+            float step,
+            out Vector2 movementDirection)
+        {
+            if (!IsAerialMovement)
+            {
+                return TryChooseMovementDirection(
+                    currentMapPosition,
+                    directDirection,
+                    step,
+                    out movementDirection);
+            }
+
+            Vector2 candidatePosition = currentMapPosition
+                                        + directDirection * step;
+            if (!map.TrySampleMapPosition(candidatePosition, out _))
+            {
+                movementDirection = Vector2.zero;
+                return false;
+            }
+
+            movementDirection = directDirection;
+            return true;
         }
 
         private bool IsObstacleSweepBlocked(
