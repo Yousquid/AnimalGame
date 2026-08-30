@@ -159,7 +159,6 @@ namespace AnimalGame.MapTest
         private Texture2D bakedSurfaceVisual;
         private float surfaceRevealEdgePixels = 4f;
         private ScanChargeUI surfaceRevealUi;
-        private Canvas surfaceRevealCanvas;
         private Material surfaceSettingsMaterial;
         private Texture2D appliedSurfaceVisual;
         private Vector2 appliedSurfaceCenterPixels = new Vector2(
@@ -493,9 +492,6 @@ namespace AnimalGame.MapTest
         public void UseSurfaceRevealUi(ScanChargeUI scanUi)
         {
             surfaceRevealUi = scanUi;
-            surfaceRevealCanvas = scanUi != null
-                ? scanUi.GetComponentInParent<Canvas>()
-                : null;
             RefreshSurfaceMaterialSettings();
         }
 
@@ -987,10 +983,7 @@ namespace AnimalGame.MapTest
                     Screen.width * 0.5f,
                     Screen.height * 0.5f);
             float radiusPixels = surfaceRevealUi != null
-                ? surfaceRevealUi.UiRingRadiusPixels
-                  * (surfaceRevealCanvas != null
-                      ? surfaceRevealCanvas.scaleFactor
-                      : 1f)
+                ? surfaceRevealUi.GetUiRingScreenRadiusPixels()
                 : DefaultSurfaceRevealRadiusPixels;
             radiusPixels = Mathf.Max(1f, radiusPixels);
             float edgePixels = Mathf.Max(0f, surfaceRevealEdgePixels);

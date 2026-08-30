@@ -205,7 +205,7 @@ RectTransform:
   m_GameObject: {fileID: 100000001}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1.1237, y: 1.1237, z: 1.1237}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 224000000}
@@ -283,7 +283,7 @@ RectTransform:
   m_GameObject: {fileID: 100000002}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1.1237, y: 1.1237, z: 1.1237}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 224000000}
@@ -377,6 +377,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   animator: {fileID: 950000002}
+  uiRingVisualReference: {fileID: 224000001}
+  synchronizeWithUiRingVisual: 1
   keyboardScanKey: 101
   gamepadScanButton: 334
   biologicalScanMinimumHoldDuration: 0.25

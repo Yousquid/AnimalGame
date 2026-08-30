@@ -57,6 +57,12 @@ namespace AnimalGame.RobotMap
         [Tooltip("Animator containing the authored Scan_Idle, Scan_Hold, and Scan_Release sprite clips.")]
         [SerializeField] private Animator animator;
 
+        [Tooltip("Main UI artwork whose scale defines the visible circular UI boundary.")]
+        [SerializeField] private RectTransform uiRingVisualReference;
+
+        [Tooltip("Keeps the authored scan-control sprites matched to the Main UI artwork scale.")]
+        [SerializeField] private bool synchronizeWithUiRingVisual = true;
+
         [Header("Charge Input")]
         [Tooltip("Keyboard key held to charge a scan.")]
         [SerializeField] private KeyCode keyboardScanKey = KeyCode.E;
@@ -181,7 +187,17 @@ namespace AnimalGame.RobotMap
         public bool IsCharging => state == ScanVisualState.Charging
                                   || state == ScanVisualState.Charged;
         public float ReleaseRingExpansionDuration => releaseRingExpansionDuration;
-        public float UiRingRadiusPixels => uiRingRadiusPixels;
+        public float UiRingRadiusPixels
+        {
+            get
+            {
+                Canvas canvas = GetComponentInParent<Canvas>();
+                float canvasScale = canvas != null
+                    ? Mathf.Max(0.0001f, canvas.scaleFactor)
+                    : 1f;
+                return GetUiRingScreenRadiusPixels() / canvasScale;
+            }
+        }
 
         /// <summary>
         /// Raised when two short LB presses are completed. Terrain systems use
@@ -208,13 +224,40 @@ namespace AnimalGame.RobotMap
         public float GetUiRingScreenRadiusPixels()
         {
             Canvas canvas = GetComponentInParent<Canvas>();
-            return uiRingRadiusPixels * (canvas != null ? canvas.scaleFactor : 1f);
+            RectTransform reference = GetUiRingVisualReference();
+            if (reference == null)
+            {
+                return uiRingRadiusPixels
+                       * (canvas != null ? canvas.scaleFactor : 1f);
+            }
+
+            Camera eventCamera = GetCanvasEventCamera(canvas);
+            Vector3 localCenter = reference.rect.center;
+            Vector2 center = RectTransformUtility.WorldToScreenPoint(
+                eventCamera,
+                reference.TransformPoint(localCenter));
+            Vector2 horizontalEdge = RectTransformUtility.WorldToScreenPoint(
+                eventCamera,
+                reference.TransformPoint(
+                    localCenter + Vector3.right * uiRingRadiusPixels));
+            Vector2 verticalEdge = RectTransformUtility.WorldToScreenPoint(
+                eventCamera,
+                reference.TransformPoint(
+                    localCenter + Vector3.up * uiRingRadiusPixels));
+
+            // The UI is authored as a circle. Using the smaller axis prevents
+            // a non-uniform accidental scale from revealing content outside it.
+            return Mathf.Max(
+                1f,
+                Mathf.Min(
+                    Vector2.Distance(center, horizontalEdge),
+                    Vector2.Distance(center, verticalEdge)));
         }
 
         public Vector2 GetUiCenterScreenPoint()
         {
             Canvas canvas = GetComponentInParent<Canvas>();
-            RectTransform rect = transform as RectTransform;
+            RectTransform rect = GetUiRingVisualReference();
             if (rect == null)
             {
                 return new Vector2(
@@ -222,11 +265,7 @@ namespace AnimalGame.RobotMap
                     Screen.height * 0.5f);
             }
 
-            Camera eventCamera = canvas != null
-                                 && canvas.renderMode
-                                 != RenderMode.ScreenSpaceOverlay
-                ? canvas.worldCamera
-                : null;
+            Camera eventCamera = GetCanvasEventCamera(canvas);
             Vector3 worldCenter = rect.TransformPoint(rect.rect.center);
             return RectTransformUtility.WorldToScreenPoint(
                 eventCamera,
@@ -245,6 +284,8 @@ namespace AnimalGame.RobotMap
             if (animator == null)
                 animator = GetComponent<Animator>();
 
+            ResolveUiRingVisualReference();
+            SynchronizeUiArtworkScale();
             ringCoordinateSpace = transform as RectTransform;
             CreateScanRing();
             ResolveTrackingReferences();
@@ -414,6 +455,7 @@ namespace AnimalGame.RobotMap
 
         private void LateUpdate()
         {
+            SynchronizeUiArtworkScale();
             PinRingToPlayerUiCenter();
             UpdateOrganicVisibilityClip();
         }
@@ -659,7 +701,7 @@ namespace AnimalGame.RobotMap
             float eased = Mathf.SmoothStep(0f, 1f, progress);
             float radius = Mathf.Lerp(
                 robotRingRadiusPixels,
-                uiRingRadiusPixels,
+                UiRingRadiusPixels,
                 eased);
             ShowRingAt(radius, releaseRingColor);
 
@@ -676,11 +718,112 @@ namespace AnimalGame.RobotMap
             if (!ringGraphic.gameObject.activeSelf)
                 ringGraphic.gameObject.SetActive(true);
 
+            float localUnitsPerCanvasPixel = GetRingLocalUnitsPerCanvasPixel();
             ringGraphic.SetRing(
-                radius,
-                scanRingThicknessPixels,
+                radius * localUnitsPerCanvasPixel,
+                scanRingThicknessPixels * localUnitsPerCanvasPixel,
                 scanRingSegments,
                 displayedColor);
+        }
+
+        private RectTransform GetUiRingVisualReference()
+        {
+            return uiRingVisualReference != null
+                ? uiRingVisualReference
+                : transform as RectTransform;
+        }
+
+        private void ResolveUiRingVisualReference()
+        {
+            if (uiRingVisualReference != null || transform.parent == null)
+                return;
+
+            Transform candidate = transform.parent.Find("Main UI Artwork");
+            uiRingVisualReference = candidate as RectTransform;
+        }
+
+        private void SynchronizeUiArtworkScale()
+        {
+            if (!synchronizeWithUiRingVisual)
+                return;
+
+            ResolveUiRingVisualReference();
+            RectTransform controlRect = transform as RectTransform;
+            RectTransform reference = uiRingVisualReference;
+            if (controlRect == null || reference == null || controlRect == reference)
+                return;
+
+            Vector3 targetScale;
+            if (controlRect.parent == reference.parent)
+            {
+                targetScale = reference.localScale;
+            }
+            else
+            {
+                Vector3 currentLocalScale = controlRect.localScale;
+                Vector3 currentWorldScale = controlRect.lossyScale;
+                Vector3 referenceWorldScale = reference.lossyScale;
+                targetScale = new Vector3(
+                    ScaleLocalAxis(
+                        currentLocalScale.x,
+                        currentWorldScale.x,
+                        referenceWorldScale.x),
+                    ScaleLocalAxis(
+                        currentLocalScale.y,
+                        currentWorldScale.y,
+                        referenceWorldScale.y),
+                    ScaleLocalAxis(
+                        currentLocalScale.z,
+                        currentWorldScale.z,
+                        referenceWorldScale.z));
+            }
+
+            if ((controlRect.localScale - targetScale).sqrMagnitude > 0.000001f)
+                controlRect.localScale = targetScale;
+        }
+
+        private float GetRingLocalUnitsPerCanvasPixel()
+        {
+            if (ringCoordinateSpace == null)
+                return 1f;
+
+            Canvas canvas = GetComponentInParent<Canvas>();
+            Camera eventCamera = GetCanvasEventCamera(canvas);
+            Vector2 center = RectTransformUtility.WorldToScreenPoint(
+                eventCamera,
+                ringCoordinateSpace.TransformPoint(Vector3.zero));
+            Vector2 oneUnitRight = RectTransformUtility.WorldToScreenPoint(
+                eventCamera,
+                ringCoordinateSpace.TransformPoint(Vector3.right));
+            float screenPixelsPerLocalUnit = Vector2.Distance(
+                center,
+                oneUnitRight);
+            if (screenPixelsPerLocalUnit <= 0.0001f)
+                return 1f;
+
+            float canvasScale = canvas != null
+                ? Mathf.Max(0.0001f, canvas.scaleFactor)
+                : 1f;
+            return canvasScale / screenPixelsPerLocalUnit;
+        }
+
+        private static Camera GetCanvasEventCamera(Canvas canvas)
+        {
+            return canvas != null
+                   && canvas.renderMode != RenderMode.ScreenSpaceOverlay
+                ? canvas.worldCamera
+                : null;
+        }
+
+        private static float ScaleLocalAxis(
+            float currentLocalScale,
+            float currentWorldScale,
+            float targetWorldScale)
+        {
+            if (Mathf.Abs(currentWorldScale) <= 0.0001f)
+                return currentLocalScale;
+
+            return currentLocalScale * targetWorldScale / currentWorldScale;
         }
 
         private void HideScanRing()
