@@ -222,6 +222,33 @@ namespace AnimalGame.RobotMap
             return Input.GetKeyDown(KeyCode.JoystickButton3);
         }
 
+        public static bool WasDpadRightPressedThisFrame()
+        {
+#if ENABLE_INPUT_SYSTEM
+            bool hasInputSystemGamepad = false;
+            foreach (Gamepad gamepad in Gamepad.all)
+            {
+                if (gamepad == null || !gamepad.added)
+                    continue;
+
+                hasInputSystemGamepad = true;
+                if (gamepad.dpad.right.wasPressedThisFrame)
+                    return true;
+            }
+
+            // A connected Input System device owns the D-pad. Avoid also
+            // sampling a legacy axis because some Windows drivers expose both
+            // paths and would turn one physical press into two toggles.
+            if (hasInputSystemGamepad)
+                return false;
+#endif
+
+            // D-pads do not have a consistent legacy joystick-button index on
+            // Windows. The project runs with Both input backends enabled, so
+            // supported controllers use the device-independent path above.
+            return false;
+        }
+
         public static float ReadTriggerThrottle()
         {
             RefreshDeviceIfNeeded();
