@@ -4256,6 +4256,20 @@ MonoBehaviour:
   maximumContourCoverage: 0.3
   contourEdgeSoftness: 0.4
   viewportHeightSamples: 64
+  elevationFilterKeyboardToggleKey: 104
+  elevationFilterStartsEnabled: 0
+  lowerElevationFilterColor: {r: 0.12, g: 0.54, b: 0.78, a: 1}
+  higherElevationFilterColor: {r: 1, g: 0.82, b: 0.38, a: 1}
+  elevationFilterMaximumOpacity: 0.44
+  elevationFilterRelativeRangeMeters: 15
+  elevationFilterNeutralBandMeters: 1.5
+  elevationFilterResponseExponent: 1.15
+  playerHeightReferenceColor: {r: 1, g: 0.96, b: 0.7, a: 1}
+  playerHeightReferenceLineWidth: 2.4
+  playerHeightReferenceOpacity: 0.95
+  elevationFilterHillshadeStrength: 0.16
+  elevationFilterTransitionDuration: 0.32
+  showElevationFilterLegend: 1
   backgroundColor: {r: 0.008, g: 0.012, b: 0.017, a: 1}
   lowHeightColor: {r: 0, g: 0, b: 0, a: 1}
   middleHeightColor: {r: 0, g: 0, b: 0, a: 1}

@@ -36,6 +36,19 @@ Shader "AnimalGame/Dynamic Height Contours"
         _MaximumOpacity ("Maximum Opacity", Range(0, 1)) = 1
         _MaximumCoverage ("Maximum Contour Coverage", Range(0.1, 0.7)) = 0.45
         _EdgeSoftness ("Edge Softness", Range(0.1, 1.5)) = 0.4
+        _ElevationFilterEnabled ("Relative Elevation Filter Enabled", Float) = 0
+        _ElevationFilterProgress ("Relative Elevation Filter Progress", Range(0, 1)) = 0
+        _PlayerHeightMeters ("Player Height Meters", Float) = 0
+        _LowerElevationColor ("Lower Elevation Color", Color) = (0.12, 0.54, 0.78, 1)
+        _HigherElevationColor ("Higher Elevation Color", Color) = (1, 0.82, 0.38, 1)
+        _ElevationFilterMaxOpacity ("Elevation Filter Maximum Opacity", Range(0, 1)) = 0.44
+        _ElevationFilterRangeMeters ("Elevation Filter Range Meters", Float) = 15
+        _ElevationFilterNeutralBandMeters ("Elevation Filter Neutral Band Meters", Float) = 1.5
+        _ElevationFilterResponseExponent ("Elevation Filter Response Exponent", Float) = 1.15
+        _PlayerHeightReferenceColor ("Player Height Reference Color", Color) = (1, 0.96, 0.7, 1)
+        _PlayerHeightReferenceLineWidth ("Player Height Reference Line Width", Float) = 2.4
+        _PlayerHeightReferenceOpacity ("Player Height Reference Opacity", Range(0, 1)) = 0.95
+        _ElevationFilterHillshadeStrength ("Elevation Filter Hillshade Strength", Range(0, 0.5)) = 0.16
     }
 
     SubShader
@@ -82,6 +95,7 @@ Shader "AnimalGame/Dynamic Height Contours"
             sampler2D _SurfaceTex;
             sampler2D _WaterMaskTex;
             sampler2D _WaterPatternTex;
+            float4 _HeightTex_TexelSize;
             float _SurfaceEnabled;
             float _SurfaceRevealEnabled;
             float4 _SurfaceRevealCenterPixels;
@@ -110,6 +124,19 @@ Shader "AnimalGame/Dynamic Height Contours"
             float _MaximumOpacity;
             float _MaximumCoverage;
             float _EdgeSoftness;
+            float _ElevationFilterEnabled;
+            float _ElevationFilterProgress;
+            float _PlayerHeightMeters;
+            fixed4 _LowerElevationColor;
+            fixed4 _HigherElevationColor;
+            float _ElevationFilterMaxOpacity;
+            float _ElevationFilterRangeMeters;
+            float _ElevationFilterNeutralBandMeters;
+            float _ElevationFilterResponseExponent;
+            fixed4 _PlayerHeightReferenceColor;
+            float _PlayerHeightReferenceLineWidth;
+            float _PlayerHeightReferenceOpacity;
+            float _ElevationFilterHillshadeStrength;
 
             v2f vert(appdata input)
             {
@@ -270,6 +297,114 @@ Shader "AnimalGame/Dynamic Height Contours"
                 float normalizedHeight = saturate(tex2D(_HeightTex, input.uv).r);
                 float heightMeters = lerp(_MinimumHeight, _MaximumHeight, normalizedHeight);
 
+                float elevationFilterMask = 0.0;
+                float elevationFilterProgress = saturate(
+                    _ElevationFilterProgress);
+                if (_ElevationFilterEnabled > 0.5
+                    && elevationFilterProgress > 0.0001)
+                {
+                    float2 screenUv = input.screenPosition.xy
+                                      / max(input.screenPosition.w, 0.00001);
+                    float2 pixelPosition = screenUv * _ScreenParams.xy;
+                    float distanceFromUiCentre = distance(
+                        pixelPosition,
+                        _SurfaceRevealCenterPixels.xy);
+                    float fullRadius = max(1.0, _SurfaceRevealRadiusPixels);
+                    float revealRadius = max(
+                        1.0,
+                        fullRadius * elevationFilterProgress);
+                    float revealEdge = min(
+                        max(0.0, _SurfaceRevealEdgePixels),
+                        revealRadius);
+                    elevationFilterMask = revealEdge > 0.0001
+                        ? 1.0 - smoothstep(
+                            revealRadius - revealEdge,
+                            revealRadius,
+                            distanceFromUiCentre)
+                        : step(distanceFromUiCentre, revealRadius);
+
+                    float relativeHeight = heightMeters
+                                           - _PlayerHeightMeters;
+                    float filterRange = max(
+                        0.1,
+                        _ElevationFilterRangeMeters);
+                    float neutralBand = min(
+                        max(0.0, _ElevationFilterNeutralBandMeters),
+                        filterRange - 0.01);
+                    float relativeStrength = saturate(
+                        (abs(relativeHeight) - neutralBand)
+                        / max(0.01, filterRange - neutralBand));
+                    relativeStrength = pow(
+                        relativeStrength,
+                        max(0.25, _ElevationFilterResponseExponent));
+                    fixed4 elevationTint = relativeHeight < 0.0
+                        ? _LowerElevationColor
+                        : _HigherElevationColor;
+                    float elevationBlend = saturate(
+                        relativeStrength
+                        * _ElevationFilterMaxOpacity
+                        * elevationTint.a
+                        * elevationFilterMask
+                        * elevationFilterProgress);
+                    baseColor.rgb = lerp(
+                        baseColor.rgb,
+                        elevationTint.rgb,
+                        elevationBlend);
+
+                    // A tiny four-sample normal reconstruction adds readable
+                    // terrain shape without generating another runtime texture.
+                    float2 texel = max(
+                        _HeightTex_TexelSize.xy,
+                        float2(0.000001, 0.000001));
+                    float heightLeft = lerp(
+                        _MinimumHeight,
+                        _MaximumHeight,
+                        saturate(tex2D(
+                            _HeightTex,
+                            saturate(input.uv - float2(texel.x, 0.0))).r));
+                    float heightRight = lerp(
+                        _MinimumHeight,
+                        _MaximumHeight,
+                        saturate(tex2D(
+                            _HeightTex,
+                            saturate(input.uv + float2(texel.x, 0.0))).r));
+                    float heightDown = lerp(
+                        _MinimumHeight,
+                        _MaximumHeight,
+                        saturate(tex2D(
+                            _HeightTex,
+                            saturate(input.uv - float2(0.0, texel.y))).r));
+                    float heightUp = lerp(
+                        _MinimumHeight,
+                        _MaximumHeight,
+                        saturate(tex2D(
+                            _HeightTex,
+                            saturate(input.uv + float2(0.0, texel.y))).r));
+                    float2 metersPerTexel = max(
+                        _MapSizeMeters.xy * texel,
+                        float2(0.0001, 0.0001));
+                    float2 slope = float2(
+                        (heightRight - heightLeft)
+                            / (2.0 * metersPerTexel.x),
+                        (heightUp - heightDown)
+                            / (2.0 * metersPerTexel.y));
+                    float3 terrainNormal = normalize(
+                        float3(-slope.x, -slope.y, 1.0));
+                    float3 terrainLight = normalize(
+                        float3(-0.55, 0.65, 0.8));
+                    float flatLighting = terrainLight.z;
+                    float hillshade = clamp(
+                        (dot(terrainNormal, terrainLight) - flatLighting)
+                            * 2.0,
+                        -1.0,
+                        1.0);
+                    float hillshadeAmount = hillshade
+                        * _ElevationFilterHillshadeStrength
+                        * elevationFilterMask
+                        * elevationFilterProgress;
+                    baseColor.rgb *= 1.0 + hillshadeAmount;
+                }
+
                 float interval = max(0.0001, _ContourInterval);
                 float contourCoordinate = (heightMeters - _MinimumHeight) / interval;
                 float nearestContourDistance = abs(frac(contourCoordinate + 0.5) - 0.5);
@@ -307,6 +442,44 @@ Shader "AnimalGame/Dynamic Height Contours"
 
                 float blendAmount = saturate(lineMask * lineOpacity * _ContourColor.a);
                 baseColor.rgb = lerp(baseColor.rgb, _ContourColor.rgb, blendAmount);
+
+                if (_ElevationFilterEnabled > 0.5
+                    && elevationFilterProgress > 0.0001)
+                {
+                    float referenceDistance = abs(
+                        heightMeters - _PlayerHeightMeters);
+                    float heightDerivative = max(
+                        fwidth(heightMeters),
+                        0.00001);
+                    float referenceHalfWidth = heightDerivative
+                        * max(0.25, _PlayerHeightReferenceLineWidth)
+                        * 0.5;
+                    float referenceAntiAlias = max(
+                        heightDerivative * 0.75,
+                        0.00002);
+                    float referenceLine = 1.0 - smoothstep(
+                        referenceHalfWidth,
+                        referenceHalfWidth + referenceAntiAlias,
+                        referenceDistance);
+                    // A mathematically flat plateau has no single contour path.
+                    // Suppress the otherwise fully filled plateau while retaining
+                    // the line on even very gentle, non-zero gradients.
+                    float hasVisibleGradient = smoothstep(
+                        0.00005,
+                        0.002,
+                        heightDerivative);
+                    referenceLine *= hasVisibleGradient
+                        * elevationFilterMask
+                        * elevationFilterProgress;
+                    float referenceBlend = saturate(
+                        referenceLine
+                        * _PlayerHeightReferenceOpacity
+                        * _PlayerHeightReferenceColor.a);
+                    baseColor.rgb = lerp(
+                        baseColor.rgb,
+                        _PlayerHeightReferenceColor.rgb,
+                        referenceBlend);
+                }
                 return baseColor;
             }
             ENDCG
