@@ -17,7 +17,10 @@ namespace AnimalGame.Animals
         EatAtNearbyPlant,
         RoamAndLook,
         TravelToPlantAndEat,
-        DiveAndResurface
+        DiveAndResurface,
+        PerchAtTree,
+        FlyToTree,
+        PeckAtTree
     }
 
     public enum AnimalFoodType

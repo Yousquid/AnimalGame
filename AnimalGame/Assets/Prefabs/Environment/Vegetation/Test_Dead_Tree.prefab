@@ -11,6 +11,7 @@ GameObject:
   - component: {fileID: 400000}
   - component: {fileID: 11400000}
   - component: {fileID: 8237090822054639901}
+  - component: {fileID: 1251770475442124981}
   m_Layer: 0
   m_Name: Test_Dead_Tree
   m_TagString: Untagged
@@ -68,6 +69,21 @@ MonoBehaviour:
   contactAlphaReduction: 0.9
   contactPaddingMeters: 0.05
   fallbackPlayerRadiusMeters: 0.75
+--- !u!114 &1251770475442124981
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 100000}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79249136fc9646d3a281b30e0a68c704, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  health: 1
+  trunkCenter: {fileID: 400001}
+  perchRadiusMeters: 0.6
 --- !u!1 &100001
 GameObject:
   m_ObjectHideFlags: 0

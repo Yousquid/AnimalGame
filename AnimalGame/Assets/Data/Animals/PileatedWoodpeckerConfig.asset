@@ -1,0 +1,55 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e42ea6af259ac874fabc89fccca67a0b, type: 3}
+  m_Name: PileatedWoodpeckerConfig
+  m_EditorClassIdentifier: 
+  speciesName: Pileated Woodpecker
+  activityRadiusMeters: 45
+  dailyMoveSpeedMetersPerSecond: 9
+  fleeSpeedMetersPerSecond: 14
+  turnSpeedDegreesPerSecond: 540
+  arrivalDistanceMeters: 0.12
+  bodyRadiusMeters: 0.12
+  maximumTravelTimeSeconds: 20
+  dailyBehaviours:
+  - behaviour: 4
+    selectionWeight: 1.15
+    durationSeconds: {x: 4, y: 8}
+  - behaviour: 5
+    selectionWeight: 1.15
+    durationSeconds: {x: 0.5, y: 1}
+  - behaviour: 6
+    selectionWeight: 1.35
+    durationSeconds: {x: 2.5, y: 5}
+  foodPreferences: []
+  nearbyFoodDistanceMeters: 1.6
+  foodApproachPaddingMeters: 0.08
+  lookIntervalSeconds: {x: 0.65, y: 1.4}
+  lookAngleDegrees: 75
+  minimumDiveWaterDepthMeters: 0.05
+  resurfaceRadiusMeters: 2.5
+  submergeTransitionSeconds: 0.35
+  waterSearchSpacingMeters: 1.5
+  alertRadiusMeters: 18
+  detectionIntervalSeconds: 0.5
+  baseDetectionChancePerCheck: 0.12
+  nearestDetectionMultiplier: 3
+  playerSpeedForMaximumBonus: 3
+  maximumPlayerSpeedDetectionMultiplier: 2
+  directVisionAngleDegrees: 31
+  directLineOfSightDetectionMultiplier: 1.5
+  reactionIntervalSeconds: 0.2
+  baseFleeChancePerCheck: 0.15
+  nearestFleeMultiplier: 3
+  baseAggressionChancePerCheck: 0
+  nearestAggressionMultiplier: 1
+  curiousLostPlayerDelaySeconds: 3
