@@ -86,7 +86,7 @@ MonoBehaviour:
     patternTexture: {fileID: 2800000, guid: e89ea0f9890e3384b814ee28a1526d30, type: 3}
     tint: {r: 1, g: 1, b: 1, a: 1}
     opacity: 0.35
-    tileSizeMeters: 8
+    tileSizeMeters: 16
     transitionMode: 3
     transitionWidthMultiplier: 1
     noiseStrengthMultiplier: 1
@@ -154,7 +154,7 @@ MonoBehaviour:
   surfaceTileSizeMeters: 8
   bakedSurfaceVisual: {fileID: 2800000, guid: 5d8b7d58440435146a6e0181ffc57e82, type: 3}
   surfaceRevealEdgePixels: 4
-  surfaceBakeRevision: 430
+  surfaceBakeRevision: 432
   surfaceBakeGeneratorVersion: 10
   backgroundColor: {r: 0.008, g: 0.012, b: 0.017, a: 1}
   lowHeightColor: {r: 0, g: 0, b: 0, a: 1}
