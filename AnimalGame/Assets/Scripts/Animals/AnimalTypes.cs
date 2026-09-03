@@ -9,6 +9,7 @@ namespace AnimalGame.Animals
         Curious,
         Fleeing,
         Aggressive,
+        Hiding,
         Despawned
     }
 

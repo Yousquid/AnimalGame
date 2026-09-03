@@ -53,3 +53,7 @@ MonoBehaviour:
   baseAggressionChancePerCheck: 0
   nearestAggressionMultiplier: 1
   curiousLostPlayerDelaySeconds: 3
+  frightenedHideDurationSeconds: {x: 8, y: 14}
+  hideSafetyCheckIntervalSeconds: 1
+  reappearSafeDistanceMultiplier: 1.05
+  postReappearGraceDurationSeconds: 1.5

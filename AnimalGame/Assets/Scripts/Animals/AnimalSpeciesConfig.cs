@@ -87,6 +87,20 @@ namespace AnimalGame.Animals
         [SerializeField, Min(1f)] private float nearestAggressionMultiplier = 1f;
         [SerializeField, Min(0f)] private float curiousLostPlayerDelaySeconds = 2.5f;
 
+        [Header("Frightened Hiding And Return")]
+        [Tooltip("Random duration spent fully hidden after a frightened escape, before checking whether it is safe to return.")]
+        [SerializeField] private Vector2 frightenedHideDurationSeconds =
+            new Vector2(6f, 10f);
+        [Tooltip("How often a hidden animal retries its safe return check after the minimum hiding time has elapsed.")]
+        [SerializeField, Min(0.05f)]
+        private float hideSafetyCheckIntervalSeconds = 0.75f;
+        [Tooltip("Required player distance from the emergence point, expressed as a multiple of this species' alert radius.")]
+        [SerializeField, Min(0f)]
+        private float reappearSafeDistanceMultiplier = 1.1f;
+        [Tooltip("Detection-free grace period after the animal has fully reappeared.")]
+        [SerializeField, Min(0f)]
+        private float postReappearGraceDurationSeconds = 1.5f;
+
         public string SpeciesName => speciesName;
         public float ActivityRadiusMeters => activityRadiusMeters;
         public float DailyMoveSpeedMetersPerSecond => dailyMoveSpeedMetersPerSecond;
@@ -124,6 +138,29 @@ namespace AnimalGame.Animals
             nearestAggressionMultiplier;
         public float CuriousLostPlayerDelaySeconds =>
             curiousLostPlayerDelaySeconds;
+        public Vector2 FrightenedHideDurationSeconds =>
+            frightenedHideDurationSeconds;
+        public float HideSafetyCheckIntervalSeconds =>
+            hideSafetyCheckIntervalSeconds;
+        public float ReappearSafeDistanceMeters => AlertRadiusMeters
+                                                   * reappearSafeDistanceMultiplier;
+        public float PostReappearGraceDurationSeconds =>
+            postReappearGraceDurationSeconds;
+
+        public float ChooseFrightenedHideDuration()
+        {
+            float minimum = Mathf.Max(
+                0f,
+                Mathf.Min(
+                    frightenedHideDurationSeconds.x,
+                    frightenedHideDurationSeconds.y));
+            float maximum = Mathf.Max(
+                minimum,
+                Mathf.Max(
+                    frightenedHideDurationSeconds.x,
+                    frightenedHideDurationSeconds.y));
+            return Random.Range(minimum, maximum);
+        }
 
         public float GetFoodSelectionWeight(AnimalFoodType foodType)
         {
@@ -203,6 +240,28 @@ namespace AnimalGame.Animals
             curiousLostPlayerDelaySeconds = Mathf.Max(
                 0f,
                 curiousLostPlayerDelaySeconds);
+            float hideMinimum = Mathf.Max(
+                0f,
+                Mathf.Min(
+                    frightenedHideDurationSeconds.x,
+                    frightenedHideDurationSeconds.y));
+            float hideMaximum = Mathf.Max(
+                hideMinimum,
+                Mathf.Max(
+                    frightenedHideDurationSeconds.x,
+                    frightenedHideDurationSeconds.y));
+            frightenedHideDurationSeconds = new Vector2(
+                hideMinimum,
+                hideMaximum);
+            hideSafetyCheckIntervalSeconds = Mathf.Max(
+                0.05f,
+                hideSafetyCheckIntervalSeconds);
+            reappearSafeDistanceMultiplier = Mathf.Max(
+                0f,
+                reappearSafeDistanceMultiplier);
+            postReappearGraceDurationSeconds = Mathf.Max(
+                0f,
+                postReappearGraceDurationSeconds);
 
             if (dailyBehaviours != null)
             {

@@ -31,6 +31,13 @@ namespace AnimalGame.Animals
             EnteringHome
         }
 
+        private enum HidingPhase
+        {
+            None,
+            Hidden,
+            Emerging
+        }
+
         [Header("Home Tree")]
         [Tooltip("Scene tree that owns this woodpecker's fixed activity centre and escape destination. A missing reference falls back to the nearest tree at runtime.")]
         [SerializeField] private TreeHabitat birthTree;
@@ -65,12 +72,17 @@ namespace AnimalGame.Animals
         private ArrivalAction interruptedArrivalAction;
         private DailyPhase dailyPhase;
         private FleePhase fleePhase;
+        private HidingPhase hidingPhase;
         private float actionTimer;
         private float travelTimer;
         private float peckElapsed;
         private float enterTreeElapsed;
         private Vector2 enterTreeStartMapPosition;
         private Vector2 enterTreeTargetMapPosition;
+        private Vector2 hidingTreeCentreMapPosition;
+        private Vector2 hidingPerchMapPosition;
+        private Vector2 hidingApproachMapPosition;
+        private TreeHabitat hidingTree;
         private Vector3 baseVisualLocalPosition;
         private bool visualPositionCached;
         private bool missingBirthTreeWarningReported;
@@ -237,6 +249,79 @@ namespace AnimalGame.Animals
             targetTree = null;
             Motor?.Stop();
             ResetVisualOffset();
+        }
+
+        public override void EnterHiding()
+        {
+            base.EnterHiding();
+            dailyPhase = DailyPhase.None;
+            fleePhase = FleePhase.None;
+            currentTree = null;
+            targetTree = null;
+            hidingPhase = HidingPhase.Hidden;
+            enterTreeElapsed = 0f;
+            Motor.Stop();
+            ResetVisualOffset();
+            Agent.PlaceholderView?.SetSubmergeProgress(1f);
+            TryPrepareHidingTree();
+        }
+
+        public override void TickHiding(float deltaTime)
+        {
+            Motor.Stop();
+            switch (hidingPhase)
+            {
+                case HidingPhase.Hidden:
+                    if (!ShouldAttemptSafeEmergence(deltaTime)
+                        || !TryPrepareHidingTree()
+                        || !IsEmergencePositionSafe(
+                            hidingPerchMapPosition))
+                    {
+                        return;
+                    }
+
+                    enterTreeElapsed = 0f;
+                    hidingPhase = HidingPhase.Emerging;
+                    break;
+
+                case HidingPhase.Emerging:
+                    if (!IsUsableTree(hidingTree)
+                        || !IsEmergencePositionSafe(
+                            hidingPerchMapPosition))
+                    {
+                        CancelEmergence();
+                        return;
+                    }
+
+                    enterTreeElapsed += deltaTime;
+                    float progress = Mathf.Clamp01(
+                        enterTreeElapsed
+                        / Mathf.Max(0.05f, enterTreeDurationSeconds));
+                    float easedProgress = Mathf.SmoothStep(0f, 1f, progress);
+                    Motor.TeleportToMapPosition(Vector2.Lerp(
+                        hidingTreeCentreMapPosition,
+                        hidingPerchMapPosition,
+                        easedProgress));
+                    FaceTree(hidingTree);
+                    Agent.PlaceholderView?.SetSubmergeProgress(
+                        1f - easedProgress);
+                    if (progress < 1f)
+                        return;
+
+                    currentTree = hidingTree;
+                    Agent.CompleteHiding();
+                    break;
+            }
+        }
+
+        public override void ExitHiding()
+        {
+            hidingPhase = HidingPhase.None;
+            hidingTree = null;
+            enterTreeElapsed = 0f;
+            Motor?.Stop();
+            ResetVisualOffset();
+            Agent.PlaceholderView?.RestoreVisibleAppearance();
         }
 
         public bool BindBirthTree(TreeHabitat tree, bool snapToPerch)
@@ -561,7 +646,51 @@ namespace AnimalGame.Animals
                 easedProgress));
             Agent.PlaceholderView?.SetSubmergeProgress(easedProgress);
             if (progress >= 1f)
-                Agent.Despawn();
+            {
+                hidingTree = IsUsableTree(targetTree)
+                    ? targetTree
+                    : birthTree;
+                hidingApproachMapPosition = enterTreeStartMapPosition;
+                Agent.BeginHiding();
+            }
+        }
+
+        private bool TryPrepareHidingTree()
+        {
+            if (!IsUsableTree(hidingTree))
+            {
+                ResolveBirthTree();
+                hidingTree = IsUsableTree(birthTree)
+                    ? birthTree
+                    : FindNearestTree();
+            }
+            if (!IsUsableTree(hidingTree)
+                || !hidingTree.TryGetMapPosition(
+                    Agent.Map,
+                    out hidingTreeCentreMapPosition)
+                || !TryGetPerchPosition(
+                    hidingTree,
+                    hidingApproachMapPosition,
+                    out hidingPerchMapPosition))
+            {
+                return false;
+            }
+
+            Agent.PlaceholderView?.SetSubmergeProgress(1f);
+            return Motor.TeleportToMapPosition(
+                hidingTreeCentreMapPosition);
+        }
+
+        private void CancelEmergence()
+        {
+            Agent.PlaceholderView?.SetSubmergeProgress(1f);
+            enterTreeElapsed = 0f;
+            hidingPhase = HidingPhase.Hidden;
+            if (IsUsableTree(hidingTree))
+            {
+                Motor.TeleportToMapPosition(
+                    hidingTreeCentreMapPosition);
+            }
         }
 
         private bool HasAnyCandidateTree(bool deadOnly)

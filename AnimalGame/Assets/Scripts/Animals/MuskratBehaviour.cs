@@ -30,6 +30,13 @@ namespace AnimalGame.Animals
             Submerging
         }
 
+        private enum HidingPhase
+        {
+            None,
+            Hidden,
+            Surfacing
+        }
+
         private readonly List<AnimalDailyBehaviourSettings> availableBehaviours =
             new List<AnimalDailyBehaviourSettings>();
 
@@ -37,6 +44,7 @@ namespace AnimalGame.Animals
         private AnimalFoodSource currentFoodSource;
         private DailyPhase dailyPhase;
         private FleePhase fleePhase;
+        private HidingPhase hidingPhase;
         private float actionTimer;
         private float travelTimer;
         private float transitionTimer;
@@ -45,6 +53,8 @@ namespace AnimalGame.Animals
         private float activitySoundCountdown;
         private int lookDirectionSign = 1;
         private Vector2 lookBaseDirection = Vector2.up;
+        private bool hidingPrefersWater;
+        private bool emergingFromWater;
 
         public override bool SupportsAggression => false;
 
@@ -184,7 +194,8 @@ namespace AnimalGame.Animals
                         || fallbackFleeTimer >= 10f
                         || Motor.HasArrived)
                     {
-                        Agent.Despawn();
+                        hidingPrefersWater = false;
+                        Agent.BeginHiding();
                     }
                     break;
                 case FleePhase.Submerging:
@@ -193,7 +204,10 @@ namespace AnimalGame.Animals
                                      / Config.SubmergeTransitionSeconds;
                     Agent.PlaceholderView?.SetSubmergeProgress(progress);
                     if (progress >= 1f)
-                        Agent.Despawn();
+                    {
+                        hidingPrefersWater = true;
+                        Agent.BeginHiding();
+                    }
                     break;
             }
         }
@@ -201,6 +215,72 @@ namespace AnimalGame.Animals
         public override void ExitFleeing()
         {
             fleePhase = FleePhase.None;
+            Motor?.Stop();
+            Agent.PlaceholderView?.RestoreVisibleAppearance();
+        }
+
+        public override void EnterHiding()
+        {
+            base.EnterHiding();
+            dailyPhase = DailyPhase.None;
+            fleePhase = FleePhase.None;
+            hidingPhase = HidingPhase.Hidden;
+            emergingFromWater = false;
+            transitionTimer = 0f;
+            activitySoundCountdown = 0f;
+            Motor.Stop();
+            Agent.PlaceholderView?.SetSubmergeProgress(1f);
+        }
+
+        public override void TickHiding(float deltaTime)
+        {
+            Motor.Stop();
+            switch (hidingPhase)
+            {
+                case HidingPhase.Hidden:
+                    if (!ShouldAttemptSafeEmergence(deltaTime)
+                        || !TryFindSafeEmergencePoint(
+                            out Vector2 emergencePosition,
+                            out bool isWater))
+                    {
+                        return;
+                    }
+
+                    if (!Motor.TeleportToMapPosition(emergencePosition))
+                        return;
+
+                    emergingFromWater = isWater;
+                    transitionTimer = 0f;
+                    hidingPhase = HidingPhase.Surfacing;
+                    if (emergingFromWater)
+                        Agent.SoundEmitter?.Emit(AnimalSoundKind.Surfacing);
+                    break;
+
+                case HidingPhase.Surfacing:
+                    if (!IsEmergencePositionSafe(Motor.CurrentMapPosition))
+                    {
+                        Agent.PlaceholderView?.SetSubmergeProgress(1f);
+                        hidingPhase = HidingPhase.Hidden;
+                        transitionTimer = 0f;
+                        return;
+                    }
+
+                    transitionTimer += deltaTime;
+                    float progress = transitionTimer
+                                     / Config.SubmergeTransitionSeconds;
+                    Agent.PlaceholderView?.SetSubmergeProgress(1f - progress);
+                    if (progress >= 1f)
+                        Agent.CompleteHiding();
+                    break;
+            }
+        }
+
+        public override void ExitHiding()
+        {
+            hidingPhase = HidingPhase.None;
+            hidingPrefersWater = false;
+            emergingFromWater = false;
+            transitionTimer = 0f;
             Motor?.Stop();
             Agent.PlaceholderView?.RestoreVisibleAppearance();
         }
@@ -635,6 +715,21 @@ namespace AnimalGame.Animals
             bool constrainToHome,
             out Vector2 mapPosition)
         {
+            return TryFindRandomWaterPoint(
+                centre,
+                radiusMeters,
+                constrainToHome,
+                false,
+                out mapPosition);
+        }
+
+        private bool TryFindRandomWaterPoint(
+            Vector2 centre,
+            float radiusMeters,
+            bool constrainToHome,
+            bool requireSafeEmergence,
+            out Vector2 mapPosition)
+        {
             for (int attempt = 0; attempt < 80; attempt++)
             {
                 Vector2 candidate = centre
@@ -650,7 +745,9 @@ namespace AnimalGame.Animals
                         candidate,
                         out float depthMeters)
                     && depthMeters >= Config.MinimumDiveWaterDepthMeters
-                    && Motor.CanOccupyMapPosition(candidate))
+                    && Motor.CanOccupyMapPosition(candidate)
+                    && (!requireSafeEmergence
+                        || IsEmergencePositionSafe(candidate)))
                 {
                     mapPosition = candidate;
                     return true;
@@ -658,6 +755,66 @@ namespace AnimalGame.Animals
             }
 
             mapPosition = Vector2.zero;
+            return false;
+        }
+
+        private bool TryFindSafeEmergencePoint(
+            out Vector2 mapPosition,
+            out bool isWater)
+        {
+            Vector2 currentPosition = Motor.CurrentMapPosition;
+            if (Agent.Map.TrySampleStaticWaterMapPosition(
+                    currentPosition,
+                    out float currentDepthMeters)
+                && currentDepthMeters >= Config.MinimumDiveWaterDepthMeters
+                && Motor.CanOccupyMapPosition(currentPosition)
+                && IsEmergencePositionSafe(currentPosition))
+            {
+                mapPosition = currentPosition;
+                isWater = true;
+                return true;
+            }
+
+            if (TryFindRandomWaterPoint(
+                    currentPosition,
+                    Config.ResurfaceRadiusMeters,
+                    false,
+                    true,
+                    out mapPosition)
+                || TryFindRandomWaterPoint(
+                    Agent.HomeMapPosition,
+                    Config.ActivityRadiusMeters,
+                    true,
+                    true,
+                    out mapPosition))
+            {
+                isWater = true;
+                return true;
+            }
+
+            if (hidingPrefersWater)
+            {
+                isWater = true;
+                return false;
+            }
+
+            for (int attempt = 0; attempt < 80; attempt++)
+            {
+                Vector2 candidate = Agent.HomeMapPosition
+                                    + Random.insideUnitCircle
+                                    * Config.ActivityRadiusMeters;
+                if (Agent.Map.TrySampleMapPosition(candidate, out _)
+                    && Motor.CanOccupyMapPosition(candidate)
+                    && IsEmergencePositionSafe(candidate))
+                {
+                    mapPosition = candidate;
+                    isWater = false;
+                    return true;
+                }
+            }
+
+            mapPosition = Vector2.zero;
+            isWater = false;
             return false;
         }
 

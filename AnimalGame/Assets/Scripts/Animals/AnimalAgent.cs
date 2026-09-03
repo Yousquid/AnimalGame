@@ -31,10 +31,14 @@ namespace AnimalGame.Animals
         public Vector2 HomeMapPosition { get; private set; }
         public AnimalState CurrentState { get; private set; } = AnimalState.Daily;
         public bool PerceptionSuppressed { get; private set; }
+        public bool IsHidden => CurrentState == AnimalState.Hiding
+                                || CurrentState == AnimalState.Despawned;
+        public bool IsPresent => initialized && !IsHidden;
 
         private bool initialized;
         private float reactionCountdown;
         private float outsideAlertTimer;
+        private float detectionGraceRemaining;
         private SpriteRenderer[] playerUiVisibilityRenderers;
 
         private void OnEnable()
@@ -75,8 +79,12 @@ namespace AnimalGame.Animals
                 return;
 
             float deltaTime = Time.deltaTime;
+            detectionGraceRemaining = Mathf.Max(
+                0f,
+                detectionGraceRemaining - deltaTime);
             if (CurrentState == AnimalState.Daily
                 && !PerceptionSuppressed
+                && detectionGraceRemaining <= 0f
                 && Perception.TickDetection(deltaTime))
             {
                 EnterCurious();
@@ -95,6 +103,9 @@ namespace AnimalGame.Animals
                     break;
                 case AnimalState.Aggressive:
                     behaviourSet.TickAggressive(deltaTime);
+                    break;
+                case AnimalState.Hiding:
+                    behaviourSet.TickHiding(deltaTime);
                     break;
             }
 
@@ -128,7 +139,41 @@ namespace AnimalGame.Animals
             ExitCurrentState();
             CurrentState = AnimalState.Daily;
             PerceptionSuppressed = false;
+            detectionGraceRemaining = 0f;
             outsideAlertTimer = 0f;
+            Perception.ResetDetection();
+            behaviourSet.EnterDaily();
+        }
+
+        public void BeginHiding()
+        {
+            if (!initialized
+                || CurrentState == AnimalState.Hiding
+                || CurrentState == AnimalState.Despawned)
+            {
+                return;
+            }
+
+            ExitCurrentState();
+            CurrentState = AnimalState.Hiding;
+            PerceptionSuppressed = true;
+            detectionGraceRemaining = 0f;
+            outsideAlertTimer = 0f;
+            Motor.Stop();
+            behaviourSet.EnterHiding();
+        }
+
+        public void CompleteHiding()
+        {
+            if (!initialized || CurrentState != AnimalState.Hiding)
+                return;
+
+            ExitCurrentState();
+            CurrentState = AnimalState.Daily;
+            PerceptionSuppressed = false;
+            detectionGraceRemaining = config.PostReappearGraceDurationSeconds;
+            outsideAlertTimer = 0f;
+            Perception.ResetDetection();
             behaviourSet.EnterDaily();
         }
 
@@ -195,6 +240,7 @@ namespace AnimalGame.Animals
             placeholderView?.RestoreVisibleAppearance();
             initialized = true;
             CurrentState = AnimalState.Daily;
+            detectionGraceRemaining = 0f;
             behaviourSet.EnterDaily();
             return true;
         }
@@ -289,6 +335,9 @@ namespace AnimalGame.Animals
                     break;
                 case AnimalState.Aggressive:
                     behaviourSet?.ExitAggressive();
+                    break;
+                case AnimalState.Hiding:
+                    behaviourSet?.ExitHiding();
                     break;
             }
         }

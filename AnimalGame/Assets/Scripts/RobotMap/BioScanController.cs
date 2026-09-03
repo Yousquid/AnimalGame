@@ -555,7 +555,7 @@ namespace AnimalGame.RobotMap
             float outerRadius = currentRadius + thickness;
             foreach (DiscoverableEntity entity in DiscoverableEntity.Active)
             {
-                if (entity == null || !entity.isActiveAndEnabled)
+                if (entity == null || !entity.IsScannable)
                     continue;
                 int entityId = entity.GetInstanceID();
                 if (revealedEntityIds.Contains(entityId))

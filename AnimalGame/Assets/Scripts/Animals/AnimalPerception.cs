@@ -30,6 +30,14 @@ namespace AnimalGame.Animals
             playerWasInsideAlertRange = false;
         }
 
+        public void ResetDetection()
+        {
+            detectionCountdown = config != null
+                ? config.DetectionIntervalSeconds
+                : 0.5f;
+            playerWasInsideAlertRange = false;
+        }
+
         public bool TickDetection(float deltaTime)
         {
             if (!TryGetPlayerProximity(out float proximity, out _))

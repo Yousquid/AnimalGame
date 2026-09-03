@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using AnimalGame.Animals;
 using AnimalGame.MapTest;
 using UnityEngine;
 
@@ -55,6 +56,19 @@ namespace AnimalGame.Discovery
                 EnsureInitialized();
                 return isPermanentlyDiscovered
                        || temporaryRevealRemaining > 0f;
+            }
+        }
+        public bool IsScannable
+        {
+            get
+            {
+                if (!isActiveAndEnabled || !gameObject.activeInHierarchy)
+                    return false;
+                if (discoverableKind != DiscoverableKind.Animal)
+                    return true;
+
+                AnimalAgent animal = GetComponent<AnimalAgent>();
+                return animal == null || animal.IsPresent;
             }
         }
 

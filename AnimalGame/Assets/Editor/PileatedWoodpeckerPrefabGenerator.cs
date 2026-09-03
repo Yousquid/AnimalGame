@@ -187,6 +187,14 @@ namespace AnimalGame.Editor
                 .floatValue = 1f;
             serialized.FindProperty("curiousLostPlayerDelaySeconds")
                 .floatValue = 3f;
+            serialized.FindProperty("frightenedHideDurationSeconds")
+                .vector2Value = new Vector2(8f, 14f);
+            serialized.FindProperty("hideSafetyCheckIntervalSeconds")
+                .floatValue = 1f;
+            serialized.FindProperty("reappearSafeDistanceMultiplier")
+                .floatValue = 1.05f;
+            serialized.FindProperty("postReappearGraceDurationSeconds")
+                .floatValue = 1.5f;
             serialized.ApplyModifiedPropertiesWithoutUndo();
         }
 

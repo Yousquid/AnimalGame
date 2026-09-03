@@ -167,7 +167,7 @@ namespace AnimalGame.MapTest
             {
                 if (animal == null
                     || !animal.isActiveAndEnabled
-                    || animal.CurrentState == AnimalState.Despawned
+                    || !animal.IsPresent
                     || !map.TrySampleWorldPosition(
                         animal.transform.position,
                         out Vector2 animalMapPosition,

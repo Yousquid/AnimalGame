@@ -125,7 +125,7 @@ namespace AnimalGame.Animals
 
             if (agent == null)
                 agent = GetComponent<AnimalAgent>();
-            if (agent != null && agent.CurrentState == AnimalState.Despawned)
+            if (agent != null && !agent.IsPresent)
                 return false;
 
             for (int index = 0; index < visibilityRenderers.Length; index++)
