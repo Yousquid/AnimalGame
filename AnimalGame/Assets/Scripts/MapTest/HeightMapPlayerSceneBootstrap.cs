@@ -18,6 +18,9 @@ namespace AnimalGame.MapTest
         [Tooltip("Initial player position in logical map meters. Values outside the map are clamped to its edges.")]
         [SerializeField] private Vector2 playerSpawnMapPositionMeters = new Vector2(50f, 50f);
 
+        [Header("Terrain Debug Display")]
+        [SerializeField] private bool showRobotTerrainData;
+
         [Header("Performance Display")]
         [SerializeField] private bool showFrameRate = true;
         [SerializeField, Min(0.05f)] private float frameRateRefreshInterval = 0.25f;
@@ -152,13 +155,15 @@ namespace AnimalGame.MapTest
                 camera,
                 robot,
                 scanChargeUi);
-            UpdatePlayerHeight();
+            if (showRobotTerrainData)
+                UpdatePlayerHeight();
         }
 
         private void Update()
         {
             UpdateFrameRate();
-            UpdatePlayerHeight();
+            if (showRobotTerrainData)
+                UpdatePlayerHeight();
         }
 
         private void LateUpdate()
@@ -240,7 +245,8 @@ namespace AnimalGame.MapTest
                 GUI.matrix = previousGuiMatrix;
             }
 
-            DrawRobotTerrainData();
+            if (showRobotTerrainData)
+                DrawRobotTerrainData();
         }
 
         private void DrawRobotTerrainData()

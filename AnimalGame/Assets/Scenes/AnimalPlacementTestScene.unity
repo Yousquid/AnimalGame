@@ -168,6 +168,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   playerSpawnMapPositionMeters: {x: 200, y: 191}
+  showRobotTerrainData: 0
   showFrameRate: 0
   frameRateRefreshInterval: 0.25
 --- !u!1001 &12602079
